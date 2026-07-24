@@ -637,10 +637,15 @@ function stepsToText(rows) {
  * 个性化推荐(上半区)。流程:采对话 → 推测「是谁/目标」→ 补充 → 发现资源。
  * 三类统一走发现智能体;安装:技能走 skillhub;智能体优先社区目录级联纳管配套技能。
  */
-/** 推荐项是否命中用途筛选（category 多为 SkillHub slug） */
+/** 推荐项是否命中用途筛选（category 多为 SkillHub slug；other = 未归类） */
 function recMatchesPurpose(rec, purposeFilter) {
   if (!purposeFilter) return true;
   const cat = String(rec?.category || '').trim();
+  if (purposeFilter === 'other') {
+    if (!cat) return true;
+    if (CATEGORY_SLUGS.includes(cat)) return false;
+    return !tagToPurpose(cat);
+  }
   if (!cat) return false;
   if (cat === purposeFilter) return true;
   return tagToPurpose(cat) === purposeFilter;
@@ -1431,9 +1436,10 @@ export default function PersonalizedRecommend({
             {(visibleItems || items).map((rec, idx) => {
               const key = recKey(rec) || `x-${idx}`;
               const st = installing[key] || (rec.adopted ? 'done' : undefined);
-              const actionLabel = st === 'done' ? (rtype === 'skill' ? t('resources.reco.installed') : t('resources.reco.adopted'))
+              // 技能 / 提示词 / 智能体：进库统一称「纳管」
+              const actionLabel = st === 'done' ? t('resources.reco.adopted')
                 : st === 'busy' ? t('resources.reco.working')
-                  : (rtype === 'skill' ? t('resources.reco.install') : t('resources.reco.adopt'));
+                  : t('resources.reco.adopt');
               const expanded = expandedKey === key;
               const cardItem = {
                 ...rec,

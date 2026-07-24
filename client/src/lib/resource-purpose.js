@@ -218,6 +218,19 @@ export function resolvePurposes(item, aiMap = {}) {
   return [...set];
 }
 
+/** 解析本地网关 base（与 idle-skill-ai 一致） */
+async function resolveGatewayBase() {
+  let base = 'http://127.0.0.1:11430';
+  if (!window.electronAPI?.gateway?.status) return base;
+  try {
+    const st = await window.electronAPI.gateway.status();
+    const port = st?.port || st?.listenPort || st?.localPort;
+    if (port) base = `http://127.0.0.1:${port}`;
+    else if (st?.url || st?.baseUrl) base = String(st.url || st.baseUrl).replace(/\/$/, '');
+  } catch { /* 默认口 */ }
+  return base;
+}
+
 /**
  * 用本地网关小模型把未知标签归入用途；失败则返回原缓存。
  * @param {string[]} rawTags
@@ -229,19 +242,9 @@ export async function aggregateTagsWithAi(rawTags, prevMap = {}) {
   const unknown = [...new Set((rawTags || []).map(normKey).filter(Boolean))]
     .filter((t) => !tagToPurpose(t, map));
   if (!unknown.length) return map;
-  if (!window.electronAPI?.llm?.fetch || !window.electronAPI?.gateway?.status) {
-    return map;
-  }
+  if (!window.electronAPI?.llm?.fetch) return map;
 
-  let base = 'http://127.0.0.1:11430';
-  try {
-    const st = await window.electronAPI.gateway.status();
-    // status 形态因版本而异：port / listenPort / url / baseUrl
-    const port = st?.port || st?.listenPort || st?.localPort;
-    if (port) base = `http://127.0.0.1:${port}`;
-    else if (st?.url || st?.baseUrl) base = String(st.url || st.baseUrl).replace(/\/$/, '');
-  } catch { /* 用默认口 */ }
-
+  const base = await resolveGatewayBase();
   const purposeList = PURPOSE_SLUGS.join(', ');
   const prompt = [
     '你是资源标签归类器。把每个标签归到「用途」分类，只输出 JSON 对象，不要解释。',
@@ -278,4 +281,163 @@ export async function aggregateTagsWithAi(rawTags, prevMap = {}) {
     // 网关不可用时静默回退静态映射
   }
   return map;
+}
+
+/** 每批送给模型的未打标技能数（偏小，降低截断/漏标） */
+const SKILL_PURPOSE_BATCH = 10;
+/** 补跑遗漏时更小批次 */
+const SKILL_PURPOSE_RETRY_BATCH = 5;
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    const err = new Error('Aborted');
+    err.name = 'AbortError';
+    throw err;
+  }
+}
+
+/**
+ * 名称/简介启发式用途（AI 漏标时兜底，尽量不落到「其它」）。
+ * @param {string} [name]
+ * @param {string} [description]
+ * @returns {string} purposeSlug
+ */
+export function inferPurposeHeuristic(name = '', description = '') {
+  const text = `${name} ${description}`.toLowerCase();
+  const hits = new Map();
+  const bump = (purpose, n = 1) => {
+    if (!PURPOSE_SET.has(purpose)) return;
+    hits.set(purpose, (hits.get(purpose) || 0) + n);
+  };
+  for (const tok of text.split(/[^a-z0-9\u4e00-\u9fff]+/).filter((t) => t.length >= 2)) {
+    const p = tagToPurpose(tok);
+    if (p) bump(p, 1);
+  }
+  for (const [alias, purpose] of Object.entries(TAG_ALIASES)) {
+    if (alias.length >= 3 && text.includes(alias)) bump(purpose, 2);
+  }
+  let best = null;
+  let bestN = 0;
+  for (const [p, n] of hits) {
+    if (n > bestN) {
+      best = p;
+      bestN = n;
+    }
+  }
+  // 无信号时归入知识管理，避免长期留在「其它」
+  return best || 'knowledge-management';
+}
+
+/** 把模型 JSON 键对齐到 batch 内的真实 id（兼容 name / 短 id） */
+function resolveBatchId(rawKey, batch) {
+  const key = String(rawKey || '').trim();
+  if (!key) return '';
+  if (batch.some((s) => s.id === key)) return key;
+  const byName = batch.find((s) => s.name === key || normKey(s.name) === normKey(key));
+  if (byName) return byName.id;
+  const bySuffix = batch.find((s) => s.id.endsWith(key) || s.id.endsWith(`-${key}`));
+  if (bySuffix) return bySuffix.id;
+  return '';
+}
+
+async function classifyBatchWithAi(batch, base, purposeList, signal) {
+  throwIfAborted(signal);
+  const ids = batch.map((s) => s.id);
+  const prompt = [
+    '你是 Skill 用途分类器。根据技能名称与简介，为每个技能选一个最合适的用途。',
+    '只输出 JSON 对象，不要解释、不要 markdown。',
+    `用途只能是: ${purposeList}`,
+    `必须为下列每一个 id 都给出用途（不得省略）: ${JSON.stringify(ids)}`,
+    `技能: ${JSON.stringify(batch)}`,
+    '输出格式: {"res-skill-xxx":"dev-programming","res-skill-yyy":"content-creation"}',
+  ].join('\n');
+
+  const res = await window.electronAPI.llm.fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'auto',
+      temperature: 0,
+      max_tokens: 1200,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  throwIfAborted(signal);
+  if (!res || res.status >= 400) return {};
+  const data = JSON.parse(res.body || '{}');
+  const text = data?.choices?.[0]?.message?.content || data?.content || '';
+  const jsonMatch = String(text).match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    return {};
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(parsed || {})) {
+    const purpose = normKey(v);
+    const id = resolveBatchId(k, batch);
+    if (id && PURPOSE_SET.has(purpose)) out[id] = purpose;
+  }
+  return out;
+}
+
+/**
+ * 用本地网关按 name/description 为未打标 Skill 推断一级用途。
+ * 漏标会小批次补跑，仍缺则启发式兜底，保证尽量每项都有用途。
+ * @param {Array<{ id: string, name?: string, description?: string }>} skills
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {Promise<Record<string, string>>} id → purposeSlug
+ */
+export async function classifySkillsPurposeWithAi(skills = [], opts = {}) {
+  const signal = opts.signal;
+  const list = (skills || [])
+    .map((s) => ({
+      id: String(s?.id || '').trim(),
+      name: String(s?.name || '').trim().slice(0, 80),
+      description: String(s?.description || '').trim().slice(0, 180),
+    }))
+    .filter((s) => s.id);
+  if (!list.length) return {};
+
+  const out = {};
+  // 网关不可用时直接启发式，避免全部留在「其它」
+  if (!window.electronAPI?.llm?.fetch) {
+    for (const s of list) out[s.id] = inferPurposeHeuristic(s.name, s.description);
+    return out;
+  }
+
+  throwIfAborted(signal);
+  const base = await resolveGatewayBase();
+  throwIfAborted(signal);
+  const purposeList = PURPOSE_SLUGS.join(', ');
+
+  const runBatches = async (items, size) => {
+    for (let i = 0; i < items.length; i += size) {
+      throwIfAborted(signal);
+      const batch = items.slice(i, i + size);
+      try {
+        const part = await classifyBatchWithAi(batch, base, purposeList, signal);
+        Object.assign(out, part);
+      } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+      }
+    }
+  };
+
+  await runBatches(list, SKILL_PURPOSE_BATCH);
+
+  // 补跑 AI 未返回的 id
+  let missing = list.filter((s) => !out[s.id]);
+  if (missing.length) {
+    await runBatches(missing, SKILL_PURPOSE_RETRY_BATCH);
+    missing = list.filter((s) => !out[s.id]);
+  }
+
+  // 仍缺：启发式兜底
+  for (const s of missing) {
+    out[s.id] = inferPurposeHeuristic(s.name, s.description);
+  }
+  return out;
 }

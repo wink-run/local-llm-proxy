@@ -26,20 +26,188 @@ export function typeVisual(type) {
   };
 }
 
-/** 优先 metadata.icon(URL/emoji),否则类型默认图标 */
-export function AssetLogo({ type, icon }) {
+/** 稳定哈希 → 智能体人像配色 */
+function hashSeed(seed) {
+  let h = 0;
+  const s = String(seed || 'agent');
+  for (let i = 0; i < s.length; i++) h = (s.charCodeAt(i) + ((h << 5) - h)) | 0;
+  return Math.abs(h);
+}
+
+const PERSON_SKINS = ['#F5C6A5', '#E8B896', '#D4A574', '#C68642', '#8D5524', '#FFDBAC'];
+const PERSON_HAIRS = ['#1C1917', '#292524', '#44403C', '#78350F', '#92400E', '#A16207', '#B45309'];
+const PERSON_SHIRTS = ['#3B82F6', '#6366F1', '#8B5CF6', '#0D9488', '#059669', '#D97706', '#E11D48'];
+const PERSON_BGS = ['#F4F4F5', '#EEF2FF', '#F0FDFA', '#FFF7ED', '#FDF2F8', '#F5F3FF'];
+
+function toSvgDataUri(svg) {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+/**
+ * 本地 SVG 人像头像（按 name/id 稳定生成，无需外网）。
+ * 圆脸 + 发型变体 + 肩线，一眼是「人」而不是菱形占位。
+ */
+export function assistantAvatarDataUri(seed) {
+  const h = hashSeed(seed);
+  const skin = PERSON_SKINS[h % PERSON_SKINS.length];
+  const hair = PERSON_HAIRS[(h >> 3) % PERSON_HAIRS.length];
+  const shirt = PERSON_SHIRTS[(h >> 6) % PERSON_SHIRTS.length];
+  const bg = PERSON_BGS[(h >> 9) % PERSON_BGS.length];
+  const style = h % 3; // 0 短发 / 1 侧分 / 2 蓬松
+  const hairPath = style === 0
+    ? 'M10 16c0-7 4.5-11 10-11s10 4 10 11v2c-2.5-3-6-4.5-10-4.5S12.5 15 10 18v-2z'
+    : style === 1
+      ? 'M9 17c1-8 5-12.5 11-12.5 5.5 0 9.5 3.5 10.5 10.5-3-1.5-5.5-2-8-2-3.5 0-7 1.2-13.5 4z'
+      : 'M8 18c.5-8 5-13 12-13s11.5 5 12 13c-2-4-5.5-6-12-6s-10 2-12 6z';
+  return toSvgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
+    <rect width="40" height="40" fill="${bg}"/>
+    <ellipse cx="20" cy="38" rx="14" ry="10" fill="${shirt}"/>
+    <circle cx="20" cy="17" r="8.5" fill="${skin}"/>
+    <path d="${hairPath}" fill="${hair}"/>
+    <circle cx="16.8" cy="17.2" r="0.9" fill="#44403C" opacity=".55"/>
+    <circle cx="23.2" cy="17.2" r="0.9" fill="#44403C" opacity=".55"/>
+    <path d="M17.5 21c1.2 1.2 3.8 1.2 5 0" stroke="#B45309" stroke-width="0.9" stroke-linecap="round" opacity=".35"/>
+  </svg>`);
+}
+
+const SKILL_PALETTES = [
+  { bg: '#E0F2FE', ink: '#0369A1', accent: '#0EA5E9' },
+  { bg: '#ECFEFF', ink: '#0E7490', accent: '#06B6D4' },
+  { bg: '#EEF2FF', ink: '#4338CA', accent: '#6366F1' },
+  { bg: '#F0FDF4', ink: '#15803D', accent: '#22C55E' },
+  { bg: '#F5F3FF', ink: '#6D28D9', accent: '#8B5CF6' },
+  { bg: '#FFF7ED', ink: '#C2410C', accent: '#F97316' },
+];
+
+const PROMPT_PALETTES = [
+  { bg: '#FFFBEB', ink: '#B45309', accent: '#F59E0B' },
+  { bg: '#FFF7ED', ink: '#C2410C', accent: '#FB923C' },
+  { bg: '#FEF3C7', ink: '#A16207', accent: '#EAB308' },
+  { bg: '#FDF2F8', ink: '#BE185D', accent: '#F472B6' },
+  { bg: '#F5F3FF', ink: '#7C3AED', accent: '#A78BFA' },
+  { bg: '#ECFDF5', ink: '#047857', accent: '#34D399' },
+];
+
+/**
+ * 技能图标：能力/模块/工具等复合符号（按 seed 选变体）。
+ * 0 闪电徽章 · 1 拼图模块 · 2 扳手火花 · 3 层叠流水线 · 4 齿轮勾选 · 5 终端光标
+ */
+export function skillIconDataUri(seed) {
+  const h = hashSeed(seed);
+  const { bg, ink, accent } = SKILL_PALETTES[h % SKILL_PALETTES.length];
+  const v = h % 6;
+  let glyph = '';
+  if (v === 0) {
+    // 六边形 + 闪电
+    glyph = `<path d="M20 6l10 5.5v11L20 28l-10-5.5v-11L20 6z" stroke="${ink}" stroke-width="1.6" fill="${accent}" fill-opacity=".18"/>
+      <path d="M21.5 13l-5 7h4l-1.5 7 6.5-9h-4l2-5z" fill="${ink}"/>`;
+  } else if (v === 1) {
+    // 拼图
+    glyph = `<path d="M12 14h6c0-2.2 1.8-3.5 3.2-3.5S24.5 11.8 24.5 14H28v6c2.2 0 3.5 1.8 3.5 3.2S30.2 26.5 28 26.5V30H14c-1.1 0-2-.9-2-2V14z" fill="${accent}" fill-opacity=".25" stroke="${ink}" stroke-width="1.5"/>
+      <circle cx="18.5" cy="20.5" r="1.4" fill="${ink}"/>`;
+  } else if (v === 2) {
+    // 扳手 + 火花
+    glyph = `<path d="M24 10a5 5 0 0 0-6.7 6.1L10 23.4 12.6 26l7.3-7.3A5 5 0 0 0 24 10z" fill="${accent}" fill-opacity=".3" stroke="${ink}" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M27 13l2.2-1 .8 2.2 2-1.2-.2 2.4 2.4.4-2 1.5 1.2 2.1-2.3-.6-.6 2.3-1.4-2-2.3.8.8-2.3-2.1-1.2 2.4-.6z" fill="${ink}"/>`;
+  } else if (v === 3) {
+    // 三层堆叠
+    glyph = `<rect x="10" y="10" width="20" height="5.5" rx="1.5" fill="${accent}" fill-opacity=".35" stroke="${ink}" stroke-width="1.4"/>
+      <rect x="12" y="17.25" width="16" height="5.5" rx="1.5" fill="${accent}" fill-opacity=".55" stroke="${ink}" stroke-width="1.4"/>
+      <rect x="14" y="24.5" width="12" height="5.5" rx="1.5" fill="${ink}"/>`;
+  } else if (v === 4) {
+    // 齿轮 + 勾
+    glyph = `<circle cx="18" cy="19" r="5.5" fill="${accent}" fill-opacity=".25" stroke="${ink}" stroke-width="1.5"/>
+      <circle cx="18" cy="19" r="2.2" fill="${ink}"/>
+      <path d="M18 10.5v2.2M18 25.3v2.2M10.5 19h2.2M23.3 19h2.2M12.7 13.7l1.5 1.5M21.8 22.8l1.5 1.5M12.7 24.3l1.5-1.5M21.8 15.2l1.5-1.5" stroke="${ink}" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M25 24.5l2 2 4-4.5" stroke="${accent}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  } else {
+    // 终端窗口 + 光标
+    glyph = `<rect x="9" y="11" width="22" height="18" rx="2.5" fill="${accent}" fill-opacity=".2" stroke="${ink}" stroke-width="1.5"/>
+      <path d="M13 17l3.5 2.5L13 22" stroke="${ink}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M19 22h7" stroke="${ink}" stroke-width="1.6" stroke-linecap="round"/>`;
+  }
+  return toSvgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
+    <rect width="40" height="40" rx="10" fill="${bg}"/>
+    ${glyph}
+  </svg>`);
+}
+
+/**
+ * 提示词图标：文稿/对话/引用等复合符号。
+ * 0 文稿+笔 · 1 对话气泡 · 2 引用卡片 · 3 卷轴火花 · 4 双气泡 · 5 记事本
+ */
+export function promptIconDataUri(seed) {
+  const h = hashSeed(seed);
+  const { bg, ink, accent } = PROMPT_PALETTES[h % PROMPT_PALETTES.length];
+  const v = h % 6;
+  let glyph = '';
+  if (v === 0) {
+    glyph = `<rect x="11" y="9" width="15" height="20" rx="2" fill="${accent}" fill-opacity=".22" stroke="${ink}" stroke-width="1.5"/>
+      <path d="M14.5 15h8M14.5 19h8M14.5 23h5" stroke="${ink}" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M24 22l5.5 5.5c.6.6.6 1.5 0 2.1l-1.4 1.4c-.6.6-1.5.6-2.1 0L20.5 25.5V22H24z" fill="${accent}" stroke="${ink}" stroke-width="1.3" stroke-linejoin="round"/>`;
+  } else if (v === 1) {
+    glyph = `<path d="M10 12.5c0-1.4 1.1-2.5 2.5-2.5h15c1.4 0 2.5 1.1 2.5 2.5v10c0 1.4-1.1 2.5-2.5 2.5H18l-4.5 4v-4H12.5c-1.4 0-2.5-1.1-2.5-2.5v-10z" fill="${accent}" fill-opacity=".25" stroke="${ink}" stroke-width="1.5"/>
+      <path d="M15 16h10M15 20h7" stroke="${ink}" stroke-width="1.4" stroke-linecap="round"/>`;
+  } else if (v === 2) {
+    glyph = `<rect x="9" y="10" width="22" height="20" rx="3" fill="${accent}" fill-opacity=".2" stroke="${ink}" stroke-width="1.5"/>
+      <path d="M14 16c0-2 1.2-3.2 3-3.2v2.1c-.8 0-1.3.5-1.3 1.3H18v6h-4v-6.2zM22 16c0-2 1.2-3.2 3-3.2v2.1c-.8 0-1.3.5-1.3 1.3H26v6h-4v-6.2z" fill="${ink}"/>`;
+  } else if (v === 3) {
+    glyph = `<path d="M12 11h12a3 3 0 0 1 3 3v14l-3-2-3 2-3-2-3 2-3-2V14a3 3 0 0 1 3-3z" fill="${accent}" fill-opacity=".25" stroke="${ink}" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M16 17h8M16 21h6" stroke="${ink}" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M28.5 12.5l1.2-2.4 1.2 2.4 2.5.3-1.9 1.7.6 2.5-2.4-1.4-2.4 1.4.6-2.5-1.9-1.7z" fill="${accent}"/>`;
+  } else if (v === 4) {
+    glyph = `<rect x="8" y="12" width="15" height="11" rx="2.5" fill="${accent}" fill-opacity=".35" stroke="${ink}" stroke-width="1.4"/>
+      <rect x="17" y="17" width="15" height="11" rx="2.5" fill="${bg}" stroke="${ink}" stroke-width="1.5"/>
+      <path d="M20.5 21.5h8M20.5 24.5h5" stroke="${ink}" stroke-width="1.3" stroke-linecap="round"/>`;
+  } else {
+    glyph = `<rect x="11" y="8" width="18" height="24" rx="2.5" fill="${accent}" fill-opacity=".2" stroke="${ink}" stroke-width="1.5"/>
+      <rect x="14" y="11" width="12" height="3" rx="1" fill="${ink}" opacity=".35"/>
+      <path d="M15 18h10M15 22h10M15 26h7" stroke="${ink}" stroke-width="1.4" stroke-linecap="round"/>`;
+  }
+  return toSvgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
+    <rect width="40" height="40" rx="10" fill="${bg}"/>
+    ${glyph}
+  </svg>`);
+}
+
+/** 按类型生成默认图标 data URI；自定义 URL 时不走这里 */
+export function assetIconDataUri(type, seed) {
+  if (type === 'assistant') return assistantAvatarDataUri(seed);
+  if (type === 'skill') return skillIconDataUri(seed);
+  if (type === 'prompt') return promptIconDataUri(seed);
+  return '';
+}
+
+/** 优先 metadata.icon(URL);否则按类型生成有含义的本地 SVG */
+export function AssetLogo({ type, icon, name }) {
   const visual = typeVisual(type);
   const raw = String(icon || '').trim();
   const isUrl = /^https?:\/\//i.test(raw) || raw.startsWith('data:');
+  const seed = name || raw || type || 'asset';
+  // 有真实图片 URL 则用 URL；否则技能/提示词/智能体都走复合 SVG
+  const generated = !isUrl ? assetIconDataUri(type, seed) : '';
+  const imgSrc = isUrl ? raw : generated;
+  const round = type === 'assistant';
+
   return (
     <span
-      className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl overflow-hidden ${
-        isUrl ? 'bg-zinc-50 dark:bg-zinc-800/80 ring-1 ring-zinc-200/70 dark:ring-zinc-700/70' : visual.tile
+      className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden ${
+        round ? 'rounded-full' : 'rounded-xl'
+      } ${
+        imgSrc
+          ? 'bg-zinc-100 dark:bg-zinc-800 ring-1 ring-zinc-200/70 dark:ring-zinc-700/70'
+          : visual.tile
       }`}
       aria-hidden
     >
-      {isUrl ? (
-        <img src={raw} alt="" className="h-7 w-7 object-contain" loading="lazy" referrerPolicy="no-referrer" />
+      {imgSrc ? (
+        <img
+          src={imgSrc}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+        />
       ) : (
         <span className="text-sm leading-none">{raw || visual.icon}</span>
       )}
@@ -124,7 +292,8 @@ export default function ResourceAssetCard({
   previewLabel = 'Preview',
   collapseLabel = 'Collapse',
   showPreviewBtn = true,
-  layout = 'row', // row=横排按钮; col=竖排; stack=目录/推荐竖排贴底
+  // row/col：操作条贴卡片底横排（避免右侧竖堆）；stack：目录/推荐卡内贴底
+  layout = 'row',
 }) {
   const visual = typeVisual(type);
   const title = resourceDisplayName(type, item);
@@ -132,17 +301,28 @@ export default function ResourceAssetCard({
   const detail = previewText != null ? String(previewText) : buildPreviewText(type, item);
   const icon = item?.icon || item?.metadata?.icon;
   const stacked = layout === 'stack';
+  const hasActions = !!(actions || (showPreviewBtn && onTogglePreview));
+  // 一律横排 + 可换行，不再在右侧 flex-col 堆积
   const actionsCls = stacked
     ? 'flex shrink-0 flex-wrap gap-1.5 justify-end pt-1 mt-auto'
-    : layout === 'col'
-      ? 'flex shrink-0 flex-col items-end gap-1.5'
-      : 'flex shrink-0 flex-wrap gap-1.5 justify-end self-center';
+    : 'flex flex-wrap items-center justify-end gap-1.5 mt-3 pt-3 border-t border-zinc-100/90 dark:border-white/[0.06]';
+
+  const actionBar = hasActions ? (
+    <div className={actionsCls}>
+      {showPreviewBtn && onTogglePreview && (
+        <button type="button" className={ASSET_BTN_GHOST} onClick={onTogglePreview}>
+          {expanded ? collapseLabel : previewLabel}
+        </button>
+      )}
+      {actions}
+    </div>
+  ) : null;
 
   return (
     <div className={`${ASSET_CARD_CLASS}${stacked ? ' h-full flex flex-col' : ''}${className ? ` ${className}` : ''}`}>
-      <div className={`flex gap-4 ${stacked ? 'flex-col flex-1 min-h-0' : 'items-start justify-between'}`}>
+      <div className={`flex gap-3 ${stacked ? 'flex-col flex-1 min-h-0' : 'items-start'}`}>
         <div className="flex min-w-0 flex-1 gap-3">
-          <AssetLogo type={type} icon={icon} />
+          <AssetLogo type={type} icon={icon} name={title || item?.id || item?.slug} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               {onTogglePreview ? (
@@ -177,17 +357,10 @@ export default function ResourceAssetCard({
             {meta}
           </div>
         </div>
-        {(actions || (showPreviewBtn && onTogglePreview)) ? (
-          <div className={actionsCls}>
-            {showPreviewBtn && onTogglePreview && (
-              <button type="button" className={ASSET_BTN_GHOST} onClick={onTogglePreview}>
-                {expanded ? collapseLabel : previewLabel}
-              </button>
-            )}
-            {actions}
-          </div>
-        ) : null}
+        {stacked ? actionBar : null}
       </div>
+      {/* 列表卡：操作条沉底横排，避免右侧竖向堆积 */}
+      {!stacked ? actionBar : null}
       {expanded && (
         <pre className="mt-3.5 text-[11px] leading-relaxed p-3.5 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50/90 dark:bg-zinc-950 text-zinc-600 dark:text-zinc-300 overflow-x-auto max-h-64 whitespace-pre-wrap">
           {detail || emptyPreviewLabel}

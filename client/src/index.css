@@ -17,15 +17,30 @@
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
     --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
     --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+    /* 发丝线：半透明描边，替代实色 zinc/gray 分割线的廉价感 */
+    --tb-line-soft: rgb(24 24 27 / 0.05);
+    --tb-line: rgb(24 24 27 / 0.08);
+    --tb-line-strong: rgb(24 24 27 / 0.12);
+  }
+
+  html.dark {
+    --tb-line-soft: rgb(255 255 255 / 0.05);
+    --tb-line: rgb(255 255 255 / 0.08);
+    --tb-line-strong: rgb(255 255 255 / 0.13);
   }
 
   body {
-    /* 优先系统字体（光学字距 / Dynamic Type 友好），Inter 作跨平台回退 */
-    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
-    letter-spacing: 0;
+    /* 优先 SF / 系统字体；Inter 仅作跨平台回退，避免整站「通用 Inter」廉价感 */
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Inter', sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+    letter-spacing: -0.01em;
     /* 主题切换缓变，避免明暗跳变刺眼 */
     transition: background-color 0.35s ease, color 0.35s ease;
+  }
+
+  h1, h2, h3 {
+    letter-spacing: -0.022em;
+    font-weight: 600;
   }
 
   *,
@@ -34,11 +49,41 @@
     box-sizing: border-box;
   }
 
-  /* Mono elements */
+  /* Mono：略收紧字距，数字用等宽对齐 */
   code, kbd, pre, .font-mono {
     font-family: 'SF Mono', ui-monospace, 'JetBrains Mono', 'Fira Code', monospace;
     font-size: 0.9em;
-    letter-spacing: 0;
+    letter-spacing: -0.015em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 原生 table：去掉灰底表头板，统一发丝线与数字对齐 */
+  table {
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  thead th {
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: rgb(82 82 91); /* zinc-600，比 zinc-400 更清晰、少「灰泥」感 */
+    background: transparent;
+    border-bottom: 1px solid var(--tb-line);
+  }
+  .dark thead th {
+    color: rgb(161 161 170);
+  }
+  tbody td {
+    border-top: 1px solid var(--tb-line-soft);
+  }
+  /* 首行不再与 thead 底边叠成双线 */
+  tbody tr:first-child td {
+    border-top: none;
+  }
+  tbody tr:hover td {
+    background: rgb(24 24 27 / 0.025);
+  }
+  .dark tbody tr:hover td {
+    background: rgb(255 255 255 / 0.03);
   }
 
   /* Compact scrollbars */
@@ -104,6 +149,80 @@
   /* 短 critically-damped 入场（无 overshoot） */
   .tb-enter {
     animation: tb-materialize 0.32s var(--ease-out) both;
+  }
+
+  /* 数据表外壳：轻阴影 + 发丝线，替代灰底卡片感 */
+  .tb-table-shell {
+    border: 1px solid var(--tb-line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgb(255 255 255 / 0.92);
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.65) inset,
+      0 1px 2px rgb(15 23 42 / 0.03),
+      0 10px 28px -18px rgb(15 23 42 / 0.14);
+  }
+  .dark .tb-table-shell {
+    background: rgb(24 24 27 / 0.55);
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.04) inset,
+      0 12px 32px -20px rgb(0 0 0 / 0.55);
+  }
+
+  /* 表头：毛玻璃吸顶，不用 zinc-50 实色板 */
+  .tb-table-head {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    color: rgb(82 82 91);
+    background: rgb(255 255 255 / 0.78);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border-bottom: 1px solid var(--tb-line);
+    font-variant-numeric: tabular-nums;
+  }
+  .dark .tb-table-head {
+    color: rgb(161 161 170);
+    background: rgb(24 24 27 / 0.78);
+  }
+
+  /* 表行：发丝分隔 + 轻 hover（紧跟表头的首行不再叠双线） */
+  .tb-table-row {
+    border-top: 1px solid var(--tb-line-soft);
+    font-variant-numeric: tabular-nums;
+    transition: background-color 150ms ease;
+  }
+  .tb-table-head + .tb-table-row {
+    border-top: none;
+  }
+  .tb-table-row:hover {
+    background: rgb(24 24 27 / 0.025);
+  }
+  .dark .tb-table-row:hover {
+    background: rgb(255 255 255 / 0.03);
+  }
+
+  /* 表内主文案：略提对比，避免整表发灰 */
+  .tb-table-cell-primary {
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    color: rgb(24 24 27);
+  }
+  .dark .tb-table-cell-primary {
+    color: rgb(244 244 245);
+  }
+
+  /* 表内次要数字/元数据 */
+  .tb-table-cell-meta {
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    color: rgb(113 113 122);
+    font-variant-numeric: tabular-nums;
+  }
+  .dark .tb-table-cell-meta {
+    color: rgb(161 161 170);
   }
 }
 
@@ -296,5 +415,76 @@
   .dark .tb-material,
   .dark .tb-sheet {
     border-color: rgba(255, 255, 255, 0.35);
+  }
+}
+
+/*
+ * 软化全局高频分割线 / 卡片描边：
+ * 覆盖 Tailwind 实色 border-zinc|gray-*，统一为主题感知发丝线。
+ * 不改 JSX class，语义色（red/blue/…）与 bg-* 不受影响。
+ */
+.border-zinc-100,
+.border-zinc-100\/80,
+.border-gray-100,
+.divide-zinc-100 > :not([hidden]) ~ :not([hidden]),
+.divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--tb-line-soft);
+}
+
+.border-zinc-200,
+.border-gray-200,
+.border-zinc-200\/50,
+.border-zinc-200\/70,
+.border-zinc-200\/80,
+.divide-zinc-200 > :not([hidden]) ~ :not([hidden]),
+.divide-gray-200 > :not([hidden]) ~ :not([hidden]),
+.divide-gray-200\/50 > :not([hidden]) ~ :not([hidden]),
+.divide-gray-200\/60 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--tb-line);
+}
+
+.border-zinc-300,
+.border-gray-300 {
+  border-color: var(--tb-line-strong);
+}
+
+/* 暗色变体：与亮色共用 token，避免 zinc-700/800 实色硬边 */
+.dark .dark\:border-zinc-700,
+.dark .dark\:border-zinc-800,
+.dark .dark\:border-zinc-800\/30,
+.dark .dark\:border-zinc-800\/50,
+.dark .dark\:border-zinc-800\/80,
+.dark .dark\:border-gray-700,
+.dark .dark\:border-gray-800,
+.dark .dark\:divide-zinc-700 > :not([hidden]) ~ :not([hidden]),
+.dark .dark\:divide-zinc-800 > :not([hidden]) ~ :not([hidden]),
+.dark .dark\:divide-gray-700 > :not([hidden]) ~ :not([hidden]),
+.dark .dark\:divide-gray-800 > :not([hidden]) ~ :not([hidden]),
+.dark .dark\:divide-gray-800\/50 > :not([hidden]) ~ :not([hidden]),
+.dark .dark\:divide-gray-800\/60 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--tb-line);
+}
+
+.dark .dark\:border-zinc-600,
+.dark .dark\:border-gray-600 {
+  border-color: var(--tb-line-strong);
+}
+
+/* 保留显式 transparent，不被上方发丝线覆盖 */
+.dark .dark\:border-transparent {
+  border-color: transparent;
+}
+
+/* 高对比偏好：恢复更清晰的分割线 */
+@media (prefers-contrast: more) {
+  html {
+    --tb-line-soft: rgb(24 24 27 / 0.18);
+    --tb-line: rgb(24 24 27 / 0.28);
+    --tb-line-strong: rgb(24 24 27 / 0.4);
+  }
+  html.dark {
+    --tb-line-soft: rgb(255 255 255 / 0.2);
+    --tb-line: rgb(255 255 255 / 0.32);
+    --tb-line-strong: rgb(255 255 255 / 0.45);
   }
 }

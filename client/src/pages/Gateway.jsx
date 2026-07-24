@@ -2443,8 +2443,8 @@ function AppDetailModal({ app, onClose }) {
               {sessionHistoryRows.length === 0 ? (
                 <div className="text-xs text-zinc-400 px-1">{t('gateway.detail.noSessions')}</div>
               ) : (
-                <div className="border border-zinc-100 dark:border-zinc-800 rounded-lg overflow-hidden">
-                  <div className="grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-1.5 text-xs font-medium text-zinc-400 bg-zinc-50 dark:bg-zinc-800/40 border-b border-zinc-100 dark:border-zinc-800">
+                <div className="tb-table-shell rounded-lg">
+                  <div className="tb-table-head grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-1.5">
                     <span>{t('gateway.detail.colProject')}</span><span>{t('gateway.detail.colContext')}</span><span className="text-right">{t('gateway.detail.colRequests')}</span><span className="text-right">Token</span><span className="text-right">{t('gateway.detail.colTime')}</span><span className="text-right">{canTrace ? 'Trace' : t('gateway.detail.colDetail')}</span>
                   </div>
                   <div className="divide-y divide-zinc-100 dark:divide-zinc-800 max-h-64 overflow-y-auto">
@@ -3088,10 +3088,10 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                 {t('gateway.apps.empty')}
               </div>
             ) : (
-              <div className={`border border-zinc-200/70 dark:border-white/[0.07] rounded-2xl overflow-hidden bg-white dark:bg-zinc-800/40 shadow-sm ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
+              <div className={`tb-table-shell ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
                 <div className="overflow-x-auto">
-                {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
-                <div className={`${APPS_TABLE_GRID} py-2.5 bg-zinc-50 dark:bg-zinc-800/80 text-[11px] font-semibold tracking-wide text-zinc-400 dark:text-zinc-500 sticky top-0 z-10 border-b border-zinc-200/70 dark:border-white/[0.06]`}>
+                {/* 表头：毛玻璃吸顶，避免灰底板廉价感 */}
+                <div className={`${APPS_TABLE_GRID} tb-table-head py-2.5 sticky top-0 z-10`}>
                   <span className="text-base text-center shrink-0 invisible">🔧</span>
                   <div className="min-w-0">{t('gateway.apps.colApp')}</div>
                   <div className="text-center min-w-0">{t('gateway.apps.colStatus')}</div>
@@ -3109,11 +3109,11 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                     const toolName = String(s.name || '').split(' · ')[0] || s.name;
                     const pbrand = brandIconFor(s);
                     return (
-                      <div key={'grp-' + entry.agentId} className={`${APPS_TABLE_GRID} py-2.5 border-t border-zinc-100/80 dark:border-white/[0.05] bg-white dark:bg-zinc-800/60`}>
+                      <div key={'grp-' + entry.agentId} className={`${APPS_TABLE_GRID} tb-table-row py-2.5`}>
                         {pbrand ? <img src={pbrand} alt="" className="w-[18px] h-[18px] mx-auto object-contain shrink-0" />
                           : isAppIcon(s.icon) ? appIconSvg(s.icon, 'w-[18px] h-[18px] mx-auto shrink-0')
                           : <span className="text-base text-center shrink-0">{s.icon}</span>}
-                        <div className="text-xs font-medium truncate min-w-0 flex items-center gap-1.5 text-zinc-800 dark:text-zinc-100">
+                        <div className="text-xs font-medium tracking-tight text-zinc-800 dark:text-zinc-100 truncate min-w-0 flex items-center gap-1.5">
                           <span className="truncate">{toolName}</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700/60 text-zinc-500 dark:text-zinc-400 shrink-0">{t('gateway.apps.instanceCount', { n: entry.count })}</span>
                         </div>
@@ -3180,12 +3180,13 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         .filter(v => routeKnown(v))
                     : [];
                   const isActive = isManaged;
+                  /* 实心状态点，去掉霓虹 glow */
                   const statusDot = isManaged
-                    ? 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60'
+                    ? 'bg-emerald-500'
                     : 'bg-zinc-300 dark:bg-zinc-600';
                   const rowBg = isManaged
-                    ? 'bg-white dark:bg-zinc-800/60 hover:bg-zinc-50/80 dark:hover:bg-zinc-800/30'
-                    : 'bg-zinc-50/40 dark:bg-zinc-800/10 hover:bg-zinc-50 dark:hover:bg-zinc-800/20';
+                    ? ''
+                    : 'bg-zinc-500/[0.03] dark:bg-white/[0.02]';
                   const canBindRoute = app.route_bindable !== false
                     && (app.link_method === 'session' || isDirectOnly || app.capabilities?.gateway_proxy !== false);
                   const routeLocked = isDirectOnly || !canBindRoute || ((hostable && !tracked) && !isSessionApp);
@@ -3201,7 +3202,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
                     // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
                     <React.Fragment key={app.id}>
-                    <div className={`${APPS_TABLE_GRID} py-3 transition-colors border-t border-zinc-100/80 dark:border-white/[0.05] ${rowBg}`}>
+                    <div className={`${APPS_TABLE_GRID} tb-table-row py-3 ${rowBg}`}>
                       {/* 图标 + 名称（命中品牌则用 lobehub logo，否则回退 emoji）*/}
                       {(() => {
                         const brand = brandIconFor(app);
@@ -3210,16 +3211,16 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         return <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>;
                       })()}
                       {isChild ? (
-                        <div className="min-w-0 pl-4 border-l-2 border-zinc-100 dark:border-white/[0.06]" title={app.name + (app.instance?.dir_glob ? '  ·  ' + app.instance.dir_glob : '')}>
-                          <div className={`text-xs font-medium truncate ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}>
+                        <div className="min-w-0 pl-4 border-l border-zinc-200 dark:border-zinc-800" title={app.name + (app.instance?.dir_glob ? '  ·  ' + app.instance.dir_glob : '')}>
+                          <div className={`text-xs font-medium tracking-tight text-zinc-800 dark:text-zinc-100 truncate ${isActive ? '' : 'opacity-50'}`}>
                             {String(app.name || '').split(' · ').slice(1).join(' · ') || app.name}
                           </div>
-                          {app.instance?.dir_glob && <div className="text-[10px] text-zinc-400 font-mono truncate">{tildify(app.instance.dir_glob)}</div>}
-                          {app.instance?.account_email && <div className="text-[10px] text-zinc-400 truncate">{app.instance.account_email}</div>}
+                          {app.instance?.dir_glob && <div className="tb-table-cell-meta font-mono truncate">{tildify(app.instance.dir_glob)}</div>}
+                          {app.instance?.account_email && <div className="tb-table-cell-meta truncate">{app.instance.account_email}</div>}
                         </div>
                       ) : (
                         <div
-                          className={`text-xs font-medium truncate min-w-0 ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}
+                          className={`text-xs font-medium tracking-tight text-zinc-800 dark:text-zinc-100 truncate min-w-0 ${isActive ? '' : 'opacity-50'}`}
                           title={app.name}
                         >{app.name}</div>
                       )}
@@ -3231,14 +3232,14 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       </div>
 
                       {/* 接入方式列（居中，与表头对齐）*/}
-                      <div className="min-w-0 text-xs text-zinc-400 truncate text-center">
+                      <div className="min-w-0 tb-table-cell-meta truncate text-center">
                         {linkMethodLabel(app.link_method, t)}
                       </div>
 
                       {/* 统计：请求数 / token / 最后使用（点击打开用量明细）*/}
-                      <div className="text-center overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
-                      <div className="text-center overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
-                      <div className="text-center overflow-hidden text-xs font-medium text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{fmtTime(st.lastTs)}</div>
+                      <div className="text-center overflow-hidden text-[11px] font-medium tabular-nums tracking-tight text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-500/[0.06] dark:hover:bg-white/[0.06] cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
+                      <div className="text-center overflow-hidden text-[11px] font-medium tabular-nums tracking-tight text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-500/[0.06] dark:hover:bg-white/[0.06] cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
+                      <div className="text-center overflow-hidden tb-table-cell-meta rounded hover:bg-zinc-500/[0.06] dark:hover:bg-white/[0.06] cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{fmtTime(st.lastTs)}</div>
 
                       {/* 路由下拉：同一控件；不可绑路由时灰色禁用（与仅官方订阅应用一致） */}
                       <div className="min-w-0 overflow-visible">

@@ -105,25 +105,25 @@ function ContributeSection() {
       ) : models.length === 0 ? (
         <p className="text-sm text-gray-400 dark:text-gray-500">暂无已启用的模型</p>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-gray-100 dark:border-gray-700">
+        <div className="tb-table-shell">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-gray-50 dark:bg-gray-700/50 text-gray-500 dark:text-gray-400 text-xs">
-                <th className="text-left px-4 py-2 font-medium">模型</th>
-                <th className="text-right px-4 py-2 font-medium">贡献积分 / 千 tokens</th>
-                <th className="text-right px-4 py-2 font-medium">消耗积分 / 千 tokens</th>
+              <tr className="tb-table-head text-xs">
+                <th className="text-left px-4 py-2.5">模型</th>
+                <th className="text-right px-4 py-2.5">贡献积分 / 千 tokens</th>
+                <th className="text-right px-4 py-2.5">消耗积分 / 千 tokens</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+            <tbody>
               {models.map((m) => (
-                <tr key={m.name} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                  <td className="px-4 py-2.5 text-gray-700 dark:text-gray-300 truncate max-w-[160px]">
+                <tr key={m.name}>
+                  <td className="px-4 py-2.5 tb-table-cell-primary truncate max-w-[160px]">
                     {m.display_name || m.name}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-medium">
+                  <td className="px-4 py-2.5 text-right text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">
                     +{m.contribute_rate}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-red-500 dark:text-red-400 font-medium">
+                  <td className="px-4 py-2.5 text-right text-red-500/90 dark:text-red-400 font-medium tabular-nums">
                     -{m.consume_rate}
                   </td>
                 </tr>

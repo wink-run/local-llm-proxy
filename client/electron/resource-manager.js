@@ -31,6 +31,8 @@ const {
 
 /** Token Bank 落盘 skill 的默认权威根（agents-hub，已被 Skill 扫描器覆盖） */
 const SKILL_HUB_ROOT = path.join(os.homedir(), '.agents', 'skills');
+/** 缺失依赖（数据异常）每种只报一次，避免刷屏 */
+const _missingCatalogDepLogged = new Set();
 const {
   AGENT_RESOURCE_TARGETS,
   listProjectableAgentIds,
@@ -344,13 +346,20 @@ class ResourceManager {
 
   listCatalog(filters = {}) {
     this.init();
+    const sets = {
+      managedSet: this._getManagedDepKeySet(),
+      catalogSet: this._getCatalogDepKeySet(),
+    };
     const items = listCatalogItems(filters).map(item => {
       const installed = this._findByTypeName(item.type, item.name);
-      return {
+      const out = {
         ...item,
         installed: !!installed,
         resourceId: installed?.id || null,
       };
+      // 目录智能体同样标注无法解析的依赖，纳管前即可发现
+      if (item.type === 'assistant') this._annotateAssistantDeps(out, sets);
+      return out;
     });
     return {
       items,
@@ -364,6 +373,50 @@ class ResourceManager {
       'SELECT * FROM resources WHERE type = ? AND name = ?',
     ).get(type, name);
     return this._rowToResource(row);
+  }
+
+  /** 本机已纳管的 skill/prompt：`type:name` 集合，用于智能体依赖校验 */
+  _getManagedDepKeySet() {
+    const rows = this._getDb().prepare(
+      "SELECT type, name FROM resources WHERE type IN ('skill', 'prompt')",
+    ).all();
+    return new Set(rows.map(r => `${r.type}:${r.name}`));
+  }
+
+  /** 社区目录中的 skill/prompt：`type:name` 集合 */
+  _getCatalogDepKeySet() {
+    return new Set(
+      listCatalogItems()
+        .filter(c => c.type === 'skill' || c.type === 'prompt')
+        .map(c => `${c.type}:${c.name}`),
+    );
+  }
+
+  /**
+   * 智能体声明了、但目录与本机均不存在、且无法运行时自装的依赖。
+   * skill 可由执行时 skillhub 按需安装，不算缺失；仅 prompt 需事先纳管/进目录。
+   * @returns {{ type: string, name: string }[]}
+   */
+  _getAssistantMissingDeps(assistantItem, { managedSet, catalogSet } = {}) {
+    const config = parseAssistantConfig((assistantItem && assistantItem.content) || '');
+    const managed = managedSet || this._getManagedDepKeySet();
+    const catalog = catalogSet || this._getCatalogDepKeySet();
+    const missing = [];
+    for (const name of config.prompts || []) {
+      const key = `prompt:${name}`;
+      if (managed.has(key) || catalog.has(key)) continue;
+      missing.push({ type: 'prompt', name });
+    }
+    return missing;
+  }
+
+  /** 给智能体资源挂上 missingDeps / depsBroken，供 UI 标识 */
+  _annotateAssistantDeps(resource, sets) {
+    if (!resource || resource.type !== 'assistant') return resource;
+    const missingDeps = this._getAssistantMissingDeps(resource, sets);
+    resource.missingDeps = missingDeps;
+    resource.depsBroken = missingDeps.length > 0;
+    return resource;
   }
 
   listResources(filters = {}) {
@@ -384,9 +437,14 @@ class ResourceManager {
     sql += ' ORDER BY created_at DESC';
 
     const rows = db.prepare(sql).all(...params);
+    const needAnnotate = !filters.type || filters.type === 'assistant';
+    const sets = needAnnotate
+      ? { managedSet: this._getManagedDepKeySet(), catalogSet: this._getCatalogDepKeySet() }
+      : null;
     return rows.map(row => {
       const resource = this._rowToResource(row);
       resource.projections = this._getProjections(resource.id);
+      if (needAnnotate) this._annotateAssistantDeps(resource, sets);
       return resource;
     });
   }
@@ -395,7 +453,10 @@ class ResourceManager {
     this.init();
     const row = this._getDb().prepare('SELECT * FROM resources WHERE id = ?').get(resourceId);
     const resource = this._rowToResource(row);
-    if (resource) resource.projections = this._getProjections(resourceId);
+    if (resource) {
+      resource.projections = this._getProjections(resourceId);
+      this._annotateAssistantDeps(resource);
+    }
     return resource;
   }
 
@@ -600,7 +661,26 @@ class ResourceManager {
       }
       const catItem = catalogItems.find(c => c.type === dep.type && c.name === dep.name);
       if (!catItem) {
-        console.warn('[resource-manager] 目录无依赖,跳过:', dep.type, dep.name);
+        // 扫描刚入库的本机项再查一次
+        const again = this._findByTypeName(dep.type, dep.name);
+        if (again) {
+          if (dep.type === 'skill') {
+            try { this._ensureSkillOnDisk(again.id); } catch { /* ignore */ }
+          }
+          continue;
+        }
+        // skill：目录没有属常态，执行时可由 skillhub 自装，不报错
+        if (dep.type === 'skill') continue;
+        // prompt：无法运行时自装，记为数据异常（每种只报一次）
+        const missKey = `${assistantItem?.name || '?'}::${dep.type}:${dep.name}`;
+        if (!_missingCatalogDepLogged.has(missKey)) {
+          _missingCatalogDepLogged.add(missKey);
+          console.error(
+            '[resource-manager] 数据异常: 智能体声明的提示词既不在社区目录、本机也未纳管:',
+            dep.name,
+            assistantItem?.name ? `(assistant=${assistantItem.name})` : '',
+          );
+        }
         continue;
       }
       try {
@@ -862,10 +942,8 @@ class ResourceManager {
     }
     for (const name of config.skills || []) {
       const row = this._findByTypeName('skill', name);
-      if (!row) {
-        missing.push({ type: 'skill', name });
-        continue;
-      }
+      // 未纳管 skill 不记 missing：执行时可 skillhub 自装
+      if (!row) continue;
       if (!seen.has(row.id)) {
         seen.add(row.id);
         resources.push(this.getResource(row.id));
@@ -1365,9 +1443,12 @@ class ResourceManager {
     const db = this._getDb();
     const sourceDir = entry.skillDir || path.dirname(entry.skillPath);
     const authorityPath = path.resolve(sourceDir);
+    // 已打标（含 AI 用途）优先保留，避免扫描同步用空 frontmatter 覆盖后重复打标
+    const existingTags = Array.isArray(existing?.metadata?.tags) ? existing.metadata.tags : [];
+    const scannedTags = Array.isArray(entry.metadata?.tags) ? entry.metadata.tags : [];
     const metadata = {
       ...(existing?.metadata || {}),
-      tags: entry.metadata?.tags || [],
+      tags: existingTags.length ? existingTags : scannedTags,
       authorityPath,
       scannedFrom: authorityPath,
       originAgents: group.agents.map(a => a.agentId),
@@ -1475,15 +1556,7 @@ class ResourceManager {
    */
   syncDiscoveredSkills(filters = {}) {
     this.init();
-    // 先按智能体声明补齐依赖 skill(库+磁盘)
-    try {
-      for (const a of this.listResources({ type: 'assistant' })) {
-        this._installAssistantCatalogDeps(a);
-      }
-    } catch (e) {
-      console.warn('[resource-manager] ensure assistant skill deps:', e.message);
-    }
-
+    // 1) 先扫本机并纳管，再补智能体依赖——避免「本机有 skill、目录没有」被误判为缺失
     const scanOptions = this._applyScanOptions(filters);
     const rawEntries = scanAllAgentSkills(scanOptions);
     const grouped = groupDiscoveredSkills(rawEntries);
@@ -1507,6 +1580,15 @@ class ResourceManager {
       this._importDiscoveredGroup(group, entry, { updateIfExists: !!(contentChanged || descMissing) });
       if (managedRes) updated += 1;
       else imported += 1;
+    }
+
+    // 2) 再按智能体声明补齐目录依赖；此时本机 skill 应已入库
+    try {
+      for (const a of this.listResources({ type: 'assistant' })) {
+        this._installAssistantCatalogDeps(a);
+      }
+    } catch (e) {
+      console.warn('[resource-manager] ensure assistant skill deps:', e.message);
     }
 
     // 复用 listDiscoveredSkills 得到最终列表（含刚纳管项与 projections）
@@ -1707,6 +1789,22 @@ class ResourceManager {
         items,
       };
     });
+
+    // 公共目录（.agents / .tokenbank）与扫描面板默认行对齐，附带技能数
+    const { EXTRA_SKILL_ROOTS } = require('./resource-skill-scanner');
+    for (const extra of EXTRA_SKILL_ROOTS) {
+      const skillRoot = extra.getSkillRoot();
+      const items = buildItems(extra.agentId, scanIndex[extra.agentId] || new Map());
+      agents.push({
+        id: extra.agentId,
+        label: extra.label,
+        path: skillRoot,
+        exists: fs.existsSync(skillRoot),
+        syncEnabled: false,
+        count: items.length,
+        items,
+      });
+    }
 
     if (scanOptions.customDirs?.length && scanIndex.custom?.size) {
       const items = buildItems('custom', scanIndex.custom);

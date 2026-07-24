@@ -454,6 +454,13 @@ function buildAgentSkillScanIndex(options = {}) {
       index[target.id].set(item.name, decorateScanItem({ ...item, scope: 'global' }));
     }
   }
+  // 与默认监控列表一致：.agents / .tokenbank 也计入各目录技能数
+  for (const extra of EXTRA_SKILL_ROOTS) {
+    if (!index[extra.agentId]) index[extra.agentId] = new Map();
+    for (const item of scanSkillRoot(extra.getSkillRoot(), extra.agentId, extra.label)) {
+      index[extra.agentId].set(item.name, decorateScanItem({ ...item, scope: 'global' }));
+    }
+  }
 
   const dirs = [...new Set((options.customDirs || []).map(d => path.resolve(String(d || '').trim())).filter(Boolean))];
   if (dirs.length) {

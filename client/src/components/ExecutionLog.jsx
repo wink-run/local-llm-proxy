@@ -78,12 +78,13 @@ function redrawThinkingOutputPairs(items) {
 /** 步骤类型元数据（标签随语言切换） */
 function getStepMeta(t) {
   return {
-    thinking: { icon: '', label: t('debug.log.thinking'), accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
-    tool_call: { icon: '', label: t('debug.log.toolCall'), accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
-    tool_result: { icon: '', label: t('debug.log.toolResult'), accent: 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/40 dark:bg-emerald-900/15' },
-    code_edit: { icon: '', label: t('debug.log.codeEdit'), accent: 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/40 dark:bg-emerald-900/15' },
+    /* 底色极淡：靠发丝线 + 字色区分，避免大块彩底抢视线 */
+    thinking: { icon: '', label: t('debug.log.thinking'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
+    tool_call: { icon: '', label: t('debug.log.toolCall'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
+    tool_result: { icon: '', label: t('debug.log.toolResult'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
+    code_edit: { icon: '', label: t('debug.log.codeEdit'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
     terminal: { icon: '', label: t('debug.log.terminal'), accent: 'border-zinc-300 bg-zinc-900/90 dark:border-zinc-600 text-zinc-100' },
-    system_event: { icon: '', label: t('debug.log.system'), accent: 'border-sky-200 bg-sky-50/50 dark:border-sky-800/40 dark:bg-sky-900/15' },
+    system_event: { icon: '', label: t('debug.log.system'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
     output: { icon: '', label: t('debug.log.reply'), accent: '' },
   };
 }
@@ -748,23 +749,25 @@ function formatSystemStatusLine(ev, t) {
   return (info.detail || info.title || '').trim();
 }
 
-/** 单条系统事件 */
+/** 单条系统事件：扁平行，不再套内层 panel */
 function SystemEventRow({ ev, index }) {
   const { t } = useLang();
   const info = describeSystemEvent(ev, t);
   return (
-    <div className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg bg-white/70 dark:bg-zinc-900/50 border border-sky-100/80 dark:border-sky-800/30">
-      <span className="w-5 h-5 shrink-0 rounded-full bg-sky-100 dark:bg-sky-900/50 text-[10px] font-semibold text-sky-700 dark:text-sky-300 flex items-center justify-center">
+    <div className="flex items-start gap-2 py-1.5">
+      <span className="w-4 shrink-0 text-[10px] font-medium tabular-nums text-zinc-400 pt-0.5 text-right">
         {index ?? ev.attempt ?? '·'}
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-sky-900 dark:text-sky-100">{info.title}</p>
-        {info.detail && (
-          <p className="text-[10px] text-sky-700/70 dark:text-sky-300/70 truncate">{info.detail}</p>
-        )}
+        <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-snug">
+          <span className="font-medium text-zinc-700 dark:text-zinc-200">{info.title}</span>
+          {info.detail ? (
+            <span className="text-zinc-500 dark:text-zinc-400"> · {info.detail}</span>
+          ) : null}
+        </p>
       </div>
       {info.badge && (
-        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 font-mono shrink-0">
+        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 font-mono shrink-0">
           {info.badge}
         </span>
       )}
@@ -781,12 +784,12 @@ function SystemEventCard({ step }) {
   return (
     <div className="flex justify-start w-full">
       <div className={`max-w-[88%] w-full rounded-xl border ${meta.accent} overflow-hidden`}>
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-sky-100/60 dark:border-sky-800/30">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200/50 dark:border-white/[0.06]">
           {meta.icon ? <span>{meta.icon}</span> : null}
-          <span className="text-xs font-medium text-sky-800 dark:text-sky-200">{info.title}</span>
+          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">{info.title}</span>
           <span className="ml-auto text-[10px] text-zinc-400">{formatTime(step.timestamp)}</span>
         </div>
-        <div className="px-3 py-2">
+        <div className="px-3 py-1.5">
           <SystemEventRow ev={step} />
         </div>
       </div>
@@ -802,8 +805,13 @@ function SystemEventGroupCard({ item }) {
   const title = retries.length
     ? t('debug.log.apiRetryGroup', { n: retries.length })
     : t('debug.log.systemGroup', { n: events.length });
-  const [open, setOpen] = useState(true);
+  // 默认折叠，避免系统事件刷屏抢视线
+  const [open, setOpen] = useState(false);
   const meta = getStepMeta(t).system_event;
+  // 折叠时用首条细节作一行预览
+  const preview = !open && events[0]
+    ? formatSystemStatusLine(events[0], t)
+    : '';
 
   return (
     <div className="flex justify-start w-full">
@@ -811,18 +819,25 @@ function SystemEventGroupCard({ item }) {
         <button
           type="button"
           onClick={() => setOpen(v => !v)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-sky-100/30 dark:hover:bg-sky-900/20 transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-500/[0.04] dark:hover:bg-white/[0.04] transition-colors"
         >
           {meta.icon ? <span>{meta.icon}</span> : null}
-          <span className="text-xs font-medium text-sky-800 dark:text-sky-200">{title}</span>
-          <span className="text-[10px] text-sky-600/70 dark:text-sky-400/70">
-            {t('debug.log.retryHint')}
-          </span>
+          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300 shrink-0">{title}</span>
+          {!open && preview && (
+            <span className="flex-1 min-w-0 text-[10px] text-zinc-400 truncate" title={preview}>
+              {preview}
+            </span>
+          )}
+          {open && retries.length > 0 && (
+            <span className="text-[10px] text-zinc-400">
+              {t('debug.log.retryHint')}
+            </span>
+          )}
           <span className="ml-auto text-[10px] text-zinc-400 shrink-0">{formatTime(item.timestamp)}</span>
           <span className="text-xs text-zinc-400 shrink-0">{open ? '▾' : '▸'}</span>
         </button>
         {open && (
-          <div className="px-3 pb-3 space-y-1.5">
+          <div className="px-3 pb-2 border-t border-zinc-200/50 dark:border-white/[0.06] divide-y divide-zinc-200/40 dark:divide-white/[0.05]">
             {events.map((ev, idx) => (
               <SystemEventRow key={idx} ev={ev} index={ev.attempt ?? idx + 1} />
             ))}
@@ -1214,7 +1229,7 @@ function ThinkingGroupCard({ item, live = false }) {
         className={[
           'max-w-[80%] min-w-0 rounded-xl border overflow-hidden',
           meta.accent,
-          live ? 'ring-1 ring-amber-400/50 shadow-[0_0_0_1px_rgba(251,191,36,0.12)]' : '',
+          live ? 'ring-1 ring-zinc-300/50 dark:ring-white/10' : '',
         ].filter(Boolean).join(' ')}
       >
         <button
@@ -1231,36 +1246,36 @@ function ThinkingGroupCard({ item, live = false }) {
                 aria-hidden
               >
                 <span
-                  className="tb-think-scan block h-full w-1/3 bg-amber-500/90"
+                  className="tb-think-scan block h-full w-1/3 bg-zinc-400/70 dark:bg-zinc-500/80"
                   style={{ animation: 'tb-think-scan 1.35s var(--ease-in-out, ease-in-out) infinite' }}
                 />
               </span>
             </>
           )}
           {live ? (
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-500/80 shrink-0" />
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-zinc-400 dark:bg-zinc-500 shrink-0" />
           ) : (
             meta.icon ? <span className="text-sm leading-none">{meta.icon}</span> : null
           )}
-          <span className={`text-xs font-medium shrink-0 ${live ? 'text-amber-700 dark:text-amber-300 animate-pulse' : 'text-amber-800 dark:text-amber-300'}`}>
+          <span className={`text-xs font-medium shrink-0 ${live ? 'text-zinc-600 dark:text-zinc-300 animate-pulse' : 'text-zinc-600 dark:text-zinc-300'}`}>
             {live ? t('debug.log.thinkingLive') : t('debug.log.thinking')}
           </span>
           {/* 预览截断与光标分离，保证尾部呼吸光标始终可见 */}
           {!open && (preview || live) && (
             <span className="flex-1 min-w-0 flex items-center gap-0.5 overflow-hidden">
               <span
-                className={`min-w-0 flex-1 truncate text-[10px] ${preview ? 'text-zinc-400' : 'text-amber-600/80 dark:text-amber-400/80'}`}
+                className="min-w-0 flex-1 truncate text-[10px] text-zinc-400"
                 title={preview || undefined}
               >
                 {preview || t('debug.log.thinkingHint')}
               </span>
               {live && (
-                <span className="inline-block animate-pulse text-amber-500 shrink-0 leading-none">▊</span>
+                <span className="inline-block animate-pulse text-zinc-400 shrink-0 leading-none">▊</span>
               )}
             </span>
           )}
           {live && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 shrink-0 animate-pulse">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 shrink-0 animate-pulse">
               {t('debug.log.live')}
             </span>
           )}
@@ -1268,14 +1283,14 @@ function ThinkingGroupCard({ item, live = false }) {
           <span className="text-xs text-zinc-400 shrink-0">{open ? '▾' : '▸'}</span>
         </button>
         {open && (
-          <div className="px-3 pb-2.5 text-xs max-h-80 overflow-y-auto text-zinc-700 dark:text-zinc-300 border-t border-amber-100/80 dark:border-amber-900/40">
+          <div className="px-3 pb-2.5 text-xs max-h-80 overflow-y-auto text-zinc-700 dark:text-zinc-300 border-t border-zinc-200/50 dark:border-white/[0.06]">
             <StreamMarkdownContent
               content={raw}
               live={live}
               preferPlainWhileLive
             />
             {live && (
-              <span className="inline-block animate-pulse text-amber-500 ml-0.5">▊</span>
+              <span className="inline-block animate-pulse text-zinc-400 ml-0.5">▊</span>
             )}
           </div>
         )}
@@ -1306,17 +1321,17 @@ function LiveProgressPanel({ agentName, timeline }) {
   const statusDetail = systemStatus || t('debug.log.waitStream');
 
   return (
-    <div className="rounded-xl border border-blue-200/80 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/20 overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 text-sm text-blue-700 dark:text-blue-300">
-        <span className="inline-block h-3 w-16 rounded bg-blue-200 dark:bg-blue-800 animate-pulse shrink-0" />
+    <div className="rounded-xl border border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03] overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-600 dark:text-zinc-300">
+        <span className="inline-block h-3 w-16 rounded bg-zinc-200/80 dark:bg-zinc-700 animate-pulse shrink-0" />
         <span className="font-medium shrink-0">{agentName || 'Agent'} {t('debug.log.executing')}</span>
         {tools.length > 0 && (
-          <span className="text-[10px] text-blue-500/80 truncate max-w-[40%]" title={tools.join(', ')}>
+          <span className="text-[10px] text-zinc-400 truncate max-w-[40%]" title={tools.join(', ')}>
             {tools.slice(-3).join(' · ')}
           </span>
         )}
       </div>
-      <p className="px-3 pb-2.5 text-[11px] leading-relaxed text-blue-600/90 dark:text-blue-300/80">
+      <p className="px-3 pb-2.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
         {statusDetail}
       </p>
     </div>

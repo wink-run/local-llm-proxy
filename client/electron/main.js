@@ -2582,9 +2582,11 @@ function registerIPC() {
     }
     return data;
   });
-  ipcMain.handle('localStats:skillUsage', (_e, days) => {
-    const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
-    try { return localStats.querySkillUsageStats({ days: d, limit: 20 }); }
+  ipcMain.handle('localStats:skillUsage', (_e, daysOrOpts) => {
+    const opts = (daysOrOpts && typeof daysOrOpts === 'object') ? daysOrOpts : { days: daysOrOpts };
+    const d = Math.max(1, Math.min(365, parseInt(opts.days, 10) || 1));
+    const limit = Math.max(1, Math.min(100, parseInt(opts.limit, 10) || 20));
+    try { return localStats.querySkillUsageStats({ days: d, limit }); }
     catch (e) { console.error('[localStats:skillUsage]', e.message); return { total: 0, items: [] }; }
   });
   ipcMain.handle('localStats:toolUsage', (_e, days) => {

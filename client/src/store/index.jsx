@@ -77,6 +77,16 @@ async function syncCloudKey() {
   } catch {}
 }
 
+/** 进入游客态：清登录 JWT，并去掉残留 P2P 转发 Key（保留服务 URL） */
+async function clearP2pAuthForGuest() {
+  syncUserSession(null);
+  try {
+    const cfg = await getLocalConfig().get();
+    const url = cfg?.cloud_config?.url || normalizeServerBase(getServerUrl()) || null;
+    await getLocalConfig().setCloudConfig({ url, token: null });
+  } catch {}
+}
+
 // 启动时从服务端拉取 apps（公开）/ sources+scenes（需登录）；apps 与 sources 全量覆盖本地默认。
 async function syncRemoteConfig() {
   if (!window.electronAPI?.toolsConfig) return;
@@ -121,6 +131,8 @@ export function AuthProvider({ children }) {
     const enterGuestMode = () => {
       localStorage.setItem('guest', '1');
       setGuest(true);
+      // 游客不得继续用上次登录残留的转发 Key 打社区 P2P
+      clearP2pAuthForGuest();
     };
       bootstrapServerUrl().then(async () => {
       const token = localStorage.getItem('token');
@@ -140,7 +152,6 @@ export function AuthProvider({ children }) {
         })
         .catch(() => {
           localStorage.removeItem('token');
-          syncUserSession(null);
           stopAgent().catch(() => {});
           clearAgentCredentials().catch(() => {});
           enterGuestMode();  // token 失效时也回退到游客模式
@@ -171,8 +182,11 @@ export function AuthProvider({ children }) {
   }
 
   function enterGuest() {
+    localStorage.removeItem('token');
     localStorage.setItem('guest', '1');
+    setUser(null);
     setGuest(true);
+    clearP2pAuthForGuest();
   }
 
   function logout() {

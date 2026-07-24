@@ -175,10 +175,10 @@ export default function Network() {
         <div className="grid grid-cols-2 gap-5">
 
           {/* Left: Model list */}
-          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.modelsTitle')}</h2>
-              <span className="text-xs text-zinc-400">{t('network.sortByNodes')}</span>
+          <div className="tb-table-shell rounded-2xl">
+            <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
+              <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.modelsTitle')}</h2>
+              <span className="tb-table-cell-meta">{t('network.sortByNodes')}</span>
             </div>
             <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
               {modelStats.length === 0 ? (
@@ -239,10 +239,10 @@ export default function Network() {
           <div className="space-y-3">
 
             {/* Contributor ranking */}
-            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-              <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.leaderboard')}</h2>
-                <span className="text-xs text-zinc-400">{t('network.leaderboardHint')}</span>
+            <div className="tb-table-shell rounded-2xl">
+              <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
+                <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.leaderboard')}</h2>
+                <span className="tb-table-cell-meta">{t('network.leaderboardHint')}</span>
               </div>
               <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
                 {topWorkers.length === 0 ? (
@@ -317,10 +317,10 @@ export default function Network() {
 
             {/* All workers list */}
             {(network?.workers?.length ?? 0) > 0 && (
-              <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-                <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.workersTitle')}</h2>
-                  <span className="text-xs text-zinc-400">{t('network.workersCount', { n: network.workers.length })}</span>
+              <div className="tb-table-shell rounded-2xl">
+                <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.workersTitle')}</h2>
+                  <span className="tb-table-cell-meta">{t('network.workersCount', { n: network.workers.length })}</span>
                 </div>
                 <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50 max-h-56 overflow-y-auto">
                   {network.workers.map(w => (

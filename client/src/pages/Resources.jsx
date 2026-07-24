@@ -17,12 +17,15 @@ import { getSyncServerBase } from '../config';
 import {
   PURPOSE_SLUGS,
   aggregateTagsWithAi,
+  classifySkillsPurposeWithAi,
+  inferPurposeHeuristic,
   loadAiPurposeMap,
   resolvePurposes,
   tagToPurpose,
 } from '../lib/resource-purpose';
 import {
   analyzeIdleSkillsWithAi,
+  hasStoredPortrait,
   sortIdleByRecommendation,
 } from '../lib/idle-skill-ai';
 
@@ -47,6 +50,8 @@ function saveIdleDays(days) {
 
 // `.agents` / 自定义扫描等是公共 skill 目录，不是可筛选的 Agent 应用
 const NON_AGENT_APP_IDS = new Set(['agents-hub', 'tokenbank', 'custom', 'aweskill']);
+/** 未落入任何一级用途的筛选项 */
+const PURPOSE_OTHER = 'other';
 
 function isAgentAppId(agentId) {
   return !!agentId && !NON_AGENT_APP_IDS.has(agentId);
@@ -323,6 +328,8 @@ export default function Resources() {
   const [customScanDirs, setCustomScanDirs] = useState(readScanCustomDirs);
   const [defaultScanRoots, setDefaultScanRoots] = useState([]);
   const [scanning, setScanning] = useState(false);
+  /** 扫描后自动打标进行中（禁用再次扫描） */
+  const [autoTagging, setAutoTagging] = useState(false);
   const [scanExpanded, setScanExpanded] = useState(false);
   const [appFilter, setAppFilter] = useState(readAppFilter);
   /** Skill 闲置清理 */
@@ -437,13 +444,126 @@ export default function Resources() {
     } catch { /* ignore */ }
   }, [scanFilters]);
 
+  /** 扫描后 AI 打标；有未打标时才跑模型。返回是否实际进入打标 */
+  const aiTagInflightRef = useRef(false);
+  const aiTagAbortRef = useRef(null);
+  const aiTagCancelledRef = useRef(false);
+  /** 取消自动打标并立刻恢复可扫描状态（避免卡死） */
+  const cancelAutoTagging = useCallback(() => {
+    aiTagCancelledRef.current = true;
+    try { aiTagAbortRef.current?.abort(); } catch { /* ignore */ }
+    aiTagInflightRef.current = false;
+    setAutoTagging(false);
+    setScanning(false);
+    setMsg(t('resources.autoTaggingCancelled'));
+  }, [t]);
+
+  const silentAiTagAfterScan = useCallback(async (discoveredItems, aiMap = {}, { onTagging, signal } = {}) => {
+    if (!window.electronAPI?.resource?.listResources) return false;
+    if (aiTagInflightRef.current) return false;
+    aiTagInflightRef.current = true;
+    const aborted = () => !!signal?.aborted;
+    try {
+      if (aborted()) return false;
+      const resRes = await window.electronAPI.resource.listResources({ type: 'skill' });
+      if (aborted()) return false;
+      const managedList = resRes.success ? (resRes.resources || []) : [];
+      if (!managedList.length) return false;
+      const byId = new Map(managedList.map((r) => [r.id, r]));
+      setResources((prev) => {
+        const nonSkill = prev.filter((r) => r.type !== 'skill');
+        return [...managedList, ...nonSkill];
+      });
+      // 仅未归入任何用途的技能；已打标的一律跳过
+      const targets = (discoveredItems || []).filter((item) => {
+        if (!item.resourceId) return false;
+        const managed = byId.get(item.resourceId);
+        if (!managed) return false;
+        return resolvePurposes(managed, aiMap).length === 0;
+      });
+      if (!targets.length) return false;
+
+      // 确有未打标项：通知 UI 进入「自动打标中」
+      if (typeof onTagging === 'function') onTagging();
+      if (aborted()) return false;
+
+      const mapped = await classifySkillsPurposeWithAi(targets.map((item) => {
+        const managed = byId.get(item.resourceId);
+        return {
+          id: item.resourceId,
+          name: item.name || managed?.name || '',
+          description: item.description || managed?.description || '',
+        };
+      }), { signal });
+      if (aborted()) return false;
+
+      const taggedIds = new Set();
+      for (const item of targets) {
+        if (aborted()) break;
+        const existing = byId.get(item.resourceId);
+        if (!existing) continue;
+        // 落库前再确认一次，避免并发/同步后已打标被覆盖
+        if (resolvePurposes(existing, aiMap).length > 0) continue;
+        // AI 结果优先；缺失时用名称/简介启发式，避免残留「其它」
+        const purpose = PURPOSE_SLUGS.includes(mapped[item.resourceId])
+          ? mapped[item.resourceId]
+          : inferPurposeHeuristic(
+            item.name || existing.name || '',
+            item.description || existing.description || '',
+          );
+        const kept = resourceTags(existing).filter((tag) => {
+          if (PURPOSE_SLUGS.includes(tag)) return false;
+          return !tagToPurpose(tag, aiMap);
+        });
+        try {
+          const saveRes = await window.electronAPI.resource.saveResource({
+            id: existing.id,
+            type: 'skill',
+            name: existing.name,
+            display_name: existing.display_name || existing.name,
+            description: existing.description || item.description || '',
+            content: existing.content || item.content || '',
+            metadata: { ...(existing.metadata || {}), tags: [...kept, purpose] },
+          });
+          if (!saveRes.success || !saveRes.resource) continue;
+          byId.set(saveRes.resource.id, saveRes.resource);
+          taggedIds.add(saveRes.resource.id);
+        } catch { /* 单条失败继续 */ }
+      }
+      if (aborted() || !taggedIds.size) return true;
+      setDiscovered((prev) => prev.map((item) => {
+        const r = item.resourceId ? byId.get(item.resourceId) : null;
+        if (!r || !taggedIds.has(r.id)) return item;
+        return {
+          ...item,
+          metadata: r.metadata || {},
+          description: r.description || item.description,
+        };
+      }));
+      setResources((prev) => {
+        const nonSkill = prev.filter((r) => r.type !== 'skill');
+        return [...byId.values(), ...nonSkill];
+      });
+      return true;
+    } catch (e) {
+      if (e?.name === 'AbortError') return false;
+      // 打标失败不阻断扫描结果
+      return false;
+    } finally {
+      aiTagInflightRef.current = false;
+    }
+  }, []);
+
   const runScan = useCallback(async ({ silent = false } = {}) => {
     if (!window.electronAPI?.resource) return;
+    // 自动打标未结束时禁止再次扫描
+    if (!silent && (scanning || autoTagging || aiTagInflightRef.current)) return;
     if (!silent) {
       setScanning(true);
       setError('');
       setMsg('');
     }
+    let scanHint = '';
     try {
       const filters = scanFilters();
       const [scanRes, installRes] = await Promise.all([
@@ -452,23 +572,54 @@ export default function Resources() {
         window.electronAPI.resource.listAgentInstallations(filters),
       ]);
       if (scanRes.success) {
-        setDiscovered(scanRes.items || []);
+        const nextDiscovered = scanRes.items || [];
+        setDiscovered(nextDiscovered);
         setScanStats(scanRes.scanStats || null);
         // 默认目录与扫描结果一并刷新
         await refreshDefaultScanRoots(filters, scanRes.scanStats);
+        // 手动扫描：先出扫描摘要，有未打标则 await 自动打标并禁用按钮
+        if (!silent) {
+          scanHint = t('resources.scanDoneHint', {
+            total: scanRes.scanStats?.totalOnDisk ?? nextDiscovered.length,
+            imported: scanRes.imported || 0,
+            updated: scanRes.updated || 0,
+          });
+          setMsg(scanHint);
+          const ac = new AbortController();
+          aiTagCancelledRef.current = false;
+          aiTagAbortRef.current = ac;
+          try {
+            await silentAiTagAfterScan(nextDiscovered, purposeAiMap, {
+              signal: ac.signal,
+              onTagging: () => {
+                if (aiTagCancelledRef.current) return;
+                setAutoTagging(true);
+                setMsg(t('resources.autoTagging'));
+              },
+            });
+          } finally {
+            if (aiTagAbortRef.current === ac) aiTagAbortRef.current = null;
+          }
+        }
       } else if (!silent) {
         setError(scanRes.error || t('resources.scanFailed'));
       }
       if (installRes.success) {
         setAgentInstallations(installRes.agents || []);
       }
-      // 扫描成功不弹「扫描完成」提示，避免刷屏干扰
     } catch (e) {
       if (!silent) setError(e.message);
     } finally {
-      if (!silent) setScanning(false);
+      if (!silent) {
+        const cancelled = aiTagCancelledRef.current;
+        setAutoTagging(false);
+        setScanning(false);
+        // 取消时保留「已取消」提示；正常结束恢复扫描摘要
+        if (!cancelled && scanHint) setMsg(scanHint);
+        aiTagCancelledRef.current = false;
+      }
     }
-  }, [scanFilters, refreshDefaultScanRoots, t]);
+  }, [scanFilters, refreshDefaultScanRoots, purposeAiMap, silentAiTagAfterScan, scanning, autoTagging, t]);
 
   const loadAll = useCallback(async ({ silent = false } = {}) => {
     // 先扫描即纳管（入库），再读取 resources，确保投射菜单能查到刚纳管的 skill
@@ -627,6 +778,12 @@ export default function Resources() {
   }
 
   async function handleInstall(catalogId) {
+    // 依赖缺失的智能体：纳管前确认，避免静默带上坏数据
+    const catalogItem = catalog.find(c => c.catalogId === catalogId);
+    if (catalogItem?.type === 'assistant' && catalogItem.depsBroken && catalogItem.missingDeps?.length) {
+      const list = catalogItem.missingDeps.map(d => `${d.type}:${d.name}`).join(', ');
+      if (!window.confirm(t('resources.depsBrokenConfirm', { list }))) return;
+    }
     setBusy(catalogId);
     setMsg('');
     try {
@@ -701,6 +858,8 @@ export default function Resources() {
         managed: true,
         resourceId: resource.id,
         projections,
+        // 打标后同步 metadata，用途芯片可立刻更新
+        metadata: resource.metadata || {},
         authorityPath: resource.authorityPath || resource.metadata?.authorityPath || null,
         type: 'skill',
         contentChanged: false,
@@ -859,32 +1018,44 @@ export default function Resources() {
     idleAiAbortRef.current = null;
   }
 
-  /** 根据分析结果同步默认勾选（只勾推荐项） */
-  function applyIdleSelectionFromMap(items, map) {
-    const recommended = (items || [])
-      .filter((it) => map?.[it.id]?.recommend)
+  /** 根据分析结果同步默认勾选（只勾已分析且推荐项；无推荐时勾已分析全部） */
+  function applyIdleSelectionFromMap(items, map, { streaming = false } = {}) {
+    const analyzed = (items || []).filter((it) => map?.[it.id]);
+    const recommended = analyzed
+      .filter((it) => map[it.id]?.recommend)
       .map((it) => it.id);
-    setIdleSelected(recommended.length ? recommended : (items || []).map((it) => it.id));
+    if (recommended.length) {
+      setIdleSelected(recommended);
+      return;
+    }
+    // 流式过程中无推荐则先不勾；结束后无推荐则勾已分析全部
+    setIdleSelected(streaming ? [] : analyzed.map((it) => it.id));
   }
 
-  /** 对闲置列表做大模型分析（分批，避免过多卡死） */
+  /** 对闲置列表做大模型分析：每批 30 条，分析一条上屏一条 */
   async function analyzeIdleWithAi(items, days) {
     abortIdleAi();
     const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
     idleAiAbortRef.current = ac;
     setIdleAiLoading(true);
+    setIdleAiMap({});
+    setIdleSelected([]);
     setIdleAiMeta({ source: '', error: '' });
     setIdleAiProgress({ done: 0, total: (items || []).length, batch: 0, batches: 0 });
     try {
-      const { map, source, error, skippedHeuristic } = await analyzeIdleSkillsWithAi(items, {
+      // 附上用途标签，供模型从「习惯/画像/质量」综合判断
+      const enriched = (items || []).map((it) => ({
+        ...it,
+        purposes: purposesOf(it),
+      }));
+      const { map, source, error, skippedHeuristic } = await analyzeIdleSkillsWithAi(enriched, {
         days,
         lang: lang === 'en' ? 'en' : 'zh',
         signal: ac?.signal,
         onProgress: (p) => setIdleAiProgress(p),
-        // 启发式立刻上屏，每批模型结果增量覆盖
         onPartial: (partial) => {
           setIdleAiMap(partial || {});
-          applyIdleSelectionFromMap(items, partial || {});
+          applyIdleSelectionFromMap(enriched, partial || {}, { streaming: true });
         },
       });
       if (ac?.signal?.aborted) return;
@@ -928,8 +1099,10 @@ export default function Resources() {
         return;
       }
       setIdleResult(res);
+      // 先进入分析态再结束扫描态，避免中间一帧露出未分析列表
+      if ((res.items || []).length) setIdleAiLoading(true);
       setIdleLoading(false);
-      // 扫描完成后分批分析，避免一次性卡死
+      // 扫描完成后分批分析；结果在分析结束后再展示
       await analyzeIdleWithAi(res.items || [], n);
     } catch (e) {
       setError(e.message);
@@ -1068,6 +1241,12 @@ export default function Resources() {
       return;
     }
     const { resourceId } = projectMenu;
+    // 依赖缺失的智能体：安装到 Agent 前确认
+    const target = resources.find(r => r.id === resourceId);
+    if (target?.type === 'assistant' && target.depsBroken && target.missingDeps?.length) {
+      const list = target.missingDeps.map(d => `${d.type}:${d.name}`).join(', ');
+      if (!window.confirm(t('resources.depsBrokenConfirm', { list }))) return;
+    }
     setProjectMenu(null);
     setBusy(resourceId);
     setError('');
@@ -1256,69 +1435,13 @@ export default function Resources() {
     return resolvePurposes(probe, purposeAiMap);
   }, [purposeAiMap]);
 
-  /** 用途匹配 */
+  /** 用途匹配（other = 未归入任一一级用途） */
   const matchTag = (item, managedLookup) => {
     if (!tagFilter) return true;
-    return purposesOf(item, managedLookup).includes(tagFilter);
+    const ps = purposesOf(item, managedLookup);
+    if (tagFilter === PURPOSE_OTHER) return ps.length === 0;
+    return ps.includes(tagFilter);
   };
-
-  // 筛选项：目录 + 已纳管 + 个性化推荐缓存里出现的用途
-  const availableTags = useMemo(() => {
-    const present = new Set();
-    const bump = (item) => {
-      if (typeFilter && item.type && item.type !== typeFilter) return;
-      for (const p of resolvePurposes(item, purposeAiMap)) present.add(p);
-    };
-    catalog.forEach(bump);
-    resources.forEach(bump);
-    // 推荐结果的 category（与用途 slug 对齐），避免筛用途时芯片被清空
-    try {
-      const rt = typeFilter === 'prompt' || typeFilter === 'assistant' ? typeFilter : 'skill';
-      const raw = localStorage.getItem(`tokenbank.resources.recommend.last.${rt}`);
-      const doc = raw ? JSON.parse(raw) : null;
-      for (const rec of (doc?.items || [])) {
-        const cat = String(rec?.category || '').trim();
-        if (!cat) continue;
-        if (PURPOSE_SLUGS.includes(cat)) present.add(cat);
-        else {
-          const p = tagToPurpose(cat, purposeAiMap);
-          if (p) present.add(p);
-        }
-      }
-    } catch { /* ignore */ }
-    return PURPOSE_SLUGS.filter(s => present.has(s));
-  }, [catalog, resources, typeFilter, purposeAiMap, recoPurposeRev]);
-
-  // 用途筛选项已不存在时回退
-  useEffect(() => {
-    if (tagFilter && availableTags.length && !availableTags.includes(tagFilter)) {
-      setTagFilter('');
-    }
-  }, [tagFilter, availableTags]);
-
-  // 未知原始标签 → 调本地网关 AI 归入用途（有缓存，失败静默）
-  useEffect(() => {
-    const raw = new Set();
-    const collect = (item) => {
-      if (typeFilter && item.type && item.type !== typeFilter) return;
-      for (const t of resourceTags(item)) raw.add(t);
-      if (item?.metadata?.category) raw.add(item.metadata.category);
-    };
-    catalog.forEach(collect);
-    resources.forEach(collect);
-    const unknown = [...raw].filter(t => !tagToPurpose(t, purposeAiMap));
-    if (!unknown.length) return undefined;
-    let cancelled = false;
-    aggregateTagsWithAi(unknown, purposeAiMap).then((next) => {
-      if (cancelled) return;
-      const grew = unknown.some((t) => {
-        const k = String(t || '').trim().toLowerCase().replace(/[_\s]+/g, '-');
-        return next[k] && next[k] !== purposeAiMap[k];
-      });
-      if (grew) setPurposeAiMap(next);
-    });
-    return () => { cancelled = true; };
-  }, [catalog, resources, typeFilter]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅资源变化时尝试 AI 归类
 
   const filteredCatalog = catalog.filter(r => matchPromptKind(r) && matchTag(r));
   const managedCount = resources.length;
@@ -1358,9 +1481,148 @@ export default function Resources() {
     [resources],
   );
 
+  /** 各 Agent / 自添目录的本机技能数（来自 listAgentInstallations） */
+  const skillCountByAgentId = useMemo(() => {
+    const m = new Map();
+    for (const a of agentInstallations) {
+      if (a.id === 'custom') continue;
+      m.set(a.id, a.count || 0);
+    }
+    return m;
+  }, [agentInstallations]);
+
+  const skillCountByCustomDir = useMemo(() => {
+    const m = new Map();
+    const custom = agentInstallations.find(a => a.id === 'custom');
+    for (const item of custom?.items || []) {
+      const root = item.customScanRoot;
+      if (!root) continue;
+      m.set(root, (m.get(root) || 0) + 1);
+    }
+    return m;
+  }, [agentInstallations]);
+
+  function countForCustomScanDir(dir) {
+    for (const [root, n] of skillCountByCustomDir) {
+      if (sameSkillDir(root, dir)) return n;
+    }
+    return 0;
+  }
+
   const filteredDiscovered = discovered
     .filter(item => !effectiveAppFilter || (item.agents || []).some(a => a.agentId === effectiveAppFilter))
     .filter(item => matchTag(item, resourcesById));
+
+  /**
+   * 用途芯片：只展示「当前 Tab + 类型 + 应用筛选」下至少有一张卡片的用途。
+   * 不计入 tagFilter 本身，否则选中后其它芯片会全部消失。
+   * 同时统计各用途数量（一项可归入多个用途）与「全部」可见项总数。
+   */
+  const { availableTags, purposeCounts, purposeTotal, purposeOther } = useMemo(() => {
+    const counts = Object.fromEntries(PURPOSE_SLUGS.map(s => [s, 0]));
+    let total = 0;
+    let other = 0;
+
+    const visit = (item, managedLookup) => {
+      total += 1;
+      const ps = purposesOf(item, managedLookup).filter(p => counts[p] != null);
+      if (!ps.length) {
+        other += 1;
+        return;
+      }
+      for (const p of ps) counts[p] += 1;
+    };
+
+    if (viewTab === 'managed') {
+      // 与 renderLocalList 可见行对齐（不含用途筛选）
+      if (!typeFilter || typeFilter !== 'skill') {
+        const managedItems = typeFilter
+          ? resources.filter(r => r.type === typeFilter)
+          : resources.filter(r => r.type !== 'skill');
+        for (const r of managedItems) {
+          if (r.type === 'prompt' && !matchPromptKind(r)) continue;
+          if (effectiveAppFilter
+            && !(r.projections || []).some(p => p.agentId === effectiveAppFilter)) continue;
+          visit(r);
+        }
+      }
+      if (!typeFilter || typeFilter === 'skill') {
+        for (const item of discovered) {
+          if (effectiveAppFilter
+            && !(item.agents || []).some(a => a.agentId === effectiveAppFilter)) continue;
+          visit(item, resourcesById);
+        }
+      }
+    } else {
+      // 推荐 Tab：个性化缓存 + 下方社区目录
+      try {
+        const rt = typeFilter === 'prompt' || typeFilter === 'assistant' ? typeFilter : 'skill';
+        const raw = localStorage.getItem(`tokenbank.resources.recommend.last.${rt}`);
+        const doc = raw ? JSON.parse(raw) : null;
+        for (const rec of (doc?.items || [])) {
+          total += 1;
+          const cat = String(rec?.category || '').trim();
+          if (!cat) { other += 1; continue; }
+          const purpose = PURPOSE_SLUGS.includes(cat) ? cat : tagToPurpose(cat, purposeAiMap);
+          if (!purpose || counts[purpose] == null) { other += 1; continue; }
+          counts[purpose] += 1;
+        }
+      } catch { /* ignore */ }
+      for (const r of catalog) {
+        if (typeFilter && r.type && r.type !== typeFilter) continue;
+        if (!matchPromptKind(r)) continue;
+        visit(r);
+      }
+    }
+
+    return {
+      availableTags: PURPOSE_SLUGS.filter(s => counts[s] > 0),
+      purposeCounts: counts,
+      purposeTotal: total,
+      purposeOther: other,
+    };
+  }, [
+    viewTab, typeFilter, promptKindFilter, effectiveAppFilter,
+    resources, discovered, catalog, resourcesById, purposeAiMap,
+    recoPurposeRev, purposesOf,
+  ]);
+
+  // 用途筛选项已不存在时回退（含「其它」）
+  useEffect(() => {
+    if (!tagFilter) return;
+    if (tagFilter === PURPOSE_OTHER) {
+      if (purposeOther <= 0) setTagFilter('');
+      return;
+    }
+    if (availableTags.length && !availableTags.includes(tagFilter)) {
+      setTagFilter('');
+    }
+  }, [tagFilter, availableTags, purposeOther]);
+
+  // 未知原始标签 → 调本地网关 AI 归入用途（有缓存，失败静默）
+  useEffect(() => {
+    const raw = new Set();
+    const collect = (item) => {
+      if (typeFilter && item.type && item.type !== typeFilter) return;
+      for (const t of resourceTags(item)) raw.add(t);
+      if (item?.metadata?.category) raw.add(item.metadata.category);
+    };
+    catalog.forEach(collect);
+    resources.forEach(collect);
+    discovered.forEach(collect);
+    const unknown = [...raw].filter(t => !tagToPurpose(t, purposeAiMap));
+    if (!unknown.length) return undefined;
+    let cancelled = false;
+    aggregateTagsWithAi(unknown, purposeAiMap).then((next) => {
+      if (cancelled) return;
+      const grew = unknown.some((t) => {
+        const k = String(t || '').trim().toLowerCase().replace(/[_\s]+/g, '-');
+        return next[k] && next[k] !== purposeAiMap[k];
+      });
+      if (grew) setPurposeAiMap(next);
+    });
+    return () => { cancelled = true; };
+  }, [catalog, resources, discovered, typeFilter]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅资源变化时尝试 AI 归类
 
   const showAppFilterBar = !typeFilter || typeFilter === 'skill' || typeFilter === 'prompt';
 
@@ -1411,13 +1673,19 @@ export default function Resources() {
 
   /** 用途筛选条：零散 tag 已聚合成 SkillHub 一级用途 */
   function purposeLabel(slug) {
+    if (slug === PURPOSE_OTHER) return t('resources.tagFilterOther');
     const key = `resources.reco.cat.${slug}`;
     const v = t(key);
     return v === key ? slug : v;
   }
 
   function renderTagFilter() {
-    if (availableTags.length === 0) return null;
+    if (availableTags.length === 0 && purposeOther <= 0) return null;
+    const chipClass = (active) => `tb-press text-[11px] px-2 py-1 rounded-md border transition-colors ${
+      active
+        ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
+        : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-600'
+    }`;
     return (
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[11px] text-zinc-400 shrink-0 mr-0.5" title={t('resources.tagFilterHint')}>
@@ -1426,31 +1694,36 @@ export default function Resources() {
         <button
           type="button"
           onClick={() => setTagFilter('')}
-          className={`tb-press text-[11px] px-2 py-1 rounded-md border transition-colors ${
-            !tagFilter
-              ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-              : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-600'
-          }`}
+          className={chipClass(!tagFilter)}
         >
           {t('resources.tagFilterAll')}
+          <span className="ml-1 tabular-nums opacity-60">{purposeTotal}</span>
         </button>
         {availableTags.map(slug => {
           const active = tagFilter === slug;
+          const n = purposeCounts[slug] || 0;
           return (
             <button
               key={slug}
               type="button"
               onClick={() => setTagFilter(active ? '' : slug)}
-              className={`tb-press text-[11px] px-2 py-1 rounded-md border transition-colors ${
-                active
-                  ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-                  : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-600'
-              }`}
+              className={chipClass(active)}
             >
               {purposeLabel(slug)}
+              <span className="ml-1 tabular-nums opacity-60">{n}</span>
             </button>
           );
         })}
+        {purposeOther > 0 && (
+          <button
+            type="button"
+            onClick={() => setTagFilter(tagFilter === PURPOSE_OTHER ? '' : PURPOSE_OTHER)}
+            className={chipClass(tagFilter === PURPOSE_OTHER)}
+          >
+            {purposeLabel(PURPOSE_OTHER)}
+            <span className="ml-1 tabular-nums opacity-60">{purposeOther}</span>
+          </button>
+        )}
       </div>
     );
   }
@@ -1460,6 +1733,7 @@ export default function Resources() {
     const rowKey = `${item.name}::${item.hash}`;
     const expanded = expandedId === rowKey;
     const toggle = () => setExpandedId(expanded ? null : rowKey);
+    const purposes = purposesOf(item, resourcesById);
     return (
       <ResourceAssetCard
         key={rowKey}
@@ -1472,7 +1746,7 @@ export default function Resources() {
         previewLabel={t('resources.preview')}
         collapseLabel={t('resources.collapse')}
         emptyPreviewLabel={t('resources.emptyDetail')}
-        layout="col"
+        layout="row"
         badges={(
           <>
             {item.version && (
@@ -1503,6 +1777,26 @@ export default function Resources() {
                   {item.authorityPath}
                 </button>
               </p>
+            )}
+            {/* 用途：扫描后自动打标，此处仅展示并可点选筛选 */}
+            {purposes.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                {purposes.map(slug => (
+                  <button
+                    key={slug}
+                    type="button"
+                    title={t('resources.tagFilterHint')}
+                    onClick={() => setTagFilter(tagFilter === slug ? '' : slug)}
+                    className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+                      tagFilter === slug
+                        ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
+                        : 'border-zinc-200/80 dark:border-zinc-700/80 bg-zinc-50/80 dark:bg-zinc-800/70 text-zinc-500 dark:text-zinc-400 hover:border-blue-300'
+                    }`}
+                  >
+                    {purposeLabel(slug)}
+                  </button>
+                ))}
+              </div>
             )}
             {item.resourceId && renderProjections({
               id: item.resourceId,
@@ -1620,9 +1914,24 @@ export default function Resources() {
         emptyPreviewLabel={t('resources.emptyDetail')}
         layout={catalogMode ? 'stack' : 'row'}
         className={catalogMode && expanded ? 'sm:col-span-2' : ''}
-        badges={!catalogMode ? (
-          <span className="text-[10px] text-zinc-400 tracking-wide">{sourceLabel(resource.source, t)}</span>
-        ) : null}
+        badges={(
+          <>
+            {!catalogMode && (
+              <span className="text-[10px] text-zinc-400 tracking-wide">{sourceLabel(resource.source, t)}</span>
+            )}
+            {/* 智能体声明的 prompt 目录与本机均无 → 依赖缺失（skill 可执行时自装，不标） */}
+            {resource.type === 'assistant' && resource.depsBroken && Array.isArray(resource.missingDeps) && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-md bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 whitespace-nowrap"
+                title={t('resources.depsBrokenHint', {
+                  list: resource.missingDeps.map(d => `${d.type}:${d.name}`).join(', '),
+                })}
+              >
+                {t('resources.depsBroken')}
+              </span>
+            )}
+          </>
+        )}
         meta={(
           <>
             {!catalogMode && resource.type === 'skill' && (
@@ -2018,15 +2327,21 @@ export default function Resources() {
                 </span>
                 <button
                   type="button"
-                  disabled={scanning || busy === 'cleanup' || busy === 'editor'}
-                  onClick={runScan}
+                  disabled={(!autoTagging && scanning) || busy === 'cleanup' || busy === 'editor'}
+                  onClick={autoTagging ? cancelAutoTagging : runScan}
                   className="tb-press ml-auto text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 shrink-0"
                 >
-                  {scanning ? t('resources.scanning') : t('resources.scanStart')}
+                  {autoTagging
+                    ? t('resources.autoTaggingCancel')
+                    : (scanning ? t('resources.scanning') : t('resources.scanStart'))}
                 </button>
               </div>
               <ul className="space-y-1 max-h-48 overflow-y-auto">
-                {defaultScanRoots.map(root => (
+                {defaultScanRoots.map(root => {
+                  const n = skillCountByAgentId.has(root.id)
+                    ? skillCountByAgentId.get(root.id)
+                    : null;
+                  return (
                   <li
                     key={root.id || root.path}
                     className="flex items-center gap-2 text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1.5"
@@ -2038,12 +2353,20 @@ export default function Resources() {
                     <span className="flex-1 min-w-0 truncate font-mono text-zinc-600 dark:text-zinc-300" title={root.path}>
                       {root.path}
                     </span>
+                    {n != null && root.exists !== false && (
+                      <span className="shrink-0 tabular-nums text-zinc-400">
+                        {t('resources.agentSkillCount', { n })}
+                      </span>
+                    )}
                     {!root.exists && (
                       <span className="shrink-0 text-[10px] text-zinc-400">{t('resources.scanRootMissing')}</span>
                     )}
                   </li>
-                ))}
-                {customScanDirs.map(dir => (
+                  );
+                })}
+                {customScanDirs.map(dir => {
+                  const n = countForCustomScanDir(dir);
+                  return (
                   <li
                     key={dir}
                     className="flex items-center gap-2 text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1.5"
@@ -2054,6 +2377,9 @@ export default function Resources() {
                     <span className="flex-1 min-w-0 truncate font-mono text-zinc-600 dark:text-zinc-300" title={dir}>
                       {dir}
                     </span>
+                    <span className="shrink-0 tabular-nums text-zinc-400">
+                      {t('resources.agentSkillCount', { n })}
+                    </span>
                     <button
                       type="button"
                       onClick={() => removeCustomScanDir(dir)}
@@ -2063,7 +2389,8 @@ export default function Resources() {
                       ×
                     </button>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -2166,6 +2493,26 @@ export default function Resources() {
               <p className="text-[10px] text-violet-600/90 dark:text-violet-400/90">
                 {t('resources.cleanupAiHint')}
               </p>
+              {!hasStoredPortrait() && (
+                <div className="flex items-start gap-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-2.5 py-2">
+                  <p className="min-w-0 flex-1 text-[10px] text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                    {t('resources.cleanupPortraitTip')}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={idleLoading || idleAiLoading || busy === 'cleanup'}
+                    onClick={() => {
+                      abortIdleAi();
+                      setCleanupOpen(false);
+                      if (typeFilter !== 'skill') changeTypeFilter('skill');
+                      changeViewTab('recommend');
+                    }}
+                    className="shrink-0 text-[10px] text-violet-600 dark:text-violet-400 hover:underline disabled:opacity-50"
+                  >
+                    {t('resources.cleanupPortraitAction')}
+                  </button>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <label className="text-[11px] text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                   {t('resources.cleanupDaysLabel')}
@@ -2206,7 +2553,11 @@ export default function Resources() {
               ) : (
                 <>
                   {(() => {
-                    const sorted = sortIdleByRecommendation(idleResult.items, idleAiMap);
+                    // 分析中：只展示已出结果的条目（分析一个出来一个）
+                    const visibleItems = idleAiLoading
+                      ? idleResult.items.filter((it) => idleAiMap[it.id])
+                      : idleResult.items;
+                    const sorted = sortIdleByRecommendation(visibleItems, idleAiMap);
                     const recommendCount = sorted.filter((it) => idleAiMap[it.id]?.recommend).length;
                     return (
                       <>
@@ -2297,6 +2648,11 @@ export default function Resources() {
                           <p className="text-[10px] text-zinc-400">
                             {t('resources.cleanupAiFallback')}
                             {idleAiMeta.error ? ` (${idleAiMeta.error})` : ''}
+                          </p>
+                        )}
+                        {idleAiLoading && !sorted.length && (
+                          <p className="text-[10px] text-zinc-400 py-4 text-center">
+                            {t('resources.cleanupAiAnalyzing')}
                           </p>
                         )}
                         {sorted.map((item) => {

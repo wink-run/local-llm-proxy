@@ -257,7 +257,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
 
       {/* Header */}
       <div>
-        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{t('settings.title')}</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{t('settings.title')}</h1>
         <p className="text-sm text-gray-500 mt-0.5">{t('settings.subtitle')}</p>
       </div>
 

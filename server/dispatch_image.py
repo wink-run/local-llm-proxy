@@ -37,7 +37,7 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
                 "invalid_request_error",
             )
         user = await db.get_user_by_id(consumer_user_id)
-        if not user or user["credits_balance"] <= 0:
+        if not user or float(user["credits_balance"] or 0) <= 0:
             raise DispatchError(402, "Insufficient credits", "insufficient_credits")
 
     # 图像请求只路由到声明了 image 类型的 worker；虚拟 worker 是 chat 端点转发器、

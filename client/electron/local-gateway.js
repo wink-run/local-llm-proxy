@@ -579,7 +579,8 @@ function enabledProviders() {
     .filter(p => {
       const active = p.enabled || (gatewayIds && gatewayIds.has(p.id));
       if (!active) return false;
-      if (p.type === 'p2p') return !!_backendUrl;
+      // 社区 P2P：需后端地址 + 用户已登录（仅有残留转发 Key 不够）
+      if (p.type === 'p2p') return !!_backendUrl && !!_userJwt;
       return !!p.base_url;
     })
     .map(p => {
@@ -887,10 +888,17 @@ function writeInsufficientCredits(res, isResponses) {
 
 const P2P_API_KEY_HINT =
   'P2P relay API Key not configured. Open Community (社区算力) and set Gateway relay API Key.';
+const P2P_LOGIN_HINT =
+  'Login required to use community P2P. Please sign in and enable Community compute.';
 
 /** 是否已配置 P2P 转发 Key（cloud_config.token 或 provider 自带 token） */
 function hasP2pRelayKey(provider) {
   return !!String(_cloudToken || provider?.token || '').trim();
+}
+
+/** 是否已登录（JWT）；与转发 Key 分离，游客不得走社区 P2P */
+function hasP2pUserLogin() {
+  return !!String(_userJwt || '').trim();
 }
 
 /** P2P 鉴权失败（未配置 Key / 云端 401） */
@@ -904,7 +912,7 @@ function isNoWorkerError(err) {
 
 function isP2pApiKeyError(err) {
   if (!err) return false;
-  if (err.code === 'p2p_api_key_required') return true;
+  if (err.code === 'p2p_api_key_required' || err.code === 'p2p_login_required') return true;
   // 「无可用 worker / 模型不存在」不是转发 Key 问题（否则会误报"未配置转发 Key"）
   if (isNoWorkerError(err)) return false;
   // 只在错误体确有鉴权失败信号时才判为转发 Key 问题；
@@ -928,11 +936,36 @@ function writeP2pApiKeyRequired(res, isResponses) {
   }
 }
 
-/** 调用 P2P 前检查转发 Key；已写入响应则返回 true */
+/** P2P 未登录：401 拒绝 */
+function writeP2pLoginRequired(res, isResponses) {
+  const detail = P2P_LOGIN_HINT;
+  const payload = isResponses
+    ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'p2p_login_required' } })
+    : { error: { message: detail, type: 'p2p_login_required', code: 'p2p_login_required' } };
+  if (!res.headersSent) {
+    res.writeHead(401, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify(payload));
+  }
+}
+
+/**
+ * 调用 P2P 前检查登录 + 转发 Key。
+ * @returns {false|'login'|'api_key'} 已写入响应时返回原因，否则 false
+ */
 function rejectP2pIfUnconfigured(provider, res, isResponses) {
-  if (!isP2pProvider(provider) || hasP2pRelayKey(provider)) return false;
-  writeP2pApiKeyRequired(res, isResponses);
-  return true;
+  if (!isP2pProvider(provider)) return false;
+  if (!hasP2pUserLogin()) {
+    writeP2pLoginRequired(res, isResponses);
+    return 'login';
+  }
+  if (!hasP2pRelayKey(provider)) {
+    writeP2pApiKeyRequired(res, isResponses);
+    return 'api_key';
+  }
+  return false;
 }
 
 /** P2P 致命错误（积分不足 / 未配置 Key）：已写入响应则返回 true */
@@ -950,6 +983,9 @@ function handleP2pFatal(provider, err, res, isResponses) {
 }
 
 function p2pAbortError(kind) {
+  if (kind === 'login') {
+    return Object.assign(new Error(P2P_LOGIN_HINT), { status: 401, code: 'p2p_login_required' });
+  }
   if (kind === 'api_key') {
     return Object.assign(new Error(P2P_API_KEY_HINT), { status: 401, code: 'p2p_api_key_required' });
   }
@@ -2759,7 +2795,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     const deadSources = new Set();   // 已发生配额/鉴权级失败(429/401/403)的源，跳过其余模型加速降级
     for (const c of ordered) {
       if (deadSources.has(c.provider.id)) continue;
-      if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr, reqPath); return; }
+      {
+        const p2pReject = rejectP2pIfUnconfigured(c.provider, res, isResponses);
+        if (p2pReject) { lastErr = p2pAbortError(p2pReject); recordError(c.model, callerKey, lastErr, reqPath); return; }
+      }
       try {
         // 策略路由：把场景策略（auto/cost…）+ 钉分享者传给 p2p 服务端，令其对该源 worker 也按策略排序/过滤
         const stratMeta = { strategy: _stratStep.strategy || null, sharer: _stratStep.sharer || requestSharer };
@@ -2846,7 +2885,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         const deadSources = new Set();
         for (const c of sOrdered) {
           if (deadSources.has(c.provider.id)) continue;
-          if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr, reqPath); return; }
+          {
+            const p2pReject = rejectP2pIfUnconfigured(c.provider, res, isResponses);
+            if (p2pReject) { lastErr = p2pAbortError(p2pReject); recordError(c.model, callerKey, lastErr, reqPath); return; }
+          }
           try {
             const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res, sMeta);
             pushLog({ ts: t0, requested_model: origModel, model: c.model, scene_name: scene.scene_name, claude_from: stepClaudeFrom,
@@ -2898,8 +2940,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       let   stepSucceeded = false;
 
       for (const provider of stepProviders) {
-        if (rejectP2pIfUnconfigured(provider, res, isResponses)) {
-          lastErr = p2pAbortError('api_key');
+        const p2pReject = rejectP2pIfUnconfigured(provider, res, isResponses);
+        if (p2pReject) {
+          lastErr = p2pAbortError(p2pReject);
           pushLog({
             ts: t0, requested_model: origModel, model: stepModel,
             scene_name: scene.scene_name, claude_from: stepClaudeFrom,
@@ -3044,8 +3087,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 
   const routeErrors = [];
   for (const provider of sorted) {
-    if (rejectP2pIfUnconfigured(provider, res, isResponses)) {
-      lastErr = p2pAbortError('api_key');
+    const p2pReject = rejectP2pIfUnconfigured(provider, res, isResponses);
+    if (p2pReject) {
+      lastErr = p2pAbortError(p2pReject);
       pushLog({
         ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
         tier: provider.type, via: provider.id, via_label: provider.label,

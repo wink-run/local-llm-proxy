@@ -271,7 +271,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
         </div>
       ) : (
         <>
-          <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-5 py-2 text-xs font-medium text-zinc-400 uppercase tracking-wide border-b border-zinc-100 dark:border-zinc-800">
+          <div className="tb-table-head hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-5 py-2">
             <span>{t('dashboard.colApp')}</span>
             <span className="text-right">{t('dashboard.colRequests')}</span>
             <span className="text-right">{t('dashboard.colTokens')}</span>

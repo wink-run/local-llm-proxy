@@ -217,7 +217,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     todaySummary: () => ipcRenderer.invoke('localStats:todaySummary'),
     compression: (days) => ipcRenderer.invoke('localStats:compression', days),
     appsUsage: (days) => ipcRenderer.invoke('localStats:appsUsage', days),
-    skillUsage: (days) => ipcRenderer.invoke('localStats:skillUsage', days),
+    // days 数字或 { days, limit }；清理分析等场景需要更高 limit
+    skillUsage: (daysOrOpts) => ipcRenderer.invoke('localStats:skillUsage', daysOrOpts),
     toolUsage: (days) => ipcRenderer.invoke('localStats:toolUsage', days),
     mcpUsage: (days) => ipcRenderer.invoke('localStats:mcpUsage', days),
     reassignProviderTier: (providerId, tier) =>

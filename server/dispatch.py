@@ -54,6 +54,15 @@ def _session_key(body: dict, consumer_user_id: int | None) -> str | None:
     return f"u{consumer_user_id}:{digest}"
 
 
+async def _ensure_shared_credits(consumer_user_id: int | None) -> None:
+    """打共享/社区源前校验积分；不足则 402，禁止发起上游调用。"""
+    if consumer_user_id is None:
+        return
+    user = await db.get_user_by_id(consumer_user_id)
+    if not user or float(user["credits_balance"] or 0) <= 0:
+        raise DispatchError(402, "Insufficient credits", "insufficient_credits")
+
+
 async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: int | None = None,
                       strategy: str | None = None, sharer: str | None = None):
     model = body.get("model", "")
@@ -88,9 +97,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 f"模型「{model}」未在后台启用或未配置消费率；请在管理端「模型配置」添加与 Worker 上报完全一致的模型名称。",
                 "invalid_request_error",
             )
-        user = await db.get_user_by_id(consumer_user_id)
-        if not user or user["credits_balance"] <= 0:
-            raise DispatchError(402, "Insufficient credits", "insufficient_credits")
+        await _ensure_shared_credits(consumer_user_id)
 
     session_key = _session_key(body, consumer_user_id)
 
@@ -148,6 +155,10 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
             # 由本人个人源服务的请求免扣平台积分（用的是自己的订阅额度）
             served_by_own = (consumer_user_id is not None
                              and getattr(worker, "owner_user_id", None) == consumer_user_id)
+            # 有个人源时入口会跳过预检；failover 到共享/社区源前必须再拦一次
+            if not served_by_own:
+                await _ensure_shared_credits(consumer_user_id)
+
             req_id = str(uuid.uuid4())
             q: asyncio.Queue = asyncio.Queue()
             worker.pending[req_id] = {
