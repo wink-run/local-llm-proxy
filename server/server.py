@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
     await db.close_pool()
 
 
-# landing 页产品截图，需长期保留
+# landing 页产品截图，需长期保留（与 landing.html data-tab / img_cache/{key}.webp 对齐）
 _LANDING_SCREENSHOTS = frozenset({
     "dashboard.webp", "gateway.webp", "provider.webp",
     "dashboard_en.webp", "gateway_en.webp", "provider_en.webp",
@@ -81,6 +81,11 @@ _LANDING_SCREENSHOTS = frozenset({
     "world.webp", "world_en.webp",
     "device.webp", "device_en.webp",
     "trace.webp", "trace_en.webp",
+    # 会话 / 游乐场 / 画像 / 资源（此前缺文件导致 hero 破图）
+    "sessions.webp", "sessions_en.webp",
+    "playground.webp", "playground_en.webp",
+    "portrait.webp", "portrait_en.webp",
+    "assets.webp", "assets_en.webp",
 })
 
 

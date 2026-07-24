@@ -119,6 +119,11 @@
           <span data-i18n="hero.ctaPrimary">Free download</span>
           <span style="font-size:15px;">↓</span>
         </a>
+        <!-- 紧挨「免费下载」：百度网盘（提取码 mjes，链接内已带 pwd） -->
+        <a href="https://pan.baidu.com/s/1J0ycTEBNjD8s-Nb64SgeqA?pwd=mjes" target="_blank" rel="noopener noreferrer" title="提取码 mjes" style="text-decoration:none;background:#FFD055;color:#000;font-size:16px;font-weight:500;padding:14px 24px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;box-shadow:rgba(16,24,40,0.05) 0px 1px 2px 0px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">
+          <span data-i18n="hero.ctaBaidu">Baidu Netdisk</span>
+          <span style="font-size:15px;">↓</span>
+        </a>
         <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noopener noreferrer" data-i18n="hero.ctaSecondary" style="text-decoration:none;background:#000;color:#fff;font-size:16px;font-weight:500;padding:14px 24px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">
           View on GitHub
         </a>
@@ -801,6 +806,7 @@
       <p data-reveal data-reveal-delay="120" data-i18n="cta.sub" style="margin:24px auto 0;max-width:560px;font-size:17px;line-height:1.55;color:#333;">One local address fronts every AI tool and agent workflow. Double-click to install on macOS / Windows, or run from the CLI on Linux.</p>
       <div data-reveal data-reveal-delay="180" style="display:flex;gap:12px;justify-content:center;margin-top:36px;flex-wrap:wrap;">
         <a href="https://github.com/wink-run/local-llm-proxy/releases" target="_blank" rel="noopener noreferrer" style="text-decoration:none;background:#FFD055;color:#000;font-size:16px;font-weight:500;padding:15px 28px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;box-shadow:rgba(16,24,40,0.05) 0px 1px 2px 0px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);"><span data-i18n="cta.primary">Free download</span> <span>↓</span></a>
+        <a href="https://pan.baidu.com/s/1J0ycTEBNjD8s-Nb64SgeqA?pwd=mjes" target="_blank" rel="noopener noreferrer" title="提取码 mjes" style="text-decoration:none;background:#FFD055;color:#000;font-size:16px;font-weight:500;padding:15px 28px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;box-shadow:rgba(16,24,40,0.05) 0px 1px 2px 0px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);"><span data-i18n="cta.baidu">Baidu Netdisk</span> <span>↓</span></a>
         <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noopener noreferrer" data-i18n="cta.secondary" style="text-decoration:none;background:#000;color:#fff;font-size:16px;font-weight:500;padding:15px 28px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">View on GitHub</a>
       </div>
     </div>
@@ -904,6 +910,7 @@
             <span style="color:#9a9a9a;font-size:14px;">macOS</span>
             <span style="color:#9a9a9a;font-size:14px;">Windows</span>
             <span style="color:#9a9a9a;font-size:14px;">Linux / Docker</span>
+            <a href="https://pan.baidu.com/s/1J0ycTEBNjD8s-Nb64SgeqA?pwd=mjes" target="_blank" rel="noopener noreferrer" data-i18n="ft.baidu" title="提取码 mjes" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Baidu Netdisk (mjes)</a>
           </div>
         </div>
         <div>
@@ -934,6 +941,7 @@ class Component extends DCLogic {
     'hero.title': '用的明白，用的节省，<br>用的简单。<br><span style="background:linear-gradient(90deg,#FFD055 0%,#FFF0A0 45%,#FFE07A 55%,#FFD055 100%);background-size:220% 100%;animation:tbShimmer 4.5s ease-in-out infinite;padding:0 0.14em;border-radius:6px;">越用越懂你，闲置也能赚钱</span>。',
     'hero.sub': '一个本地中枢纳管 Claude / Cursor / Codex 等：一站式 Trace 与路由，不改客户端习惯。资源随使用习惯沉淀与发现；闲置算力还能换成积分。',
     'hero.ctaPrimary': '免费下载', 'hero.ctaSecondary': '在 GitHub 查看',
+    'hero.ctaBaidu': '百度网盘下载',
     'hero.meta': 'macOS · Windows · Linux　·　Apache-2.0 开源',
     'hero.tab.dashboard': '盘点', 'hero.tab.gateway': '网关', 'hero.tab.sessions': '会话', 'hero.tab.trace': 'Trace',
     'hero.tab.provider': '供给源', 'hero.tab.assets': '资源', 'hero.tab.portrait': '画像', 'hero.tab.playground': '游乐场',
@@ -1037,9 +1045,11 @@ class Component extends DCLogic {
     'cta.title': '用的明白，用得省心。',
     'cta.sub': '一个本地地址接管全部 AI 应用与 Agent 编排，下载即用。macOS / Windows 双击安装，Linux 命令行启动。',
     'cta.primary': '免费下载', 'cta.secondary': '在 GitHub 查看',
+    'cta.baidu': '百度网盘下载',
     'ft.tag': '个人 AI 中枢 · Token 管家。用的明白 · 用的节省 · 用的简单 · 越用越懂你 · 闲置赚钱。',
     'ft.col1': '产品', 'ft.l1': '核心能力', 'ft.lHub': 'Agent 中枢', 'ft.l2': '一键接入', 'ft.l3': '智能路由', 'ft.l4': '社区分享', 'ft.l5': '圈子',
     'ft.col3': '平台',
+    'ft.baidu': '百度网盘（提取码 mjes）',
     'ft.col4': 'Wink Studio 出品', 'ft.friends.pings': 'Pings', 'ft.friends.memwink': 'Memwink',
     'faq.kicker': '常见问题',
     'faq.title': '常见问题',

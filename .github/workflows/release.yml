@@ -74,6 +74,7 @@ jobs:
           done
           exit 1
 
+      # Apple notarytool 偶发 HTTP 超时（NSURLError -1001）；afterSign 内已重试，整步再兜底一次
       - name: Build (Vite + electron-builder)
         env:
           CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
@@ -81,8 +82,22 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build -- --publish never
+          NOTARIZE_MAX_ATTEMPTS: '3'
         working-directory: client
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            echo "=== mac build attempt ${attempt}/2 ==="
+            if npm run build -- --publish never; then
+              exit 0
+            fi
+            if [ "${attempt}" -ge 2 ]; then
+              exit 1
+            fi
+            echo "Build failed (often notarize timeout); retrying in 45s..."
+            sleep 45
+          done
+          exit 1
 
       # Upload .dmg（手动安装）+ .zip（electron-updater 自动更新必需）+ latest-mac.yml
       - uses: actions/upload-artifact@v4

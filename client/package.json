@@ -74,6 +74,7 @@
     "releaseInfo": {
       "releaseNotesFile": "release-notes.md"
     },
+    "afterSign": "scripts/notarize-mac.js",
     "mac": {
       "icon": "build/icon.icns",
       "target": [
@@ -82,7 +83,7 @@
       ],
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
-      "notarize": true,
+      "notarize": false,
       "gatekeeperAssess": false,
       "entitlements": "electron/entitlements.mac.plist",
       "entitlementsInherit": "electron/entitlements.mac.plist"
