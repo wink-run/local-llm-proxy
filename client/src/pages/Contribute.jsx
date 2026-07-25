@@ -1,7 +1,7 @@
 // client/src/pages/Contribute.jsx
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getStats, getSettlements, getContributeSummary, listJoinedCircles, listMyCircles } from '../api/client';
+import { getStats, getSettlements, getContributeSummary, listJoinedCircles, listMyCircles, listCommunityAgents, listPublicCommunityAgents } from '../api/client';
 import { getConfig, getGateway, getLocalConfig } from '../api/adapter';
 import { resolveLocalGatewayBase } from '../api/gatewayModels';
 import { loadUserAccounts } from '../api/userAccounts';
@@ -13,6 +13,7 @@ import {
 import RateChart from '../components/RateChart';
 import { useLang } from '../store/lang';
 import { fmtContribTokens, fmtCreditCny, creditsToCny } from '../lib/credit-pricing';
+import { avatarColor } from '../components/UserAvatar';
 function multiplierToStars(m) {
   const n = m >= 1.3 ? 5 : m >= 1.1 ? 4 : m >= 0.9 ? 3 : m >= 0.7 ? 2 : 1;
   return '★'.repeat(n) + '☆'.repeat(5 - n);
@@ -79,6 +80,8 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
   const { t } = useLang();
   const [selectedNames,   setSelectedNames]   = useState(new Set()); // Set<string>
   const [availableModels, setAvailableModels] = useState([]);        // {name, type}[]
+  const [availableAssistants, setAvailableAssistants] = useState([]); // resource rows
+  const [selectedAssistantIds, setSelectedAssistantIds] = useState(new Set());
   const [nodeName,        setNodeName]        = useState('');
   const [autoStart,       setAutoStart]       = useState(false);
   const [saving,          setSaving]          = useState(false);
@@ -87,6 +90,8 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
   const [circles,         setCircles]         = useState([]);         // 可分享的圈子
   const [circleScope,     setCircleScope]     = useState('public');   // 'public' | 'circle'
   const [selectedCircleIds, setSelectedCircleIds] = useState(new Set());
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showAssistantPicker, setShowAssistantPicker] = useState(false);
 
   useEffect(() => {
     Promise.all([listMyCircles(), listJoinedCircles()])
@@ -101,7 +106,10 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
       getGateway().status().catch(() => null),
       loadUserAccounts().catch(() => ({})),
       getLocalConfig().get().catch(() => ({})),
-    ]).then(([saved, gwStatus, accounts, localCfg]) => {
+      (typeof window !== 'undefined' && window.electronAPI?.resource?.listResources)
+        ? window.electronAPI.resource.listResources({ type: 'assistant' }).catch(() => null)
+        : Promise.resolve(null),
+    ]).then(([saved, gwStatus, accounts, localCfg, asstRes]) => {
       // Dynamic gateway URL from actual running port
       const port = gwStatus?.port || 11430;
       const gw   = resolveLocalGatewayBase(port);
@@ -126,6 +134,14 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
         setCircleScope('circle');
         setSelectedCircleIds(new Set(uniqueCircleIds([cfg.contribute_circle_id])));
       }
+      const assistants = asstRes?.success ? (asstRes.resources || []) : (asstRes?.resources || []);
+      setAvailableAssistants(Array.isArray(assistants) ? assistants : []);
+      const prevAsst = new Set(
+        (cfg.contribute_assistants || [])
+          .map((x) => (typeof x === 'string' ? x : x?.id))
+          .filter(Boolean),
+      );
+      setSelectedAssistantIds(prevAsst);
     });
   }, []);
 
@@ -135,6 +151,21 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
       if (next.has(name)) next.delete(name); else next.add(name);
       return next;
     });
+  }
+
+  function toggleAssistant(id) {
+    setSelectedAssistantIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function assistantDisabledReason(r) {
+    const ENABLE = new Set(['claude-code', 'codex', 'cursor', 'kimi-code', 'workbuddy']);
+    const ok = (r.projections || []).some((p) => ENABLE.has(p.agentId || p.agent_id));
+    if (!ok) return t('contribute.assistantNeedProject');
+    return '';
   }
 
   function toggleCircle(id) {
@@ -156,7 +187,23 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
       );
       const model_groups = [{ base_url: localGw, token: '', models }];
       const current      = (await getConfig().read().catch(() => null)) || {};
-      const updated      = { ...current, model_groups, llm_base_url: localGw, llm_token: '', models, name: nodeName, auto_start: autoStart };
+      const visibility = circleScope === 'circle' ? 'circle' : 'public';
+      const contribute_assistants = [...selectedAssistantIds]
+        .filter((id) => {
+          const row = availableAssistants.find((a) => a.id === id);
+          return row && !assistantDisabledReason(row);
+        })
+        .map((id) => ({ id, visibility }));
+      const updated      = {
+        ...current,
+        model_groups,
+        llm_base_url: localGw,
+        llm_token: '',
+        models,
+        name: nodeName,
+        auto_start: autoStart,
+        contribute_assistants,
+      };
       const circleIds = circleScope === 'circle' ? uniqueCircleIds([...selectedCircleIds]) : [];
       await getConfig().write({
         ...updated,
@@ -166,6 +213,10 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
       // 保存后立即启动贡献节点
       const started = onStart ? await onStart() : true;
       setSavedMsg(started ? t('contribute.savedAndStarted') : t('common.saved'));
+      // 保存后刷新社区智能体列表（停止贡献应立刻从在线名片消失）
+      try {
+        window.dispatchEvent(new CustomEvent('tb:community-agents-refresh'));
+      } catch { /* ignore */ }
       setTimeout(() => setSavedMsg(''), 2000);
     } finally { setSaving(false); }
   }
@@ -198,37 +249,190 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
         <p className="text-sm text-red-600 dark:text-red-400 -mt-1">{agentError}</p>
       )}
 
-      {/* Model selection */}
+      {/* 贡献模型：默认只展示已选；点 + 从候选里添加，避免占满整页 */}
       <div className="space-y-2">
-        <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.models')}</span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.models')}</span>
+          {selectedNames.size > 0 && (
+            <span className="text-[11px] text-zinc-400">{t('contribute.modelsSelected', { n: selectedNames.size })}</span>
+          )}
+        </div>
 
         {availableModels.length === 0 ? (
-          <p className="text-xs text-zinc-400 dark:text-zinc-500 dark:text-zinc-400">{t('contribute.noModelsHint')}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.noModelsHint')}</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {availableModels.map(m => {
-              const sel     = selectedNames.has(m.name);
-              const isImage = m.type === 'image';
-              return (
-                <button key={m.name} type="button" onClick={() => toggleModel(m.name)}
-                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-colors ${
-                    sel
-                      ? isImage
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5 items-center">
+              {[...selectedNames].map((name) => {
+                const m = availableModels.find((x) => x.name === name) || { name, type: 'chat' };
+                const isImage = m.type === 'image';
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    title={t('contribute.removeModel')}
+                    onClick={() => toggleModel(name)}
+                    className={`inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-lg border text-xs font-mono transition-colors ${
+                      isImage
                         ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-700 text-purple-700 dark:text-purple-300'
                         : 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                      : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-500'
-                  }`}>
-                  {m.name}
-                  <span className={`text-xs px-1 py-0.5 rounded font-medium ${
-                    sel
-                      ? isImage ? 'bg-purple-200 dark:bg-purple-800 text-purple-700 dark:text-purple-300' : 'bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
-                      : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400'
-                  }`}>
-                    {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
-                  </span>
-                </button>
-              );
-            })}
+                    }`}
+                  >
+                    <span className="truncate max-w-[14rem]">{name}</span>
+                    <span className={`text-[10px] px-1 py-0.5 rounded font-medium ${
+                      isImage
+                        ? 'bg-purple-200 dark:bg-purple-800 text-purple-700 dark:text-purple-300'
+                        : 'bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
+                    }`}>
+                      {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
+                    </span>
+                    <span className="ml-0.5 w-4 h-4 inline-flex items-center justify-center rounded text-zinc-500 hover:text-red-500" aria-hidden>×</span>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setShowModelPicker((v) => !v)}
+                className={`inline-flex items-center justify-center gap-1 min-w-[2rem] h-7 px-2 rounded-lg border text-sm font-medium transition-colors ${
+                  showModelPicker
+                    ? 'bg-zinc-200 dark:bg-zinc-700 border-zinc-400 dark:border-zinc-500 text-zinc-800 dark:text-zinc-100'
+                    : 'bg-zinc-50 dark:bg-zinc-900 border-dashed border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-600'
+                }`}
+                title={t('contribute.addModel')}
+              >
+                +
+              </button>
+            </div>
+            {selectedNames.size === 0 && !showModelPicker && (
+              <p className="text-[11px] text-zinc-400">{t('contribute.addModelHint')}</p>
+            )}
+            {showModelPicker && (
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/60 p-3 space-y-2 max-h-48 overflow-y-auto">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-zinc-500">{t('contribute.pickModelHint')}</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowModelPicker(false)}
+                    className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                  >
+                    {t('contribute.closePicker')}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {availableModels
+                    .filter((m) => !selectedNames.has(m.name))
+                    .map((m) => {
+                      const isImage = m.type === 'image';
+                      return (
+                        <button
+                          key={m.name}
+                          type="button"
+                          onClick={() => toggleModel(m.name)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-colors bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:border-blue-400 dark:hover:border-blue-500"
+                        >
+                          {m.name}
+                          <span className="text-[10px] px-1 py-0.5 rounded font-medium bg-zinc-100 dark:bg-zinc-700 text-zinc-500">
+                            {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  {availableModels.every((m) => selectedNames.has(m.name)) && (
+                    <p className="text-[11px] text-zinc-400">{t('contribute.allModelsAdded')}</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 贡献智能体：默认只展示已选；点 + 添加（须已投射） */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.assistants')}</span>
+          {selectedAssistantIds.size > 0 && (
+            <span className="text-[11px] text-zinc-400">
+              {t('contribute.assistantsSelected', { n: selectedAssistantIds.size })}
+            </span>
+          )}
+        </div>
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('contribute.assistantsHint')}</p>
+        {availableAssistants.length === 0 ? (
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.noAssistantsHint')}</p>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5 items-center">
+              {[...selectedAssistantIds].map((id) => {
+                const a = availableAssistants.find((x) => x.id === id);
+                const label = a ? (a.display_name || a.name) : id;
+                const reason = a ? assistantDisabledReason(a) : '';
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    title={reason || a?.description || t('contribute.removeAssistant')}
+                    onClick={() => toggleAssistant(id)}
+                    className={`inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-lg border text-xs transition-colors ${
+                      reason
+                        ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300'
+                        : 'bg-amber-100 dark:bg-amber-900/40 border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-200'
+                    }`}
+                  >
+                    <span className="truncate max-w-[14rem]">{label}</span>
+                    {reason && <span className="text-[10px] opacity-80">· {reason}</span>}
+                    <span className="ml-0.5 w-4 h-4 inline-flex items-center justify-center rounded text-zinc-500 hover:text-red-500" aria-hidden>×</span>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setShowAssistantPicker((v) => !v)}
+                className={`inline-flex items-center justify-center gap-1 min-w-[2rem] h-7 px-2 rounded-lg border text-sm font-medium transition-colors ${
+                  showAssistantPicker
+                    ? 'bg-zinc-200 dark:bg-zinc-700 border-zinc-400 dark:border-zinc-500 text-zinc-800 dark:text-zinc-100'
+                    : 'bg-zinc-50 dark:bg-zinc-900 border-dashed border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-amber-400 hover:text-amber-700'
+                }`}
+                title={t('contribute.addAssistant')}
+              >
+                +
+              </button>
+            </div>
+            {selectedAssistantIds.size === 0 && !showAssistantPicker && (
+              <p className="text-[11px] text-zinc-400">{t('contribute.addAssistantHint')}</p>
+            )}
+            {showAssistantPicker && (
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/60 p-3 space-y-2 max-h-48 overflow-y-auto">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-zinc-500">{t('contribute.pickAssistantHint')}</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAssistantPicker(false)}
+                    className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                  >
+                    {t('contribute.closePicker')}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {availableAssistants
+                    .filter((a) => !selectedAssistantIds.has(a.id) && !assistantDisabledReason(a))
+                    .map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        title={a.description || a.name}
+                        onClick={() => toggleAssistant(a.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs transition-colors bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:border-amber-400 dark:hover:border-amber-600"
+                      >
+                        {a.display_name || a.name}
+                      </button>
+                    ))}
+                  {availableAssistants.filter((a) => !selectedAssistantIds.has(a.id) && !assistantDisabledReason(a)).length === 0 && (
+                    <p className="text-[11px] text-zinc-400">{t('contribute.noAddableAssistants')}</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -310,6 +514,252 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
           {t('contribute.stop')}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** 社区智能体标题：账号 + 智能体名（如 adam的写诗专家） */
+function communityAgentTitle(a) {
+  const owner = String(a?.owner_nickname || '').trim();
+  const raw = String(a?.display_name || a?.name || '').trim();
+  if (!raw && !owner) return a?.id || '智能体';
+  if (!owner) return raw || a?.id || '智能体';
+  const prefix = `${owner}的`;
+  const base = raw.startsWith(prefix) ? raw.slice(prefix.length).trim() : raw;
+  return `${prefix}${base || a?.name || '智能体'}`;
+}
+
+/** 社区智能体卡片左侧图标：按名称着色 + 首字，辅以简易智能体符号 */
+function CommunityAgentIcon({ name, selected }) {
+  const label = String(name || '?').trim() || '?';
+  const initial = label[0].toUpperCase();
+  return (
+    <div
+      className={`relative w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-white font-semibold text-base shadow-sm ring-1 ring-black/5 dark:ring-white/10 ${avatarColor(label)} ${
+        selected ? 'ring-2 ring-amber-400 dark:ring-amber-500' : ''
+      }`}
+      aria-hidden
+    >
+      {/* 右下角小符号，区分「智能体」而非用户头像 */}
+      <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-md bg-white dark:bg-zinc-900 flex items-center justify-center shadow-sm">
+        <svg viewBox="0 0 16 16" className="w-2.5 h-2.5 text-zinc-600 dark:text-zinc-300" fill="currentColor">
+          <path d="M8 1.5a1 1 0 0 1 1 1V4h1.5a2 2 0 0 1 2 2v1H14a1 1 0 1 1 0 2h-1.5v1a2 2 0 0 1-2 2H9v1.5a1 1 0 1 1-2 0V12H5.5a2 2 0 0 1-2-2v-1H2a1 1 0 1 1 0-2h1.5V6a2 2 0 0 1 2-2H7V2.5a1 1 0 0 1 1-1zM5.5 6v4h5V6h-5z" />
+        </svg>
+      </span>
+      {initial}
+    </div>
+  );
+}
+
+/** 社区智能体：浏览在线名片 → 雇佣/取消雇佣（供游乐场与 MCP；此处不发起任务） */
+function CommunityAgentsCard() {
+  const { t } = useLang();
+  const [agents, setAgents] = useState([]);
+  const [hiredIds, setHiredIds] = useState(new Set());
+  const [credits, setCredits] = useState(null);
+  const [selected, setSelected] = useState(null); // { id, worker_id, display_name, runtime, description }
+  const [hireMsg, setHireMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  function refreshHired() {
+    if (!window.electronAPI?.agent?.listHiredCommunity) return;
+    window.electronAPI.agent.listHiredCommunity()
+      .then((r) => {
+        const ids = new Set((r?.hired || []).map((h) => h.assistant_id));
+        setHiredIds(ids);
+      })
+      .catch(() => {});
+  }
+
+  function refresh() {
+    listCommunityAgents()
+      .then((r) => {
+        setAgents(r.data?.agents || []);
+        if (r.data?.credits_per_task != null) setCredits(r.data.credits_per_task);
+      })
+      .catch(() => {
+        listPublicCommunityAgents()
+          .then((r) => setAgents(r.data?.agents || []))
+          .catch(() => setAgents([]));
+      });
+    refreshHired();
+  }
+
+  useEffect(() => { refresh(); }, []);
+
+  useEffect(() => {
+    function onRefresh() {
+      // 贡献配置保存后稍等节点重连再拉列表
+      setTimeout(() => refresh(), 800);
+    }
+    window.addEventListener('tb:community-agents-refresh', onRefresh);
+    return () => window.removeEventListener('tb:community-agents-refresh', onRefresh);
+  }, []);
+
+  async function hireSelected() {
+    if (!selected) return;
+    setErr('');
+    setHireMsg('');
+    try {
+      if (!window.electronAPI?.agent?.hireCommunity) {
+        throw new Error('请在桌面客户端中雇佣');
+      }
+      const r = await window.electronAPI.agent.hireCommunity({
+        assistant_id: selected.id,
+        worker_id: selected.worker_id,
+        display_name: selected.display_name,
+        runtime: selected.runtime,
+        description: selected.description,
+      });
+      if (!r?.success) throw new Error(r?.error || 'hire failed');
+      setHireMsg(t('contribute.hiredOk', { name: selected.display_name || selected.id, id: r.hired?.id }));
+      refreshHired();
+    } catch (e) {
+      setErr(e.message || String(e));
+    }
+  }
+
+  async function unhireSelected() {
+    if (!selected) return;
+    setErr('');
+    setHireMsg('');
+    try {
+      if (!window.electronAPI?.agent?.unhireCommunity) {
+        throw new Error('请在桌面客户端中操作');
+      }
+      const r = await window.electronAPI.agent.unhireCommunity(selected.id);
+      if (!r?.success) throw new Error(r?.error || 'unhire failed');
+      setHireMsg(t('contribute.unhiredOk', { name: selected.display_name || selected.id }));
+      refreshHired();
+    } catch (e) {
+      setErr(e.message || String(e));
+    }
+  }
+
+  const selectedHired = selected && hiredIds.has(selected.id);
+
+  return (
+    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('contribute.communityAgents')}</h2>
+          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-0.5">{t('contribute.communityAgentsHint')}</p>
+        </div>
+        <button type="button" onClick={refresh}
+          className="text-xs text-blue-500 hover:text-blue-600 shrink-0">
+          {t('contribute.refreshAgents')}
+        </button>
+      </div>
+      {credits != null && (
+        <p className="text-[11px] text-zinc-400">{t('contribute.agentTaskCost', { n: credits })}</p>
+      )}
+      {agents.length === 0 ? (
+        <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.noCommunityAgents')}</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-80 overflow-y-auto pr-0.5">
+          {agents.map((a) => {
+            const key = `${a.worker_id}:${a.id}`;
+            const sel = selected && selected.id === a.id && selected.worker_id === a.worker_id;
+            const hired = hiredIds.has(a.id);
+            const title = communityAgentTitle(a);
+            const blurb = String(a.description || '').trim();
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSelected({
+                  id: a.id,
+                  worker_id: a.worker_id,
+                  display_name: title,
+                  runtime: a.runtime,
+                  description: a.description,
+                  owner_nickname: a.owner_nickname,
+                })}
+                className={`flex gap-3 text-left p-3 rounded-2xl border transition-all ${
+                  sel
+                    ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-400 dark:border-amber-600 shadow-md shadow-amber-500/10'
+                    : 'bg-white dark:bg-zinc-900/60 border-zinc-200 dark:border-zinc-700 shadow-sm hover:shadow-md hover:border-zinc-300 dark:hover:border-zinc-500'
+                }`}
+              >
+                <CommunityAgentIcon name={title} selected={sel} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start gap-1.5">
+                    <span className={`text-sm font-semibold leading-snug truncate ${
+                      sel ? 'text-amber-900 dark:text-amber-100' : 'text-zinc-900 dark:text-zinc-100'
+                    }`}>
+                      {title}
+                    </span>
+                    {hired && (
+                      <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300">
+                        {t('contribute.hiredBadge')}
+                      </span>
+                    )}
+                  </div>
+                  {a.runtime && (
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5 truncate">
+                      {t('contribute.agentRuntime', { runtime: a.runtime })}
+                    </p>
+                  )}
+                  <p className={`text-[11px] mt-1.5 line-clamp-2 leading-relaxed ${
+                    blurb
+                      ? 'text-zinc-500 dark:text-zinc-400'
+                      : 'text-zinc-400 dark:text-zinc-500 italic'
+                  }`}>
+                    {blurb || t('contribute.noAgentDesc')}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {selected && (
+        <div className="space-y-2.5 pt-3 border-t border-zinc-100 dark:border-zinc-700/80">
+          <div className="flex gap-3 items-start">
+            <CommunityAgentIcon name={selected.display_name || selected.id} selected />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                {t('contribute.hireTarget', { name: selected.display_name || selected.id })}
+              </p>
+              {/* 选中后完整展示简介，便于判断用途 */}
+              <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed whitespace-pre-wrap">
+                {String(selected.description || '').trim() || t('contribute.noAgentDesc')}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {!selectedHired ? (
+              <button
+                type="button"
+                onClick={hireSelected}
+                className="px-4 py-1.5 text-sm rounded-lg bg-blue-700 hover:bg-blue-600 text-white font-medium"
+              >
+                {t('contribute.hireBtn')}
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={hireSelected}
+                  className="px-4 py-1.5 text-sm rounded-lg bg-blue-700 hover:bg-blue-600 text-white font-medium"
+                >
+                  {t('contribute.hiredAgain')}
+                </button>
+                <button
+                  type="button"
+                  onClick={unhireSelected}
+                  className="px-4 py-1.5 text-sm rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-medium"
+                >
+                  {t('contribute.unhireBtn')}
+                </button>
+              </>
+            )}
+          </div>
+          <p className="text-[11px] text-zinc-400">{t('contribute.hireHint')}</p>
+        </div>
+      )}
+      {hireMsg && <p className="text-sm text-green-600 dark:text-green-400">{hireMsg}</p>}
+      {err && <p className="text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap">{err}</p>}
     </div>
   );
 }
@@ -479,6 +929,8 @@ export default function Contribute() {
         stats={stats}
         agentError={agentError}
       />
+
+      <CommunityAgentsCard />
 
       {stats && (
         <div className="grid grid-cols-3 gap-3">

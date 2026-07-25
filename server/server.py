@@ -35,13 +35,17 @@ from auth import get_current_user_id
 from api_errors import DispatchError, openai_error_response
 from dispatch import handle_chat
 from dispatch_image import handle_image
+from dispatch_agent import handle_agent_task, AGENT_TASK_CREDITS
 from settler import run_settler
 from user_router import router as user_router
 from scene_router import router as scene_router
 from provider_router import router as provider_router
 from config_router import router as config_router
 from circle_router import router as circle_router
-from worker_pool import pool, WorkerConnection, worker_model_names, default_ttft_ms, worker_sharer
+from worker_pool import (
+    pool, WorkerConnection, worker_model_names, default_ttft_ms, worker_sharer,
+    normalize_agent_cards, owner_label_from_user, shared_agent_display_name, bare_agent_name,
+)
 from geo_ip import client_ip_from_ws, resolve_client_ip, resolve_ip_geo, virtual_worker_geo
 from contrib_display import apply_contrib_display
 
@@ -365,7 +369,103 @@ async def public_network():
         },
         "workers": workers_data,
         "available_models": sorted(public_models.keys()),
+        "available_agents": await _list_public_agents(),
     }
+
+
+async def backfill_worker_owner_labels() -> None:
+    """给缺少账号展示名的在线 worker 回填，使列表能拼出「账号的智能体名」。"""
+    for w in list(getattr(pool, "_workers", []) or []):
+        if not getattr(w, "agents", None):
+            continue
+        if (getattr(w, "owner_nickname", None) or "").strip():
+            continue
+        uid = getattr(w, "user_id", None)
+        if not uid:
+            continue
+        try:
+            user = await db.get_user_by_id(uid)
+        except Exception:
+            continue
+        label = owner_label_from_user(user)
+        if not label:
+            continue
+        w.owner_nickname = label
+        # 同步刷新名片 display_name
+        refreshed = []
+        for c in w.agents:
+            if not isinstance(c, dict):
+                continue
+            base = bare_agent_name(c.get("display_name") or c.get("name") or c.get("id"), label)
+            refreshed.append({**c, "display_name": shared_agent_display_name(base, label)})
+        w.agents = refreshed
+
+
+async def _list_public_agents() -> list:
+    await backfill_worker_owner_labels()
+    return pool.list_agents_for_user(public_only=True)
+
+
+@app.get("/public/agents")
+async def public_agents():
+    """公开在线智能体名片（仅 visibility=public）"""
+    return {"agents": await _list_public_agents()}
+
+
+async def auth_api_key_or_jwt(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> int:
+    """与模型调用一致：优先 API Key（cloud_config.token / sk-…），否则用户 JWT。"""
+    if not creds or not (creds.credentials or "").strip():
+        raise HTTPException(401, "Not authenticated")
+    raw = creds.credentials.strip()
+    info = await db.verify_key(raw)
+    if info and info.get("user_id"):
+        return int(info["user_id"])
+    from auth import decode_token
+    uid = decode_token(raw)
+    if not uid:
+        raise HTTPException(401, "Invalid or expired token")
+    return int(uid)
+
+
+@app.get("/api/agents")
+async def api_agents(uid: int = Depends(auth_api_key_or_jwt)):
+    """可见智能体：公开 + 所属圈子（鉴权与模型一致：API Key 或 JWT）"""
+    await backfill_worker_owner_labels()
+    circles = set(await db.get_user_circle_ids(uid))
+    return {
+        "agents": pool.list_agents_for_user(user_circle_ids=circles),
+        "credits_per_task": AGENT_TASK_CREDITS,
+    }
+
+
+class AgentTaskBody(BaseModel):
+    assistant_id: str
+    prompt: str
+    worker_id: Optional[str] = None
+    timeout_ms: Optional[int] = None
+
+
+@app.post("/api/agent-tasks")
+async def create_agent_task(body: AgentTaskBody, uid: int = Depends(auth_api_key_or_jwt)):
+    """发起远程武将任务（鉴权与模型一致：API Key 或 JWT）"""
+    result = await handle_agent_task(
+        assistant_id=body.assistant_id,
+        prompt=body.prompt,
+        consumer_user_id=uid,
+        worker_id=body.worker_id,
+        timeout_ms=body.timeout_ms,
+    )
+    if not result.get("ok"):
+        status = result.get("status") or "failed"
+        code = 402 if "credit" in str(result.get("error") or "").lower() else (
+            404 if status == "rejected" and "No online" in str(result.get("error") or "") else 400
+        )
+        if status == "timeout":
+            code = 504
+        raise HTTPException(code, detail=result)
+    return result
 
 
 @app.get("/api/agent-downloads")
@@ -467,9 +567,11 @@ async def worker_ws(ws: WebSocket):
         worker_id = str(uuid.uuid4())[:8]
         worker_name = (msg.get("name") or "").strip()
         if not worker_name:
-            worker_name = (user.get("username") or "").strip()
+            worker_name = (user.get("nickname") or "").strip()
         if not worker_name:
             worker_name = f"worker-{worker_id}"
+        # 出租人账号：共享智能体展示名用「{账号}的{智能体名}」
+        owner_nickname = owner_label_from_user(user)
         raw_models = msg.get("models", [])
         models = []
         model_types: dict[str, str] = {}
@@ -520,6 +622,9 @@ async def worker_ws(ws: WebSocket):
             ws=ws, models=models, worker_id=worker_id,
             name=worker_name, user_id=user_id,
             model_types=model_types,
+            agents=normalize_agent_cards(msg.get("agents"), owner_nickname=owner_nickname),
+            owner_nickname=owner_nickname,
+            caps=[str(c) for c in (msg.get("caps") or []) if c][:16],
             circle_id=worker_circle_ids_list[0] if len(worker_circle_ids_list) == 1 else None,
             circle_ids=worker_circle_ids_list,
             client_ip=client_ip,
@@ -539,17 +644,29 @@ async def worker_ws(ws: WebSocket):
         asyncio.create_task(_geo_worker(worker))
         await ws.send_text(json.dumps({"type": "registered", "worker_id": worker_id}))
         logger.info(
-            "[worker/ws] online peer=%s worker_id=%s name=%s user_id=%s models=%s",
+            "[worker/ws] online peer=%s worker_id=%s name=%s user_id=%s models=%s agents=%s",
             peer,
             worker_id,
             worker_name,
             user_id,
             models,
+            [a.get("display_name") or a.get("id") for a in worker.agents],
         )
 
         while True:
             raw = await ws.receive_text()
             msg = json.loads(raw)
+            kind = msg.get("type")
+
+            # 武将任务结果：用 task_id，与模型 req_id 分流
+            if kind == "agent_task_result":
+                task_id = msg.get("task_id")
+                entry = worker.pending_agents.pop(task_id, None) if task_id else None
+                if entry:
+                    await entry["queue"].put(msg)
+                    worker.active_requests = max(0, worker.active_requests - 1)
+                continue
+
             req_id = msg.get("req_id")
             if not req_id or req_id not in worker.pending:
                 continue
@@ -620,6 +737,14 @@ async def worker_ws(ws: WebSocket):
             for entry in worker.pending.values():
                 await entry["queue"].put(("error", "worker disconnected"))
             worker.pending.clear()
+            for tid, entry in list(worker.pending_agents.items()):
+                await entry["queue"].put({
+                    "type": "agent_task_result",
+                    "task_id": tid,
+                    "status": "failed",
+                    "error": "worker disconnected",
+                })
+            worker.pending_agents.clear()
             logger.info(
                 "[worker/ws] offline peer=%s worker_id=%s name=%s",
                 peer,

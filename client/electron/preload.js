@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pickWorkingDir: (opts) => ipcRenderer.invoke('agent:pickWorkingDir', opts),
     // 兼容旧调用
     list: (opts) => ipcRenderer.invoke('agent:list', opts || {}),
+    // 社区武将雇佣
+    listHiredCommunity: () => ipcRenderer.invoke('community:listHired'),
+    hireCommunity: (card) => ipcRenderer.invoke('community:hire', card),
+    unhireCommunity: (id) => ipcRenderer.invoke('community:unhire', id),
     onStep: (cb) => {
       const handler = (_e, data) => cb(data);
       ipcRenderer.on('agent:task:step', handler);

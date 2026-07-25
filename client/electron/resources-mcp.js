@@ -30,8 +30,8 @@ const TOOLS = [
   {
     name: 'tb_list_resources',
     description:
-      '列出 Token Bank 已纳管的资源。assistant=可点武将（仅投射给当前 Agent 的可见）；'
-      + 'skill/prompt=兵器。点将前用 type=assistant 查将帅榜。'
+      '列出 Token Bank 已纳管的资源。assistant=可点智能体（仅投射给当前 Agent 的可见）；'
+      + 'skill/prompt=兵器。点将前用 type=assistant 查智能体列表。'
       + '取提示词正文请用本 MCP 的 tb_get_prompt（也可用 tokenbank-prompts），勿臆造工具名。',
     inputSchema: {
       type: 'object',
@@ -286,7 +286,7 @@ async function handleToolCall(name, args = {}) {
       if (!rows.length) {
         return textResult(
           type === 'assistant'
-            ? '（当前 Agent 暂无已投射的智能体/武将；请先在 Token Bank「启用到」本 Agent）'
+            ? '（当前 Agent 暂无已投射的智能体；请先在 Token Bank「启用到」本 Agent）'
             : (type !== 'all'
               ? `（暂无已纳管的 ${type}；可用 tb_list_catalog 查看社区目录）`
               : '（暂无已纳管资源；可用 tb_list_catalog 查看社区目录）'),
@@ -297,7 +297,7 @@ async function handleToolCall(name, args = {}) {
         if (counts[r.type] != null) counts[r.type] += 1;
       }
       const summary = type === 'assistant'
-        ? `可点武将 ${rows.length} 员（已投射给当前 Agent）`
+        ? `可点智能体 ${rows.length} 个（已投射给当前 Agent）`
         : `已纳管 ${rows.length} 项：skill=${counts.skill} assistant=${counts.assistant} prompt=${counts.prompt}`;
       const lines = rows.map(formatResourceLine);
       return textResult(`${summary}\n${lines.join('\n')}`);
@@ -328,7 +328,7 @@ async function handleToolCall(name, args = {}) {
         const title = resolved.resource?.display_name || resolved.name;
         return textResult([
           `dispatch_id: assistant:${resolved.id}`,
-          `# 武将出战：${title}`,
+          `# 智能体出战：${title}`,
           '（请在当前会话按下列正文执行；仅编排/游乐场才使用 tb_dispatch_agent）',
           '',
           resolved.text || '(无出战正文)',
@@ -368,7 +368,7 @@ async function handleToolCall(name, args = {}) {
         const title = resolved.resource?.display_name || resolved.name;
         return textResult([
           `dispatch_id: assistant:${resolved.id}`,
-          `# 武将出战：${title}`,
+          `# 智能体出战：${title}`,
           '（请在当前会话按下列正文执行；仅编排/游乐场才使用 tb_dispatch_agent）',
           '',
           resolved.text || '(无出战正文)',

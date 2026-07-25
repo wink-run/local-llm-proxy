@@ -24,9 +24,18 @@ function findRouteConfig(configs, pathname) {
   return null;
 }
 
+function matchRouteParams(cfg, pathname) {
+  if (!cfg) return {};
+  const end = cfg.end ?? !String(cfg.path).includes(':');
+  return matchPath({ path: cfg.path, end }, pathname)?.params || {};
+}
+
 /**
  * 已访问过的页面保持挂载，切换菜单时用 hidden 隐藏而非 unmount，保留组件 state。
  * 组件始终保留在树中（含跳转登录页时），避免缓存被卸载。
+ *
+ * 注意：缓存页的 useParams() 会跟着「当前 URL」变，动态段会漂移。
+ * 因此把「该缓存 key 对应的 params」经 routeParams 传入，供详情页使用稳定 id。
  */
 export default function KeepAliveRoutes({ configs, user, guest }) {
   const location = useLocation();
@@ -59,6 +68,7 @@ export default function KeepAliveRoutes({ configs, user, guest }) {
 
         const { Component } = cfg;
         const isActive = key === activeKey && !!activeConfig;
+        const routeParams = matchRouteParams(cfg, key);
 
         return (
           <div
@@ -67,7 +77,7 @@ export default function KeepAliveRoutes({ configs, user, guest }) {
             aria-hidden={!isActive}
           >
             <PageGate config={cfg} user={user} guest={guest}>
-              <Component />
+              <Component routePath={key} routeParams={routeParams} />
             </PageGate>
           </div>
         );

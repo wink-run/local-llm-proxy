@@ -1,6 +1,7 @@
 // Agent 左侧竖排列表：聚合入口 + 各 Agent；可指定主 Agent（编排层）
 // 选中态遵循材料层次：侧栏偏重、Hub 用实心强调色、条目用抬升面（非描边）
-import React from 'react';
+// 右缘可左右拖动调宽（记忆到 localStorage）
+import React, { useCallback, useRef, useState } from 'react';
 import { resolveBrandIcon } from '../lib/brandIcons';
 import KimiAvatar from './KimiAvatar';
 import { useLang } from '../store/lang';
@@ -13,6 +14,24 @@ const FALLBACK_ICON = {
   'kimi-code': 'KM',
   assistant: 'AG',
 };
+
+const SIDEBAR_W_KEY = 'tokenbank.debug.agentSidebarWidth';
+const SIDEBAR_W_DEFAULT = 176; // ≈ Tailwind w-44
+const SIDEBAR_W_MIN = 140;
+const SIDEBAR_W_MAX = 360;
+
+function readSidebarWidth() {
+  try {
+    const v = Number(localStorage.getItem(SIDEBAR_W_KEY));
+    if (Number.isFinite(v) && v >= SIDEBAR_W_MIN && v <= SIDEBAR_W_MAX) return Math.round(v);
+  } catch { /* ignore */ }
+  return SIDEBAR_W_DEFAULT;
+}
+
+function clampSidebarWidth(w) {
+  const max = Math.min(SIDEBAR_W_MAX, Math.floor(window.innerWidth * 0.45));
+  return Math.max(SIDEBAR_W_MIN, Math.min(max, Math.round(w)));
+}
 
 /** 内置 Agent 用品牌 logo；自定义智能体保持文字回退 */
 function AgentBrandIcon({ agent, isCustom }) {
@@ -58,26 +77,83 @@ export default function AgentTabBar({
   runningKeys,
 }) {
   const { t } = useLang();
+  const [width, setWidth] = useState(readSidebarWidth);
+  const [dragging, setDragging] = useState(false);
+  const widthRef = useRef(width);
+  widthRef.current = width;
+
+  // 右缘拖拽：向右拉变宽，向左拉变窄
+  const onResizeStart = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = widthRef.current;
+    setDragging(true);
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev) => {
+      const next = clampSidebarWidth(startW + (ev.clientX - startX));
+      widthRef.current = next;
+      setWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+      setDragging(false);
+      try { localStorage.setItem(SIDEBAR_W_KEY, String(widthRef.current)); } catch { /* ignore */ }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
+
   const running = runningKeys instanceof Set
     ? runningKeys
     : new Set(Array.isArray(runningKeys) ? runningKeys : []);
+
+  const shellCls = `relative shrink-0 flex min-h-0 ${dragging ? 'select-none' : ''}`;
+  // 隐式拖拽热区：无蓝线/分割条，仅 cursor 提示可左右调宽
+  const resizeHandle = (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-valuenow={width}
+      aria-valuemin={SIDEBAR_W_MIN}
+      aria-valuemax={SIDEBAR_W_MAX}
+      aria-label={t('debug.preview.resize')}
+      title={t('debug.preview.resize')}
+      onMouseDown={onResizeStart}
+      className="absolute right-0 top-0 bottom-0 z-10 w-2 translate-x-1/2 cursor-col-resize bg-transparent"
+    />
+  );
+
   if (loading) {
     return (
-      <aside className="w-44 shrink-0 border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 p-2 space-y-1.5 animate-pulse">
-        {[1, 2, 3].map(i => (
-          <div key={i} className="h-8 w-full bg-zinc-200/80 dark:bg-zinc-800 rounded-lg" />
-        ))}
-      </aside>
+      <div className={shellCls} style={{ width }}>
+        <aside className="w-full border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 p-2 space-y-1.5 animate-pulse">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="h-8 w-full bg-zinc-200/80 dark:bg-zinc-800 rounded-lg" />
+          ))}
+        </aside>
+        {resizeHandle}
+      </div>
     );
   }
 
   if (!agents?.length) {
     return (
-      <aside className="w-44 shrink-0 border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 p-3">
-        <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-          {t('debug.tabs.noAgents')}
-        </p>
-      </aside>
+      <div className={shellCls} style={{ width }}>
+        <aside className="w-full border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 p-3">
+          <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+            {t('debug.tabs.noAgents')}
+          </p>
+        </aside>
+        {resizeHandle}
+      </div>
     );
   }
 
@@ -86,7 +162,8 @@ export default function AgentTabBar({
 
   return (
     /* 侧栏：偏重材料，与主内容玻璃顶栏分层，避免轻材质叠轻材质 */
-    <aside className="w-44 shrink-0 border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 flex flex-col min-h-0">
+    <div className={shellCls} style={{ width }}>
+    <aside className="w-full border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 flex flex-col min-h-0 min-w-0">
       <div className="shrink-0 px-3 pt-4 pb-2">
         <p className="text-[10px] font-semibold tracking-[0.04em] text-zinc-500 dark:text-zinc-400">
           {t('debug.tabs.agents')}
@@ -121,15 +198,23 @@ export default function AgentTabBar({
         {agents.map(agent => {
           const active = selectedAgent?.id === agent.id;
           const isMain = agent.id === mainAgentId && !agent.custom;
-          const isCustom = agent.custom || agent.type === 'assistant';
+          const isCommunity = agent.type === 'community' || !!agent.community;
+          const isCustom = !isCommunity && (agent.custom || agent.type === 'assistant');
           const isRunning = running.has(agent.id);
+          const subLine = isCommunity
+            ? t('debug.tabs.communityRemote')
+            : (isCustom && agent.runtimeName)
+              ? `→ ${agent.runtimeName}`
+              : (!isCustom && agent.version ? `v${agent.version}` : '');
           return (
             <div key={agent.id} className="relative group">
               <button
                 type="button"
                 onClick={() => onSelect(agent)}
                 title={
-                  isCustom && agent.runtimeName
+                  isCommunity
+                    ? (agent.description || t('debug.tabs.communityHint'))
+                    : isCustom && agent.runtimeName
                     ? (agent.execRuntimeName && agent.execRuntimeName !== agent.runtimeName
                       ? t('debug.tabs.projectExec', { name: agent.runtimeName, exec: agent.execRuntimeName })
                       : t('debug.tabs.projectTo', { name: agent.runtimeName }))
@@ -144,26 +229,31 @@ export default function AgentTabBar({
                 `}
               >
                 <span className="relative shrink-0 flex items-center justify-center w-3.5 h-3.5">
-                  <AgentBrandIcon agent={agent} isCustom={isCustom} />
+                  <AgentBrandIcon agent={agent} isCustom={isCustom || isCommunity} />
                 </span>
                 <span className="min-w-0 flex-1 text-left">
                   <span className="flex items-center gap-1 min-w-0 leading-tight">
                     <span className="truncate">{agent.name}</span>
+                    {isCommunity && (
+                      <span className="shrink-0 text-[10px] px-1 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
+                        {t('debug.tabs.communityBadge')}
+                      </span>
+                    )}
                     {isMain && (
                       <span className="shrink-0 text-[10px] text-amber-500" title={t('debug.tabs.mainAgent')}>★</span>
                     )}
                   </span>
-                  {(isCustom && agent.runtimeName) || (!isCustom && agent.version) ? (
+                  {subLine ? (
                     <span className={`block text-[10px] font-normal truncate mt-0.5 leading-tight ${
                       active ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-400 dark:text-zinc-500'
                     }`}>
-                      {isCustom && agent.runtimeName ? `→ ${agent.runtimeName}` : `v${agent.version}`}
+                      {subLine}
                     </span>
                   ) : null}
                 </span>
                 {isRunning && <RunningDot label={t('debug.tabs.runningNamed', { name: agent.name })} />}
               </button>
-              {!isMain && !isCustom && onSetMainAgent && (
+              {!isMain && !isCustom && !isCommunity && onSetMainAgent && (
                 <button
                   type="button"
                   title={t('debug.tabs.setMain', { name: agent.name })}
@@ -191,5 +281,7 @@ export default function AgentTabBar({
         </div>
       )}
     </aside>
+    {resizeHandle}
+    </div>
   );
 }

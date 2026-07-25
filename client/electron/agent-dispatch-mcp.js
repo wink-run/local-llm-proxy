@@ -15,18 +15,18 @@ const WORKING_DIR = process.env.TB_WORKING_DIR || process.cwd();
 const TOOLS = [
   {
     name: 'tb_list_agents',
-    description: '【仅编排/游乐场】列出可派发目标。专业智能体（assistant:*）优先。日常直连会话请用 tb_list_resources(type=assistant)+tb_get_resource 点将，勿用本工具。编排时：匹配则派发；无匹配再自做/派 CLI。',
+    description: '【仅编排】列出本机已雇佣的社区智能体(community:*)，供 tb_dispatch_agent 派发。不含未雇佣的在线目录、本地 assistant、CLI，避免列表过长。雇佣请在 Token Bank「贡献」页操作。',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'tb_dispatch_agent',
-    description: '【仅编排/游乐场】向目标派发子任务并等待完成。优先 assistant:<id>。日常 Cursor/Claude/Codex 会话应 tb_get_resource 点将后自行执行，不要调用本工具。prompt 须含目标+约束+期望产出。',
+    description: '【仅编排】向已雇佣社区智能体派发子任务并等待完成。agent_id 须为 community:<id>（见 tb_list_agents）。任务在对方设备执行、不下载正文。prompt 须含目标+约束+期望产出。',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: {
           type: 'string',
-          description: '目标 ID：优先 assistant:<resourceId>；兜底可用 codex、claude-code',
+          description: '已雇佣目标 ID：community:<assistantId>@<workerId>（以 tb_list_agents 为准）',
         },
         prompt: {
           type: 'string',
@@ -34,6 +34,27 @@ const TOOLS = [
         },
       },
       required: ['agent_id', 'prompt'],
+    },
+  },
+  {
+    name: 'tb_list_community_agents',
+    description: '列出本机已雇佣的社区智能体名片（无正文）。不返回未雇佣的在线目录。新雇佣请在 Token Bank「贡献」页操作；雇佣后可用 tb_dispatch_agent。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'tb_hire_community_agent',
+    description: '雇佣社区智能体到本机名单（只存名片，不下载 Prompt/兵书）。可选同时发起一次远程任务。通常在贡献页雇佣即可；雇佣后可用 tb_dispatch_agent(agent_id=community:…)。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assistant_id: { type: 'string', description: '社区智能体 id（来自贡献页社区列表）' },
+        worker_id: { type: 'string', description: '可选：钉选在线节点 worker_id' },
+        display_name: { type: 'string' },
+        runtime: { type: 'string' },
+        description: { type: 'string' },
+        prompt: { type: 'string', description: '若提供则雇佣后立即远程执行一次' },
+      },
+      required: ['assistant_id'],
     },
   },
   {
@@ -64,28 +85,87 @@ function textResult(text, isError = false) {
 async function handleToolCall(name, args = {}) {
   if (name === 'tb_list_agents') {
     const agents = await dispatchClient.listAgents();
-    // 专业智能体优先展示，便于编排层匹配后派发
-    const sorted = [...agents].sort((a, b) => {
-      const wa = a.type === 'assistant' ? 0 : 1;
-      const wb = b.type === 'assistant' ? 0 : 1;
-      return wa - wb || String(a.name || '').localeCompare(String(b.name || ''));
-    });
+    // MCP 仅返回已雇佣社区智能体，避免 CLI / 本地 assistant / 未雇目录撑爆上下文
+    const hired = (agents || []).filter((a) => a && a.type === 'community');
+    const sorted = [...hired].sort((a, b) =>
+      String(a.name || '').localeCompare(String(b.name || '')),
+    );
     const lines = sorted.map((a) => {
-      const kind = a.type === 'assistant' ? '专业智能体' : 'CLI';
       const caps = (a.capabilities || []).join(', ');
       const desc = a.description ? ` — ${String(a.description).slice(0, 160)}` : '';
-      const ver = a.version ? ` (v${a.version})` : '';
       const runtime = a.runtimeName ? ` @${a.runtimeName}` : '';
-      return `- ${a.id}: ${a.name}${ver}${runtime} [${kind}]${caps ? ` (${caps})` : ''}${desc}`;
+      return `- ${a.id}: ${a.name}${runtime} [社区智能体(远程)]${caps ? ` (${caps})` : ''}${desc}`;
     });
     const hint = [
       '【编排规则】',
-      '1. 优先匹配下方「专业智能体」，用 tb_dispatch_agent 派发；有匹配必须派发，勿自己做。',
-      '2. 子任务 prompt 写清：目标 + 约束 + 期望产出；多步可拆分，失败可换相近助手或降级 CLI。',
-      '3. 仅当无匹配专业智能体时，才派发 CLI（codex / claude-code）或自行完成。',
-      '4. 列表为空时：告知用户后降级 CLI/自做，勿空等。',
+      '1. 下列仅为本机已雇佣的社区智能体；有匹配则用 tb_dispatch_agent 派发，勿自己做。',
+      '2. 任务在对方设备执行，只拿结果，勿尝试拉取正文。',
+      '3. 子任务 prompt 写清：目标 + 约束 + 期望产出。',
+      '4. 列表为空：请用户在 Token Bank「贡献 → 社区智能体」雇佣后再派发；或自行完成并告知用户。',
     ].join('\n');
-    return textResult(lines.length ? `${hint}\n\n${lines.join('\n')}` : `${hint}\n\n（无可用 Agent — 请降级派发 CLI 或自行完成，并告知用户）`);
+    return textResult(lines.length
+      ? `${hint}\n\n${lines.join('\n')}`
+      : `${hint}\n\n（尚无已雇佣社区智能体 — 请到贡献页雇佣，或自行完成）`);
+  }
+
+  if (name === 'tb_list_community_agents') {
+    try {
+      const { listHired } = require('./hired-community-agents');
+      const hired = listHired();
+      // 可选：标注当前是否仍在线（不展开未雇佣目录）
+      let onlineIds = new Set();
+      try {
+        const { listOnlineCommunityAgents } = require('./community-agent-client');
+        const online = await listOnlineCommunityAgents();
+        onlineIds = new Set((online.agents || []).map((a) => a.id));
+      } catch { /* 在线探测失败不影响已雇名单 */ }
+      const lines = hired.map((h) => {
+        const online = onlineIds.has(h.assistant_id) ? ' [在线]' : ' [离线或未知]';
+        return `- ${h.id}: ${h.display_name || h.assistant_id}${h.runtime ? ` · ${h.runtime}` : ''}${online}${h.description ? ` — ${String(h.description).slice(0, 120)}` : ''}`;
+      });
+      return textResult(
+        lines.length
+          ? `已雇佣社区智能体（仅本机名单，无正文）\n派发：tb_dispatch_agent；新雇佣请到贡献页。\n\n${lines.join('\n')}`
+          : '尚无已雇佣社区智能体。请到 Token Bank「贡献 → 社区智能体」雇佣后再调用。',
+      );
+    } catch (e) {
+      return textResult(`列出已雇佣社区智能体失败: ${e.message}`, true);
+    }
+  }
+
+  if (name === 'tb_hire_community_agent') {
+    const assistantId = String(args.assistant_id || '').trim();
+    if (!assistantId) return textResult('缺少 assistant_id', true);
+    try {
+      const hiredMod = require('./hired-community-agents');
+      const entry = hiredMod.hire({
+        assistant_id: assistantId,
+        worker_id: args.worker_id,
+        display_name: args.display_name,
+        runtime: args.runtime,
+        description: args.description,
+      });
+      // 名单落盘后，主进程 listAgents 会合并最新 hired（无需本子进程清缓存）
+
+      const prompt = String(args.prompt || '').trim();
+      if (!prompt) {
+        return textResult(`已雇佣: ${entry.id}（${entry.display_name}）。可用 tb_dispatch_agent 派发。`);
+      }
+      const status = await dispatchClient.dispatchAndWait(entry.id, prompt, {
+        workingDir: WORKING_DIR,
+        parentTaskId: PARENT_TASK_ID,
+        parentSessionKey: PARENT_SESSION_KEY || undefined,
+        parentSessionInstanceId: PARENT_SESSION_INSTANCE || undefined,
+        mode: 'worker',
+      });
+      if (status.status === 'completed') {
+        const out = status.result?.summary || status.result?.output || '(无输出)';
+        return textResult(`已雇佣并完成 [${entry.id}]:\n${out}`);
+      }
+      return textResult(`已雇佣但任务失败 [${entry.id}]: ${status.error || status.status}`, true);
+    } catch (e) {
+      return textResult(`雇佣失败: ${e.message}`, true);
+    }
   }
 
   if (name === 'tb_dispatch_agent') {

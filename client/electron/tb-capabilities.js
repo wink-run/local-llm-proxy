@@ -7,9 +7,9 @@ const CAPABILITY_DOMAINS = [
   {
     id: 'overview',
     mcp: 'tokenbank-resources',
-    title: '能力总览与资源发现（含武将点将）',
+    title: '能力总览与资源发现（含智能体点将）',
     tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_get_prompt', 'tb_list_prompts', 'tb_list_catalog', 'tb_list_gateway'],
-    when: '不确定能力时先 tb_capabilities；智能体=武将：tb_list_resources(type=assistant)→tb_get_resource 取正文后在当前会话执行；提示词优先本 MCP 的 tb_get_prompt；skill 为兵器；社区目录用 tb_list_catalog',
+    when: '不确定能力时先 tb_capabilities；智能体：tb_list_resources(type=assistant)→tb_get_resource 取正文后在当前会话执行；提示词优先本 MCP 的 tb_get_prompt；skill 为兵器；社区目录用 tb_list_catalog',
   },
   {
     id: 'models',
@@ -29,8 +29,8 @@ const CAPABILITY_DOMAINS = [
     id: 'dispatch',
     mcp: 'tokenbank-agent-bridge',
     title: 'Agent 派发（仅编排/游乐场）',
-    tools: ['tb_list_agents', 'tb_dispatch_agent'],
-    when: '仅 Token Bank 编排场景：主 Agent 派发子任务到 assistant:* / CLI；日常 Cursor/Claude/Codex 直连会话请用点将(get assistant)同会话执行，勿默认派发',
+    tools: ['tb_list_agents', 'tb_dispatch_agent', 'tb_list_community_agents', 'tb_hire_community_agent'],
+    when: '仅 Token Bank 编排：tb_list_agents / tb_list_community_agents 只返回本机已雇佣的 community:*；用 tb_dispatch_agent 派发（对方设备执行）。新雇佣在贡献页操作；日常直连会话请用点将，勿默认派发',
   },
 ];
 
@@ -80,7 +80,7 @@ function formatCapabilitiesOverview() {
   lines.push('7. 直连网关 API → tb_list_gateway 查路径，base = ' + base);
   lines.push('');
   lines.push('## 原则');
-  lines.push('- 智能体是武将：点将=取正文同会话执行；武将不能自己冲锋');
+  lines.push('- 智能体：点将=取正文同会话执行；智能体不能自己冲锋');
   lines.push('- 只读发现优先；安装/投射/改配置留给 Token Bank 客户端 UI');
   lines.push('- skill 硬编码模型失败时，用 tb_resolve_model 切换到网关实际可用模型');
   lines.push('- 禁止臆造 prompt/skill/agent 正文；以 MCP 取回内容为准');

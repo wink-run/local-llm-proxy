@@ -90,6 +90,27 @@ export function getNetwork() {
   return http.get('/public/network');
 }
 
+/** 公开武将名片列表（社区贡献） */
+export function listPublicCommunityAgents() {
+  return http.get('/public/agents');
+}
+
+/** 登录用户可见武将：公开 + 圈子 */
+export function listCommunityAgents() {
+  return http.get('/api/agents');
+}
+
+/** 发起远程武将任务（对方本机执行，调用方只拿结果） */
+export function createCommunityAgentTask({ assistantId, prompt, workerId, timeoutMs }) {
+  // 武将任务可能长达数分钟，单独放宽超时
+  return http.post('/api/agent-tasks', {
+    assistant_id: assistantId,
+    prompt,
+    worker_id: workerId || undefined,
+    timeout_ms: timeoutMs || undefined,
+  }, { timeout: 620_000 });
+}
+
 export function listKeys() {
   return http.get('/user/keys');
 }

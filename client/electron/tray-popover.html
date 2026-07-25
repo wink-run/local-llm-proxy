@@ -595,7 +595,7 @@
         const empty = document.createElement('button');
         empty.type = 'button';
         empty.className = 'menu-row';
-        empty.innerHTML = `<span class="label">${labels.squadEmpty || '启用武将'}</span>`;
+        empty.innerHTML = `<span class="label">${labels.squadEmpty || '启用智能体'}</span>`;
         empty.addEventListener('click', () => window.trayAPI.action('openSquad'));
         list.appendChild(empty);
         return;

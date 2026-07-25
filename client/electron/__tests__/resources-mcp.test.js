@@ -102,7 +102,7 @@ test('tb_capabilities 描述分域体系与点将工作流', async () => {
   assert.ok(text.includes('tb_list_models'));
   assert.ok(text.includes('tb_list_resources'));
   assert.ok(text.includes('推荐工作流'));
-  assert.ok(text.includes('assistant') || text.includes('武将') || text.includes('点将'));
+  assert.ok(text.includes('assistant') || text.includes('智能体') || text.includes('点将'));
 });
 
 test('tb_list_resources 可按 type 过滤', async () => {
@@ -128,7 +128,7 @@ test('tb_list_resources type=assistant 按 TB_CLIENT_ID 投射过滤', async () 
     process.env.TB_CLIENT_ID = 'cursor';
     const ok = await mcp.handleToolCall('tb_list_resources', { type: 'assistant' });
     assert.ok(ok.content[0].text.includes('writer'));
-    assert.ok(ok.content[0].text.includes('武将') || ok.content[0].text.includes('writer'));
+    assert.ok(ok.content[0].text.includes('智能体') || ok.content[0].text.includes('writer'));
 
     process.env.TB_CLIENT_ID = 'codex';
     const empty = await mcp.handleToolCall('tb_list_resources', { type: 'assistant' });

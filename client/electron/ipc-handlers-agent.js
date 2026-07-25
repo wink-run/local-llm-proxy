@@ -162,6 +162,35 @@ function registerAgentHandlers() {
     });
   });
 
+  // ── 社区武将雇佣（名片本地名单，无正文）────────────────────────────────
+  ipcMain.handle('community:listHired', () => {
+    try {
+      const { listHired } = require('./hired-community-agents');
+      return { success: true, hired: listHired() };
+    } catch (e) {
+      return { success: false, error: e.message, hired: [] };
+    }
+  });
+
+  ipcMain.handle('community:hire', (_e, card) => {
+    try {
+      const { hire } = require('./hired-community-agents');
+      const entry = hire(card || {});
+      return { success: true, hired: entry };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('community:unhire', (_e, id) => {
+    try {
+      const { unhire } = require('./hired-community-agents');
+      return { success: true, removed: unhire(id) };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   console.log('[IPC] Agent handlers registered');
 }
 

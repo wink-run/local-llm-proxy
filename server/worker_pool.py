@@ -45,6 +45,11 @@ class WorkerConnection:
     user_id: Optional[int] = None
     circle_id: Optional[int] = None          # 兼容旧逻辑（单圈子）
     circle_ids: list = field(default_factory=list)  # 多圈子共享
+    # 贡献智能体名片（无正文）；visibility=public|circle
+    agents: list = field(default_factory=list)
+    # 出租人昵称：用于共享智能体展示名「{nickname}的{原名}」
+    owner_nickname: str = ""
+    caps: list = field(default_factory=list)
     client_ip: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -54,6 +59,8 @@ class WorkerConnection:
     active_requests: int = 0
     # req_id -> {queue, model, dispatch_time}
     pending: dict = field(default_factory=dict)
+    # task_id -> {queue, assistant_id, dispatch_time, consumer_user_id}
+    pending_agents: dict = field(default_factory=dict)
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # 5 分钟周期统计
     period_start: float = field(default_factory=time.time)
@@ -90,6 +97,23 @@ class WorkerConnection:
         s["success"] += 1
         s["image_count"] = s.get("image_count", 0) + image_count
 
+    def record_agent_complete(self, assistant_id: str, success: bool, duration_ms: float | None = None) -> None:
+        """武将接单完成占位统计（结息可按 agent_count 扩展；一期也可即时 award）。"""
+        key = f"__agent__:{assistant_id}" if assistant_id else "__agent__"
+        s = self.period_stats.setdefault(
+            key,
+            {"output_tokens": 0, "requests": 0, "success": 0,
+             "ttft_sum": 0.0, "ttft_count": 0, "agent_count": 0},
+        )
+        s["requests"] += 1
+        if success:
+            s["success"] += 1
+            s["agent_count"] = s.get("agent_count", 0) + 1
+        if success and duration_ms is not None and duration_ms >= 0:
+            s["ttft_sum"] += duration_ms
+            s["ttft_count"] += 1
+            s["last_ttft_ms"] = round(duration_ms)
+
     def take_period(self) -> dict:
         """取走当前周期数据并重置，返回快照"""
         snapshot = dict(self.period_stats)
@@ -111,6 +135,8 @@ class WorkerConnection:
             "name": self.name,
             "models": self.models,
             "model_types": self.model_types,
+            "agents": self.agents,
+            "caps": self.caps,
             "connected_at": self.connected_at.isoformat(),
             "active_requests": self.active_requests,
             "user_id": self.user_id,
@@ -222,6 +248,29 @@ class WorkerPool:
         self._sticky: dict[str, tuple[str, float]] = {}
 
     def add(self, worker: WorkerConnection) -> None:
+        """接入真实节点；同 user_id 只保留最新连接，避免重连竞态残留旧 agents 名片。"""
+        uid = getattr(worker, "user_id", None)
+        if uid is not None:
+            stale = [w for w in self._workers if getattr(w, "user_id", None) == uid]
+            for w in stale:
+                try:
+                    self._workers.remove(w)
+                except ValueError:
+                    pass
+                # 尽力关掉旧 ws，促使对端收尾
+                try:
+                    old_ws = getattr(w, "ws", None)
+                    if old_ws is not None:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            loop.create_task(old_ws.close(code=4000, reason="replaced by newer connection"))
+                except Exception:
+                    pass
+                logger.info(
+                    "[worker_pool] evicted stale worker_id=%s user_id=%s (agents replaced)",
+                    getattr(w, "worker_id", "?"),
+                    uid,
+                )
         self._workers.append(worker)
 
     def remove(self, worker: WorkerConnection) -> None:
@@ -459,6 +508,40 @@ class WorkerPool:
                 })
         return sorted(out, key=lambda x: x["id"])
 
+    def agents_for_circle(self, circle_id: int) -> list:
+        """指定圈子内共享的智能体名片（visibility=circle 且 worker 贡献到该圈）。"""
+        try:
+            cid = int(circle_id)
+        except (TypeError, ValueError):
+            return []
+        seen: set[str] = set()
+        out: list[dict] = []
+        for w in self._workers:
+            if cid not in worker_circle_ids(w):
+                continue
+            owner = (getattr(w, "owner_nickname", None) or "").strip()
+            for card in getattr(w, "agents", None) or []:
+                if not isinstance(card, dict) or not card.get("id"):
+                    continue
+                if (card.get("visibility") or "public") != "circle":
+                    continue
+                key = f"{card['id']}@{w.worker_id}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                raw_dn = card.get("display_name") or card.get("name") or card["id"]
+                out.append({
+                    "id": card["id"],
+                    "name": card.get("name") or "",
+                    "display_name": shared_agent_display_name(raw_dn, owner),
+                    "description": card.get("description") or "",
+                    "runtime": card.get("runtime") or "",
+                    "worker_id": w.worker_id,
+                    "owner_nickname": owner,
+                    "active_requests": w.active_requests,
+                })
+        return sorted(out, key=lambda x: (x.get("display_name") or x["id"]))
+
     def all_models(self) -> list[str]:
         return sorted({m for w in self._workers + self._virtual for m in w.models})
 
@@ -476,6 +559,74 @@ class WorkerPool:
     def all_workers(self) -> list:
         return list(self._workers + self._virtual)
 
+    def list_agents_for_user(self, user_circle_ids: Optional[set] = None,
+                             public_only: bool = False) -> list[dict]:
+        """在线武将名片列表（脱敏节点名）；不含正文。"""
+        circles = user_circle_ids or set()
+        rows: list[dict] = []
+        for w in self._workers:
+            for card in getattr(w, "agents", None) or []:
+                if not isinstance(card, dict) or not card.get("id"):
+                    continue
+                if public_only and (card.get("visibility") or "public") != "public":
+                    continue
+                if not agent_card_visible(card, w, None if public_only else circles):
+                    continue
+                owner = (getattr(w, "owner_nickname", None) or "").strip()
+                raw_dn = card.get("display_name") or card.get("name") or card["id"]
+                rows.append({
+                    "id": card["id"],
+                    "name": card.get("name") or "",
+                    # 账号 + 智能体名；列表侧兜底，兼容旧连接未带 owner_nickname
+                    "display_name": shared_agent_display_name(raw_dn, owner),
+                    "description": card.get("description") or "",
+                    "visibility": card.get("visibility") or "public",
+                    "runtime": card.get("runtime") or "",
+                    "worker_id": w.worker_id,
+                    "worker_name": w.name[:1] + "***" if w.name else "***",
+                    "owner_nickname": owner,
+                    "sharer": worker_sharer(w),
+                    "active_requests": w.active_requests,
+                })
+        return rows
+
+    def pick_agent_workers(self, assistant_id: str,
+                           user_circle_ids: Optional[set] = None,
+                           worker_id: Optional[str] = None) -> list:
+        """可服务该智能体的真实 worker，按负载升序。
+
+        worker_id 为偏好钉选：命中则优先；节点重连后 id 会变，钉选落空时回退到任意在线可服务节点。
+        """
+        aid = (assistant_id or "").strip()
+        if not aid:
+            return []
+        circles = user_circle_ids or set()
+        pinned = (worker_id or "").strip() or None
+
+        def collect(require_wid: Optional[str]) -> list:
+            out = []
+            for w in self._workers:
+                if require_wid and w.worker_id != require_wid:
+                    continue
+                card = next(
+                    (c for c in (getattr(w, "agents", None) or [])
+                     if isinstance(c, dict) and c.get("id") == aid),
+                    None,
+                )
+                if not card:
+                    continue
+                if not agent_card_visible(card, w, circles):
+                    continue
+                out.append(w)
+            return sorted(out, key=lambda x: x.active_requests)
+
+        if pinned:
+            hit = collect(pinned)
+            if hit:
+                return hit
+            # 钉选节点已离线/已换 id → 回退
+        return collect(None)
+
 
 pool = WorkerPool()
 
@@ -487,3 +638,86 @@ def worker_circle_ids(w) -> set[int]:
         return set(ids)
     cid = getattr(w, "circle_id", None)
     return {cid} if cid is not None else set()
+
+
+def owner_label_from_user(user) -> str:
+    """出租人展示账号：昵称优先，否则邮箱 @ 前一段。"""
+    if not user:
+        return ""
+    nick = str(user.get("nickname") or "").strip()
+    if nick:
+        return nick
+    email = str(user.get("email") or "").strip()
+    if "@" in email:
+        local = email.split("@", 1)[0].strip()
+        if local:
+            return local
+    return ""
+
+
+def bare_agent_name(display: str, owner: Optional[str] = None) -> str:
+    """去掉已有「账号的」前缀，得到纯智能体名。"""
+    name = str(display or "").strip()
+    nick = str(owner or "").strip()
+    if nick:
+        prefix = f"{nick}的"
+        if name.startswith(prefix):
+            rest = name[len(prefix):].strip()
+            return rest or name
+    return name or "智能体"
+
+
+def shared_agent_display_name(base: str, owner: Optional[str] = None) -> str:
+    """共享智能体展示名：账号+智能体名，如 adam的写诗专家；已带同前缀则不重复。"""
+    nick = str(owner or "").strip()
+    name = bare_agent_name(base, nick)
+    if not nick:
+        return name
+    return f"{nick}的{name}"
+
+
+def normalize_agent_cards(raw, owner_nickname: Optional[str] = None) -> list[dict]:
+    """清洗 worker 上报的智能体名片：去正文敏感字段、限制长度；默认拼上出租人账号。"""
+    out: list[dict] = []
+    seen: set[str] = set()
+    owner = str(owner_nickname or "").strip()
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        aid = str(item.get("id") or "").strip()
+        if not aid or aid in seen:
+            continue
+        seen.add(aid)
+        vis = str(item.get("visibility") or "public").strip().lower()
+        if vis not in ("public", "circle"):
+            vis = "public"
+        raw_dn = str(item.get("display_name") or item.get("name") or aid)
+        out.append({
+            "id": aid,
+            "name": str(item.get("name") or "")[:80],
+            "display_name": shared_agent_display_name(raw_dn, owner)[:120],
+            "description": str(item.get("description") or "")[:200],
+            "visibility": vis,
+            "runtime": str(item.get("runtime") or "")[:40],
+        })
+    return out
+
+
+def agent_card_visible(card: dict, worker, user_circle_ids: Optional[set] = None) -> bool:
+    """名片可见性：public 全球可见；circle 需与 worker 圈子有交集。"""
+    vis = (card or {}).get("visibility") or "public"
+    if vis == "public":
+        return True
+    circles = user_circle_ids or set()
+    wids = worker_circle_ids(worker)
+    return bool(wids & circles)
+
+
+def worker_has_agent(worker, assistant_id: str) -> bool:
+    aid = (assistant_id or "").strip()
+    if not aid:
+        return False
+    for c in getattr(worker, "agents", None) or []:
+        if isinstance(c, dict) and c.get("id") == aid:
+            return True
+    return False
