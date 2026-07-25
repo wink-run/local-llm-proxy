@@ -102,71 +102,70 @@
 
 ## 4. 工具形态
 
-### 4.1 建议工具集（武将 = assistant）
+### 4.1 复用现有 `tokenbank-resources`（不另造 list）
 
-| 工具 | 级别 | 作用 |
+**已有就够当将帅榜入口的工具：**
+
+| 已有工具 | 武将库语义 | P0 改动 |
 |---|---|---|
-| `tb_list_generals` | 浏览 | 列出可点武将 = 可见 assistant：id / 显示名 / 擅长摘要 / 绑定 skill·prompt 数（轻量） |
-| `tb_suggest_general` | **自动举荐** | `task_description`（+ cwd?）→ 候选 assistant[] + why |
-| `tb_activate_general` | **显式点将** | 按 name / id / 别名激活；返回该智能体 **出战上下文文本**（soul + 关联 prompt 正文 + skill 指引） |
+| `tb_list_resources` | **浏览武将/兵器库**；`type=assistant` 即点将前的将帅榜 | 文案写明「assistant=武将」；按 `TB_CLIENT_ID` **投射过滤**（对齐 prompt）；可选强化 `query` |
+| `tb_get_resource` | **显式点将（主路径）** | `type=assistant` 时改为返回 **`resolveAssistantContext` 全文**（soul+绑定 prompt/skill），不再只给 400 字 preview；hint 改为「同会话按正文执行；仅编排才 `tb_dispatch_agent`」 |
+| `tb_list_catalog` | 未纳入的出租/目录货架（发现用） | 文案可带「需用户在 TB 启用」；本工具仍不安装 |
+| `tb_capabilities` | 教会主公何时 list/get 武将 | 工作流：`list(type=assistant)` → `get` → 自打；派发放后 |
 
-也可第一期薄封装现有能力：
+**不新增** `tb_list_generals`（与 `tb_list_resources` 重复）。  
 
-- 浏览 ≈ `tb_list_resources({ type: 'assistant' })`（补强描述与「武将」引导）  
-- 激活 ≈ `tb_get_resource` 强化版：对 assistant **展开** `resolveAssistantContext`，而非只给 JSON 摘要  
+**可选新增（非 P0）：**
 
-返回约定（安全路径）：
+| 工具 | 何时加 |
+|---|---|
+| `tb_suggest_general(task_description)` | P1 自动举荐；内部仍读同一批 assistant |
+| `mode` 参数 on `tb_get_resource` | 若需兼容「只要 JSON 摘要」的调用方：`mode=summary\|activate`（默认 `activate`） |
 
-- ✅ 智能体出战文本（与现网 `resolveAssistantContext` 同类）  
-- ✅ 可选：建议再调的 `tb_get_prompt` / skill 名（仍由模型自己调）  
-- ❌ 不注册新 tool schema、不改写请求 `tools`  
-- ❌ 不把「场景路由」的 model_key 当成武将 id  
+返回约定（assistant 点将）：
+
+- ✅ 出战文本（`resolveAssistantContext`）  
+- ✅ 文首可附一行 `dispatch_id: assistant:…`（编排备用）  
+- ❌ 不改客户端 tool schema、不拉子进程  
 
 ### 4.2 点将 vs 派发
 
-| | **点将** `tb_activate_general` | **派发** `tb_dispatch_agent` |
+| | **点将** `tb_get_resource(type=assistant)` | **派发** `tb_dispatch_agent` |
 |---|---|---|
 | 谁打仗 | **主公自己打**，读武将兵书 | **武将下场打**，主公等结果 |
-| 典型 | Cursor 会话里「按代码审查智能体那套来」 | 游乐场编排：主 Agent 把子任务交给 `assistant:…` |
-| 载荷 | 上下文文本 | 子 Agent 执行（TB `agent-executor` 拉起 runtime CLI） |
+| 典型 | Cursor：`list` → `get` 某智能体 → 同会话执行 | 游乐场编排 |
+| 载荷 | 上下文文本 | 子 Agent 执行（TB agent-executor） |
 
-两条都是「主公下令」，都不是网关塞将。P0 先打通**点将**（直连会话最高频）；派发已有 bridge，对齐文案与举荐即可。
+P0 = **改现有 get 的 assistant 分支 + 门控 + 文案**；不新开 MCP server。
 
 ### 4.2.1 Cursor 点将：是不是「拿 soul 再开子智能体」？
 
-**不是 Token Bank 替 Cursor 再开一个子智能体。**
-
-Cursor 直连会话里的默认路径是 **披甲自己打**：
+**不是。** 默认 **披甲自己打**：
 
 ```
-Cursor 当前 Agent（主公）
-  → MCP: tb_activate_general("某智能体")
-  → 拿到一段文本：soul + 绑定 prompt 正文 + skill 指引
-  → 仍在同一个 Cursor 会话里，按这段文本继续推理 / 改代码 / 调自己的工具
+Cursor
+  → tb_list_resources({ type: "assistant", query? })
+  → tb_get_resource({ type: "assistant", name: "代码审查" })
+  → 拿到 soul + 兵书文本
+  → 仍在同一会话执行
 ```
 
 | 误解 | 实际 |
 |---|---|
-| TB 收到点将后 spawn 一个新 Cursor/Claude 进程 | ✗ 点将只 **返回文本**，不拉进程 |
-| Cursor 必须再「创建子 Agent」才能用武将 | ✗ **不必须**；当前对话里消化兵书即可 |
-| 武将 = 独立运行的子智能体实例 | ✗ 点将视角下武将 = **可加载的人设+兵书包** |
+| TB 点将后 spawn 新进程 | ✗ 只返回文本 |
+| 必须再开 Cursor 子 Agent | ✗ 不必须 |
+| 要新 MCP 才能列武将 | ✗ **已有** `tb_list_resources` |
 
-补充：
-
-1. **Cursor 自己**若用 Composer/Task 再开子 Agent，那是 Cursor 产品行为，TB 不保证、不依赖。  
-2. **只有派发路径**才会由 TB 拉起 runtime（含 `cursor-agent` CLI），把 soul 做成 `promptPrefix` 交给新进程——那是游乐场编排，不是 IDE 里点将 MCP 的默认语义。  
-3. Skill 若已投射进 `~/.cursor/skills`，Cursor 可按自家 Skill 机制用；与 `tb_activate_general` 返回的 skill **指引文本**可并存，但点将不等于「再 fork 一个挂了该 skill 的子 Agent」。
+派发拉起 `cursor-agent` CLI 仅编排路径。
 
 ### 4.3 与现有 MCP
 
 | 已有 | 关系 |
 |---|---|
-| `tb_list_resources` / `tb_get_resource` | 武将库底座；点将 = assistant 的出战视图 |
-| `tokenbank-prompts` | 兵书单件取用；激活武将时可内联其 `prompts[]` |
-| `tokenbank-agent-bridge` | 派发路径；`tb_list_agents` 应与将帅榜一致（assistant 优先） |
-| `tb_capabilities` | 增加「武将 = 智能体；点将工具；何时查将」 |
-
-**落位：** P0 扩展 `tokenbank-resources`（或薄包装 `tb_list_generals` / `tb_activate_general`），数据只读 assistant；勿新建与智能体平行的「场景武将」表。
+| **`tokenbank-resources`** | **武将库/兵器库唯一发现面**；点将 = 增强后的 get(assistant) |
+| `tokenbank-prompts` | 单件兵器；武将 get 时可内联其 prompts[] |
+| `tokenbank-agent-bridge` | 仅编排派发 |
+| `tb_capabilities` | 写明复用 list/get，勿引导先去 dispatch |
 
 ---
 
@@ -192,39 +191,32 @@ Cursor 当前 Agent（主公）
 2. 触发 re-sync → 该主公配置里出现点将 MCP  
 3. 教一句口令（显示名）：「用『代码审查』智能体审查当前分支」  
 
-未投射的 assistant：`tb_list_generals` 不出现，`tb_activate_general` 拒绝——与 prompt 投射一致。
+未投射的 assistant：`tb_list_resources(type=assistant)` 不出现；`tb_get_resource` 拒绝——与 prompt 投射一致。
 
 ### 会话内调用（模型主动，零侵入）
 
-**显式点将（主路径）：**
+**显式点将（主路径 = 已有 list/get）：**
 
 ```
-用户对 Claude Code / Codex：
+用户对 Claude Code / Codex / Cursor：
   「上代码审查那个智能体」/「用调试武将」
 
-→ 模型发现 MCP 工具 tb_activate_general（或先 tb_list_generals）
-→ 调用 tb_activate_general({ name: "代码审查" })
-→ tokenbank-resources（stdio）按 TB_CLIENT_ID 校验投射
-→ 返回该 assistant 出战文本（soul + 绑定 prompt 正文 + skill 指引）
-→ 模型把返回内容当补充上下文，自己继续干活
+→ tb_list_resources({ type: "assistant", query: "审查" })   // 已有
+→ tb_get_resource({ type: "assistant", name: "代码审查" }) // 增强：全文出战上下文
+→ 按 TB_CLIENT_ID 校验投射 → 返回 soul + 兵书
+→ 模型同会话继续干
 ```
 
-**自动举荐：**
+**自动举荐（P1，可选新工具）：** `tb_suggest_general` → 再 `tb_get_resource`。
 
-```
-模型判断任务偏专业
-→ tb_suggest_general({ task_description: "…" })
-→ 得到候选武将列表 → 再 activate 或告诉用户选哪个
-```
+**和今天 Prompt 的对照：**
 
-**和今天 Prompt 的对照（帮助建立直觉）：**
-
-| | Prompt（已有） | 武将 / 智能体（本设计） |
+| | Prompt（已有） | 武将 / 智能体 |
 |---|---|---|
-| 用户怎么说 | 「用某某 prompt 做…」 | 「用某某智能体/武将做…」 |
-| 模型调什么 | `tb_list_prompts` → `tb_get_prompt` | `tb_list_generals` → `tb_activate_general` |
-| 拿到什么 | 单条提示词正文 | 智能体 soul + 绑定兵书 |
-| 谁执行 | Claude Code / Codex 自己 | 同上（点将路径） |
+| 用户怎么说 | 「用某某 prompt」 | 「用某某智能体/武将」 |
+| 模型调什么 | `tb_list_prompts` → `tb_get_prompt` | **`tb_list_resources(assistant)` → `tb_get_resource`** |
+| 拿到什么 | 提示词正文 | soul + 绑定兵书 |
+| 谁执行 | 主公自己 | 主公自己 |
 
 ### 编排派发（另一条，主公仍是下令方）
 
@@ -249,37 +241,29 @@ Cursor 当前 Agent（主公）
 
 ## 5. 两级点将
 
-### 5.1 自动举荐 · `tb_suggest_general`
+### 5.1 自动举荐 · `tb_suggest_general`（P1）
+
+内部仍查同一批已投射 assistant；返回候选后再走 `tb_get_resource`。P0 可先靠 `tb_list_resources` + `query` + 引导措辞顶住。
+
+### 5.2 显式点将 · `tb_get_resource(type=assistant)`（早期主入口）
+
+用户：「上代码审查那个智能体」「用调试武将」。
 
 ```
-主公读到任务 → 判断需专业智能体
-  → tb_suggest_general({ task_description, cwd? })
-  → 基于 assistant 描述 / 用途标签 / 历史点将（+ 可选 embedding）
-  → [{ id, name, why, skill_count, prompt_count }]
-  → 主公再 tb_activate_general 或 tb_dispatch_agent
+主公 → tb_list_resources({ type: "assistant" })  // 可选
+     → tb_get_resource({ type: "assistant", name: "代码审查" })
+     → 出战全文 → 同会话执行
 ```
 
-### 5.2 显式点将 · `tb_activate_general`（早期主入口）
-
-用户：「上代码审查那个智能体」「用调试武将」「切到写作助手」。
-
-```
-主公 → tb_activate_general("代码审查")  // name / display_name / 别名
-     → 返回该 assistant 的出战上下文（soul + prompts 正文 + skills 指引）
-     → 主公按上下文执行
-```
-
-- 绕开「猜该上谁」  
-- 口令 = 智能体显示名（启用包教用户喊将）  
-- **早期验证主路径**
+口令 = 智能体显示名（启用包教用户喊将）。
 
 ---
 
 ## 6. 软层：让主公愿意翻将帅榜
 
-常驻指引（capabilities + 短 hint，走现有同步，不破协议）：
+常驻指引（capabilities + 短 hint）：
 
-> 资产中的智能体是可点武将。任务需要专业角色、或用户点名某智能体/武将时，先 `tb_list_generals` / `tb_suggest_general` / `tb_activate_general`；不要臆造该智能体的 soul 与流程。简单事不必点将。
+> 智能体是可点武将。需要专业角色或用户点名时，用 `tb_list_resources(type=assistant)` 查找，再用 `tb_get_resource` 取回出战正文并按之执行；不要臆造 soul。简单事不必点将。仅在编排派发时才用 `tb_dispatch_agent`。
 
 指标：应点将任务的主动查询率、误查率、显式点将成功率、点将后轮次下降。
 
@@ -291,7 +275,7 @@ Cursor 当前 Agent（主公）
 |---|---|
 | 反笔记陷阱 | 智能体不是收藏；**启用到主公 + 一次点将命中**才算成功 |
 | 场景货架 | 货架条目若指向智能体：CTA「启用到 Cursor」= 投射该 assistant + 教喊将口令 |
-| 息票 | `tb_activate_general` / 派发命中记「点将」 |
+| 息票 | `tb_get_resource(assistant)` / 派发命中记「点将」 |
 | 投射门控 | 仅投射给当前主公的 assistant 出现在将帅榜（与 prompt 投射同理） |
 | Skill/Prompt | 可单独启用；在点将叙事里是武将装备，主货架仍可按「事」聚合到某智能体 |
 
@@ -304,45 +288,46 @@ Cursor 当前 Agent（主公）
 | 0 | **武将本体** | **= 资产中的智能体（assistant）**；Skill/Prompt 是兵书 |
 | 1 | 出战控制权 | 主公（客户端模型）点将；MCP 只应答 |
 | 2 | 载荷 | 智能体出战文本（soul+绑定资源），不改 tool schema |
-| 3 | 早期主路径 | 显式 `tb_activate_general` |
-| 4 | 自动举荐 | `tb_suggest_general` 第二阶段 |
-| 5 | 派发 | 保留 `tb_dispatch_agent(assistant:…)`，与点将分工 |
-| 6 | 场景路由 | 只管算力，不进武将库 |
-| 7 | 每轮强制选将 | **不做** |
+| 3 | 早期主路径 | **复用** `tb_list_resources` + 增强 `tb_get_resource(assistant)` |
+| 4 | 不新增 list 工具 | **禁止**再造 `tb_list_generals` |
+| 5 | 自动举荐 | `tb_suggest_general` 可选 P1 |
+| 6 | 派发 | 保留 `tb_dispatch_agent`，降为编排 |
+| 7 | 场景路由 | 只管算力 |
+| 8 | 每轮强制选将 | **不做** |
 
 ---
 
 ## 9. 实现切片
 
-### P0 — 显式点将可演示
+### P0 — 在现有 resources MCP 上打通点将
 
-1. `tb_list_generals` = 可见 assistant 轻量列表（投射门控）  
-2. `tb_activate_general` = 展开 `resolveAssistantContext` 级正文  
-3. `tb_capabilities` 写明：武将 = 智能体  
-4. 实测：用户喊智能体显示名 → Cursor / Claude Code 调工具拿回 soul  
+1. `tb_list_resources`：assistant 按 `TB_CLIENT_ID` 投射过滤；description 写明武将语义  
+2. `tb_get_resource(assistant)`：返回 `resolveAssistantContext` 全文；hint 改为同会话执行优先  
+3. `tb_capabilities`：list→get→自打；dispatch 置后  
+4. 单测：改 `resources-mcp.test.js`（assistant 不再只断言 JSON preview）  
+5. 实测：喊显示名 → Cursor/Claude Code/Codex 走 list/get 拿回 soul  
 
-### P1 — 自动举荐
+### P1 — 自动举荐 / summary 兼容
 
-1. `tb_suggest_general(task_description, cwd?)`  
-2. 引导 A/B；与 `tb_list_agents` 举荐口径对齐  
+1. 可选 `tb_suggest_general` 或 get 的 `mode=summary|activate`  
+2. 引导 A/B  
 
 ### P2 — 流通
 
-1. 点将命中 → 息票 / `use_count`（记在 assistant 上）  
-2. 货架启用智能体 = 投射 + 口令  
-3. 从未被点将的智能体走 Hit-or-Exit  
+1. get(assistant) 命中 → `use_count`  
+2. 启用包 + Hit-or-Exit + 出租  
 
 ---
 
 ## 10. 非目标
 
+- **新建与 `tb_list_resources` 重复的 list 工具**  
 - 另建与 assistant 平行的「场景武将」实体  
 - 网关注入 tools / system  
 - 把模型场景路由当成选将器  
-- 把 Skill 列表当成武将库首页（那是兵器架，不是将帅榜）  
 
 ---
 
 ## 11. 一句话
 
-> **武将就是资产里的智能体；主公用 MCP 点将，兵书（Skill/Prompt）随将出战——网关不抢指挥权，零侵入。**
+> **武将库就是现有资源 MCP：`tb_list_resources` 点将榜，`tb_get_resource(assistant)` 取兵书出战——补门控与全文，不另起炉灶。**
