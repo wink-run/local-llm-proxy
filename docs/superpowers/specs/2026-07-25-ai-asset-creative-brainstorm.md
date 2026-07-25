@@ -38,14 +38,15 @@
 
 ## 1.5 使用时主隐喻：武将库 · 主公点将（已升格为正式设计）
 
-场景能力出战 **≠** 网关注入，**≠** 模型场景路由。
+**武将 = 资产中的智能体（assistant）**；Skill / Prompt 是兵书，不是将。  
+出战 **≠** 网关注入，**≠** 模型场景路由（路由只管算力）。
 
-- 武将不能自己冲上去；**主公（Claude Code / Cursor 里的模型）点将才出战**  
-- 钥匙形态 = MCP 工具（`tb_suggest_scene` / `tb_activate_scene`），挂在客户端腰上  
-- 返回 skill 正文，不改 tool schema；简单任务不查将 → 无均摊延迟  
-- 早期主路径 = 用户显式喊将；自动举荐第二阶段再打磨「愿意查将」的引导  
+- 武将不能自己冲上去；**主公（Claude Code / Cursor）点将才出战**  
+- 钥匙 = MCP（`tb_list_generals` / `tb_suggest_general` / `tb_activate_general`）  
+- 激活返回智能体 soul + 绑定 prompt/skill 文本；不改 tool schema  
+- 早期主路径 = 用户喊智能体名显式点将；编排派发仍走 `tb_dispatch_agent`  
 
-详见 [武将库 MCP 点将设计](./2026-07-25-general-roster-mcp-design.md)。这是「用的时候」避开笔记库陷阱的技术锚点。
+详见 [武将库 MCP 点将设计](./2026-07-25-general-roster-mcp-design.md)。
 
 ---
 
