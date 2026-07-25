@@ -2,7 +2,7 @@
 
 日期:2026-07-25  
 状态:**已定为硬约束**（覆盖此前「金库 / 账本」叙事中一切鼓励囤积的表述）  
-相关:[价值闭环](./2026-07-25-ai-asset-value-loop-design.md) · [创意脑暴](./2026-07-25-ai-asset-creative-brainstorm.md)
+相关:[价值闭环](./2026-07-25-ai-asset-value-loop-design.md) · [创意脑暴](./2026-07-25-ai-asset-creative-brainstorm.md) · [武将库 MCP 点将](./2026-07-25-general-roster-mcp-design.md)
 
 ---
 
