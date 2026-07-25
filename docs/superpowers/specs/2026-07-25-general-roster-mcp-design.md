@@ -6,9 +6,25 @@
 
 ---
 
+## 0. 本体对齐（重要更正）
+
+| 角色 | 产品实体 | 说明 |
+|---|---|---|
+| **武将** | 资源里的 **智能体**（`resources.type = 'assistant'`） | 有 soul、绑定 skills / prompts / mcp、可投射到运行时 |
+| **兵书 / 装备** | Skill、Prompt（及智能体声明的 MCP） | 挂在武将身上；点将时随将出战，**本身不是武将** |
+| **主公** | 运行时客户端 Agent（Claude Code / Cursor / Codex…） | 点将的人；武将不能自己冲上去 |
+| **算力路** | Gateway **场景路由**（模型链 / strategy） | 选哪条路跑模型；**不是**武将库 |
+
+> **武将库 = 资产中的智能体列表。**  
+> 点将 = 主公经 MCP 查询/激活某个 assistant，拿到其 soul + 关联 skill/prompt 正文（或编排派发），再开战。
+
+此前草案里用「场景 → skill 集合」顶替武将——**作废**。场景路由继续只管算力；出战选的是智能体。
+
+---
+
 ## 1. 比喻与硬约束
 
-**比喻（准）：** 武将库 · 出战时动态选将。
+**比喻：** 武将库 · 出战时动态选将。
 
 **硬约束：**
 
@@ -18,27 +34,29 @@
 
 | 禁止 | 允许 |
 |---|---|
-| 网关改写客户端工具协议、篡改请求体塞 tool schema | 把武将库做成 **MCP server**，客户端主动发现并调用 |
-| 每轮强制跑场景判断加延迟 | 模型自愿多走一步推理才查库 |
-| 网关单方面「注入」skill / 系统提示 | 返回 **skill 正文 / instruction 文本**，由模型当补充上下文采纳 |
+| 网关改写客户端工具协议、篡改请求体塞 tool schema | 武将库做成 **MCP server**，主公主动发现并调用 |
+| 每轮强制猜「该上哪个智能体」 | 模型自愿查将 / 用户显式点将 |
+| 网关单方面注入 assistant soul | 返回 **智能体上下文文本**（soul + 绑定 prompt/skill 说明），由模型采纳 |
 
 一句话：
 
-> **出战钥匙不能攥在网关手里，得铸成 MCP 工具挂在客户端腰上——模型自己决定何时拔出来用。**
+> **出战钥匙铸成 MCP 工具挂在主公腰上；库里的智能体是将，Skill/Prompt 是兵书——点将才出战。**
 
-这与现有 `tokenbank-prompts`（`tb_list_prompts` / `tb_get_prompt`）是同一安全路径；也满足反笔记陷阱：**用的时候才召将，不是先囤一库再盼奇迹。**
+与 `tokenbank-prompts`、`tb_list_resources(type=assistant)` 同构；满足反笔记陷阱：**用的时候召将，不是囤一堆智能体当收藏。**
 
 ---
 
-## 2. 命名澄清（避免与「场景路由」撞车）
+## 2. 命名澄清
 
-| 现有词 | 含义 | 本设计 |
+| 词 | 含义 | 本设计 |
 |---|---|---|
-| **场景路由**（Gateway） | 模型供给链 / strategy failover（`scenes.default.yaml`） | **不动**；仍是选「哪条算力路」 |
-| **武将 / 场景智能体** | 面向任务的 skill / prompt / assistant 组合 | **本设计对象**：选「带哪套本事出战」 |
-| **点将** | 客户端模型调用 MCP 查询/激活武将 | 新能力域 |
+| **智能体 / assistant** | 资产资源类型 | **= 武将** |
+| **Skill / Prompt** | 资产资源类型 | 武将携带的兵书；可被单独取用，但选将视角以智能体为聚合单位 |
+| **场景路由** | 模型供给 failover | **不动**；与点将正交 |
+| **点将** | 主公 MCP 调用 | 查询 / 激活某个 assistant |
+| **派发** | `tb_dispatch_agent` | 编排时把整场仗交给另一武将去打（仍由主公下令） |
 
-对外文案可用「点将 / 出战模式」；对内工具前缀继续 `tb_`，实现可挂在新 MCP 或扩展 `tokenbank-resources`。
+对外可说「点将 / 换个智能体」；对内 id 继续 `assistant:<resourceId>` / 资源 `name`。
 
 ---
 
@@ -46,121 +64,115 @@
 
 ```
 旧思路（踩雷）
-  用户请求 → 网关猜场景 → 改写 tools / 注入 system → 客户端被迫执行
-                              ✗ 协议侵入 · 每轮延迟 · 决策权错位
+  用户请求 → 网关猜场景 → 注入 system / 改 tools → 客户端被迫执行
 
 新思路（零侵入）
-  用户请求 → 客户端模型推理
-                ├─ 觉得简单 → 直接干（不查将）
-                └─ 觉得专业 / 用户点名 → 调 MCP 点将工具
-                         → TB 武将库被动应答（候选 + skill 正文）
-                         → 模型自行决定是否采纳
+  用户请求 → 主公（模型）推理
+                ├─ 通用活 → 自己干（不点将）
+                └─ 要专业智能体 / 用户点名
+                         → MCP 查武将库（assistant 列表）
+                         → 激活：拿回该智能体 soul + skills/prompts 正文
+                         → 或编排：tb_dispatch_agent(assistant:…)
+                         → 主公决定是否采纳 / 是否派发
 ```
 
-Claude Code / Cursor 作为 MCP client，原生支持「发现工具 → 按需调用」。  
-**不需要它们做任何额外改动；也不需要网关碰工具协议。**
+武将库数据源 = 已纳管且（对当前主公）已投射可见的 **assistant** 资源；  
+出战载荷复用现有 `parseAssistantConfig` + `resolveAssistantContext` 思路（soul ∥ 绑定 prompts 正文 ∥ skills 清单）。
 
 ---
 
-## 4. 工具形态（草案）
+## 4. 工具形态
 
-复用 Prompt MCP 模式：stdio MCP + 投射/同步到 Agent + 描述驱动模型调用。
-
-### 4.1 建议工具集
+### 4.1 建议工具集（武将 = assistant）
 
 | 工具 | 级别 | 作用 |
 |---|---|---|
-| `tb_list_generals`（或 `tb_list_available_skills` 场景视图） | 浏览 | 列出可点武将：id / 名 / 擅长 / 关联 skill 数（轻量，无长正文） |
-| `tb_suggest_scene` | **自动举荐** | 入参 `task_description`（+ 可选 cwd）；返回候选武将 + skill 摘要列表 |
-| `tb_activate_scene` | **显式点将** | 入参 `scene`（如 `debug` / `writing` / 显示名）；返回该场景 skill **instruction 正文**集合 |
+| `tb_list_generals` | 浏览 | 列出可点武将 = 可见 assistant：id / 显示名 / 擅长摘要 / 绑定 skill·prompt 数（轻量） |
+| `tb_suggest_general` | **自动举荐** | `task_description`（+ cwd?）→ 候选 assistant[] + why |
+| `tb_activate_general` | **显式点将** | 按 name / id / 别名激活；返回该智能体 **出战上下文文本**（soul + 关联 prompt 正文 + skill 指引） |
 
-返回内容约定（安全路径）：
+也可第一期薄封装现有能力：
 
-- ✅ skill / prompt 的 **文本指令**（与 `tb_get_prompt` 同类）  
-- ✅ 可选：建议的后续工具名（仍由模型自己调现有 MCP）  
-- ❌ 不返回、不要求客户端注册新的 tool schema  
-- ❌ 不改写当前请求的 `tools` 数组  
+- 浏览 ≈ `tb_list_resources({ type: 'assistant' })`（补强描述与「武将」引导）  
+- 激活 ≈ `tb_get_resource` 强化版：对 assistant **展开** `resolveAssistantContext`，而非只给 JSON 摘要  
 
-### 4.2 与现有 MCP 的关系
+返回约定（安全路径）：
+
+- ✅ 智能体出战文本（与现网 `resolveAssistantContext` 同类）  
+- ✅ 可选：建议再调的 `tb_get_prompt` / skill 名（仍由模型自己调）  
+- ❌ 不注册新 tool schema、不改写请求 `tools`  
+- ❌ 不把「场景路由」的 model_key 当成武将 id  
+
+### 4.2 点将 vs 派发
+
+| | **点将** `tb_activate_general` | **派发** `tb_dispatch_agent` |
+|---|---|---|
+| 谁打仗 | **主公自己打**，读武将兵书 | **武将下场打**，主公等结果 |
+| 典型 | Cursor 会话里「按代码审查智能体那套来」 | 游乐场编排：主 Agent 把子任务交给 `assistant:…` |
+| 载荷 | 上下文文本 | 子 Agent 执行 |
+
+两条都是「主公下令」，都不是网关塞将。P0 先打通**点将**（直连会话最高频）；派发已有 bridge，对齐文案与举荐即可。
+
+### 4.3 与现有 MCP
 
 | 已有 | 关系 |
 |---|---|
-| `tokenbank-prompts` | 单条 prompt 取用；点将可内部复用 `resolvePromptForClient` |
-| `tokenbank-resources` | `tb_list_resources` / `tb_get_resource` 已是「库」雏形；武将是**按场景聚合的出战视图** |
-| `tokenbank-agent-bridge` | 编排派发（`tb_dispatch_agent`）是「把活分给别的将军」；点将是「给当前主公增补兵书」——互补，勿合并 |
-| `tb_capabilities` | 总览中增加「点将」域与推荐工作流一步 |
+| `tb_list_resources` / `tb_get_resource` | 武将库底座；点将 = assistant 的出战视图 |
+| `tokenbank-prompts` | 兵书单件取用；激活武将时可内联其 `prompts[]` |
+| `tokenbank-agent-bridge` | 派发路径；`tb_list_agents` 应与将帅榜一致（assistant 优先） |
+| `tb_capabilities` | 增加「武将 = 智能体；点将工具；何时查将」 |
 
-**落位偏好（已定倾向）：**
-
-1. **P0** 在 `tokenbank-resources`（或新建轻量 `tokenbank-generals`）增加 `tb_suggest_scene` / `tb_activate_scene`  
-2. 将帅元数据可来自：已投射 skill/prompt 的用途标签、assistant 配置、显式「场景 → skill[]」表（后续）  
-3. 模型路由场景（综合最优等）**不**塞进武将库，避免两套「场景」语义污染  
+**落位：** P0 扩展 `tokenbank-resources`（或薄包装 `tb_list_generals` / `tb_activate_general`），数据只读 assistant；勿新建与智能体平行的「场景武将」表。
 
 ---
 
 ## 5. 两级点将
 
-### 5.1 自动举荐 · `tb_suggest_scene`
+### 5.1 自动举荐 · `tb_suggest_general`
 
 ```
-模型读到用户任务
-  → 判断「可能需要专业本事」
-  → tb_suggest_scene({ task_description, cwd? })
-  → 网关/本地：目录线索 + 历史模式 +（可选）embedding 相似
-  → 返回 [{ general_id, name, why, skills: [{name, summary}] }]
-  → 模型决定采纳哪些 → 再 tb_activate_scene / tb_get_resource / tb_get_prompt 取正文
+主公读到任务 → 判断需专业智能体
+  → tb_suggest_general({ task_description, cwd? })
+  → 基于 assistant 描述 / 用途标签 / 历史点将（+ 可选 embedding）
+  → [{ id, name, why, skill_count, prompt_count }]
+  → 主公再 tb_activate_general 或 tb_dispatch_agent
 ```
 
-- 决策权全程在客户端模型  
-- TB 只做**被动智库**  
-- 延迟：仅在模型自愿调用时发生，不均摊到所有请求  
+### 5.2 显式点将 · `tb_activate_general`（早期主入口）
 
-### 5.2 显式点将 · `tb_activate_scene`（早期主入口）
-
-用户说：「用调试武将」「切到写作模式」「按代码审查那套来」。
+用户：「上代码审查那个智能体」「用调试武将」「切到写作助手」。
 
 ```
-模型 → tb_activate_scene("debug")
-     → 返回该场景绑定的 skill/prompt 正文列表
-     → 模型按正文执行
+主公 → tb_activate_general("代码审查")  // name / display_name / 别名
+     → 返回该 assistant 的出战上下文（soul + prompts 正文 + skills 指引）
+     → 主公按上下文执行
 ```
 
-- **绕开「网关猜场景」**这个最不确定环节  
-- 可靠性最高  
-- **早期验证与兜底主路径**；自动举荐在命中率达标后再加戏  
-
-口令与反笔记「一句话用法」对齐：启用场景时直接教用户怎么喊将。
+- 绕开「猜该上谁」  
+- 口令 = 智能体显示名（启用包教用户喊将）  
+- **早期验证主路径**
 
 ---
 
-## 6. 唯一允许触碰的「软层」：教会模型愿意查将
+## 6. 软层：让主公愿意翻将帅榜
 
-机制成不成，取决于模型是否主动调用工具。只允许一处引导（且走现有 Prompt MCP / 投射机制，不算破协议）：
+常驻指引（capabilities + 短 hint，走现有同步，不破协议）：
 
-**常驻指引（写入 capabilities 总览 + 可选短 system hint，经已有同步通道）：**
+> 资产中的智能体是可点武将。任务需要专业角色、或用户点名某智能体/武将时，先 `tb_list_generals` / `tb_suggest_general` / `tb_activate_general`；不要臆造该智能体的 soul 与流程。简单事不必点将。
 
-> 当你判断当前任务超出通用发挥、或用户提到模式/武将/专业做法时，先用 `tb_suggest_scene` 或 `tb_activate_scene` 查询 Token Bank 武将库；不要臆造专业流程。简单寒暄与单步小事无需查将。
-
-打磨指标（软性变量，需实测）：
-
-| 指标 | 含义 |
-|---|---|
-| 应查将任务的主动查询率 | 引导是否够显眼 |
-| 误查率（简单任务也查） | 引导是否过猛 |
-| 显式点将成功率 | 名字/别名是否好记 |
-| 查将后任务轮次下降 | 价值是否兑现（反囤积） |
+指标：应点将任务的主动查询率、误查率、显式点将成功率、点将后轮次下降。
 
 ---
 
-## 7. 与「使用时创意」其它块的咬合
+## 7. 与其它块的咬合
 
-| 块 | 咬合方式 |
+| 块 | 咬合 |
 |---|---|
-| 反笔记陷阱 | 武将不是收藏夹；**出战=命中**；未点将的库存不占主路径 |
-| 场景货架 / 启用包 | UI「启用到 Agent」= 投射 + 同步点将 MCP + 教一句显式口令 |
-| 今日息票 | `tb_activate_scene` / suggest 被采纳并执行后记一笔「点将命中」 |
-| 制卡投射 | 武将对 Agent 可见仍受投射门控（与 prompt 一致），防越权点将 |
-| 模型侧场景路由 | 继续管算力；武将管本事——主公先点将，再走路 |
+| 反笔记陷阱 | 智能体不是收藏；**启用到主公 + 一次点将命中**才算成功 |
+| 场景货架 | 货架条目若指向智能体：CTA「启用到 Cursor」= 投射该 assistant + 教喊将口令 |
+| 息票 | `tb_activate_general` / 派发命中记「点将」 |
+| 投射门控 | 仅投射给当前主公的 assistant 出现在将帅榜（与 prompt 投射同理） |
+| Skill/Prompt | 可单独启用；在点将叙事里是武将装备，主货架仍可按「事」聚合到某智能体 |
 
 ---
 
@@ -168,49 +180,48 @@ Claude Code / Cursor 作为 MCP client，原生支持「发现工具 → 按需�
 
 | # | 决策 | 结论 |
 |---|---|---|
-| 1 | 出战控制权 | **客户端模型点将**；网关/本地 MCP 只应答 |
-| 2 | 载荷 | **skill/prompt 文本**，不改 tool schema |
-| 3 | 早期主路径 | **显式点将** `tb_activate_scene` |
-| 4 | 自动举荐 | `tb_suggest_scene` 第二阶段；靠引导调命中率 |
-| 5 | 协议 | 零侵入；复用 MCP client 原生能力 |
-| 6 | 每轮强制场景识别 | **不做** |
-| 7 | 与模型场景路由 | **分离**；勿混名混配置 |
+| 0 | **武将本体** | **= 资产中的智能体（assistant）**；Skill/Prompt 是兵书 |
+| 1 | 出战控制权 | 主公（客户端模型）点将；MCP 只应答 |
+| 2 | 载荷 | 智能体出战文本（soul+绑定资源），不改 tool schema |
+| 3 | 早期主路径 | 显式 `tb_activate_general` |
+| 4 | 自动举荐 | `tb_suggest_general` 第二阶段 |
+| 5 | 派发 | 保留 `tb_dispatch_agent(assistant:…)`，与点将分工 |
+| 6 | 场景路由 | 只管算力，不进武将库 |
+| 7 | 每轮强制选将 | **不做** |
 
 ---
 
-## 9. 实现切片（建议）
+## 9. 实现切片
 
 ### P0 — 显式点将可演示
 
-1. 定义最小场景表：`debug` / `writing` / `review` … → skill/prompt id 列表（可先写死 + 本地配置）  
-2. MCP 工具 `tb_list_generals` + `tb_activate_scene`  
-3. `tb_capabilities` / 常驻 hint 增加点将指引  
-4. 投射门控：仅已对当前 `TB_CLIENT_ID` 可见的资源可被激活  
-5. 实测：用户说「用调试武将」时 Claude Code / Cursor 能否稳定调工具  
+1. `tb_list_generals` = 可见 assistant 轻量列表（投射门控）  
+2. `tb_activate_general` = 展开 `resolveAssistantContext` 级正文  
+3. `tb_capabilities` 写明：武将 = 智能体  
+4. 实测：用户喊智能体显示名 → Cursor / Claude Code 调工具拿回 soul  
 
 ### P1 — 自动举荐
 
-1. `tb_suggest_scene(task_description, cwd?)`  
-2. 启发式：用途标签 + 工作目录线索 + 近历史点将  
-3. 引导措辞 A/B，盯主动查询率与误查率  
+1. `tb_suggest_general(task_description, cwd?)`  
+2. 引导 A/B；与 `tb_list_agents` 举荐口径对齐  
 
-### P2 — 流通与认知
+### P2 — 流通
 
-1. 点将命中写入息票 / `use_count`  
-2. UI 场景货架 CTA：「启用并教会口令」  
-3. 未点将的沉睡武将走 Hit-or-Exit（与反陷阱一致）  
+1. 点将命中 → 息票 / `use_count`（记在 assistant 上）  
+2. 货架启用智能体 = 投射 + 口令  
+3. 从未被点将的智能体走 Hit-or-Exit  
 
 ---
 
 ## 10. 非目标
 
-- 网关在 `/v1/chat/completions` 里注入或剥离 tools  
-- 把模型「场景路由」改造成武将选择器  
-- 强制每轮 embedding 场景分类  
-- 让武将库变成又一个要整理的笔记库首页  
+- 另建与 assistant 平行的「场景武将」实体  
+- 网关注入 tools / system  
+- 把模型场景路由当成选将器  
+- 把 Skill 列表当成武将库首页（那是兵器架，不是将帅榜）  
 
 ---
 
 ## 11. 一句话
 
-> **武将库是挂在客户端腰上的 MCP 钥匙串：主公点将才出战，网关只配兵书不抢指挥权——零侵入、按需延迟、决策权归模型。**
+> **武将就是资产里的智能体；主公用 MCP 点将，兵书（Skill/Prompt）随将出战——网关不抢指挥权，零侵入。**
