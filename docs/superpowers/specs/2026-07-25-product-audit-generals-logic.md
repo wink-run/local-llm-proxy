@@ -1,6 +1,7 @@
 # 产品审查 · 对照「武将库/兵器库 · 自用可出租 · MCP 点将」
 
 日期:2026-07-25  
+完整产品设计:[武将库产品设计完整版](./2026-07-25-tokenbank-generals-product-design.md)  
 对照逻辑:[武将库点将](./2026-07-25-general-roster-mcp-design.md) · [反笔记陷阱](./2026-07-25-anti-notes-trap-design.md) · [价值闭环](./2026-07-25-ai-asset-value-loop-design.md)
 
 **一段话逻辑（审查标尺）：**
