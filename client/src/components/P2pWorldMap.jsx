@@ -23,10 +23,15 @@ function jitterKey(id, lat, lng) {
 
 function MapMarker({ worker, coords, labels }) {
   const busy = worker.status === 'busy';
+  const isAgent = !!(worker.has_agents || (worker.agents && worker.agents.length) || worker.agent_count > 0);
+  // 智能体节点黄点；模型节点仍绿=空闲 / 橙=忙碌
+  const fill = isAgent ? '#eab308' : (busy ? '#f59e0b' : '#22c55e');
   const title = [
     worker.name,
     worker.geo?.city || (worker.geo?.country ? labels.country(worker.geo.country) : ''),
-    (worker.models || []).slice(0, 3).join(', '),
+    isAgent
+      ? (labels.agent || '智能体')
+      : ((worker.models || []).slice(0, 3).join(', ') || ''),
     busy ? labels.busy : labels.idle,
     worker.active_requests ? `${worker.active_requests} req` : '',
   ].filter(Boolean).join(' · ');
@@ -34,17 +39,8 @@ function MapMarker({ worker, coords, labels }) {
   return (
     <Marker coordinates={coords}>
       <g transform="translate(-6,-6)" title={title} className="cursor-default">
-        {busy ? (
-          <>
-            <circle r={7} fill="#f59e0b" opacity={0.35} className="animate-ping" />
-            <circle r={4.5} fill="#f59e0b" stroke="#fff" strokeWidth={1.2} />
-          </>
-        ) : (
-          <>
-            <circle r={7} fill="#22c55e" opacity={0.35} className="animate-ping" />
-            <circle r={4.5} fill="#22c55e" stroke="#fff" strokeWidth={1.2} />
-          </>
-        )}
+        <circle r={7} fill={fill} opacity={0.35} className="animate-ping" />
+        <circle r={4.5} fill={fill} stroke="#fff" strokeWidth={1.2} />
       </g>
     </Marker>
   );
@@ -131,9 +127,19 @@ export default function P2pWorldMap({ workers = [], labels = {} }) {
               {tip.geo.city || labels.country?.(tip.geo.country) || tip.geo.country}
             </div>
           )}
-          <div className="text-zinc-500 mt-0.5 truncate">{(tip.models || []).join(', ')}</div>
-          <div className={`mt-1 ${tip.status === 'busy' ? 'text-amber-600' : 'text-green-600'}`}>
-            {tip.status === 'busy' ? labels.busy : labels.idle}
+          <div className="text-zinc-500 mt-0.5 truncate">
+            {(tip.has_agents || tip.agent_count > 0)
+              ? (labels.agent || '智能体')
+              : (tip.models || []).join(', ')}
+          </div>
+          <div className={`mt-1 ${
+            (tip.has_agents || tip.agent_count > 0)
+              ? 'text-yellow-600'
+              : (tip.status === 'busy' ? 'text-amber-600' : 'text-green-600')
+          }`}>
+            {(tip.has_agents || tip.agent_count > 0)
+              ? (labels.agent || '智能体')
+              : (tip.status === 'busy' ? labels.busy : labels.idle)}
             {tip.active_requests > 0 ? ` · ${tip.active_requests} req` : ''}
           </div>
         </div>
@@ -146,6 +152,9 @@ export default function P2pWorldMap({ workers = [], labels = {} }) {
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-amber-500" /> {labels.busy}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-yellow-500" /> {labels.agent || '智能体'}
         </span>
         <span className="text-zinc-400">
           {labels.mapped?.({ mapped, total }) ?? `${mapped}/${total}`}

@@ -164,9 +164,31 @@ async function runCommunityAgentTask({ assistantId, prompt, workerId, timeoutMs 
   return r.data;
 }
 
+/** 雇佣上报：服务端真实被雇次数 +1（失败不影响本机雇佣） */
+async function reportCommunityAgentHire({ assistantId, workerId } = {}) {
+  const { base, token } = resolveCloudAuth();
+  if (!base || !token) return null;
+  const aid = String(assistantId || '').trim();
+  if (!aid) return null;
+  try {
+    const r = await httpJson('POST', `${base}/api/agents/hire`, {
+      token,
+      timeoutMs: 8_000,
+      body: {
+        assistant_id: aid,
+        worker_id: workerId || undefined,
+      },
+    });
+    return r.data;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   resolveCloudAuth,
   listOnlineCommunityAgents,
   runCommunityAgentTask,
+  reportCommunityAgentHire,
   wsToHttpBase,
 };

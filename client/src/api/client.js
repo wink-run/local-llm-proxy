@@ -100,6 +100,14 @@ export function listCommunityAgents() {
   return http.get('/api/agents');
 }
 
+/** 雇佣上报（真实被雇次数 +1） */
+export function reportCommunityAgentHire({ assistantId, workerId } = {}) {
+  return http.post('/api/agents/hire', {
+    assistant_id: assistantId,
+    worker_id: workerId || undefined,
+  });
+}
+
 /** 发起远程武将任务（对方本机执行，调用方只拿结果） */
 export function createCommunityAgentTask({ assistantId, prompt, workerId, timeoutMs }) {
   // 武将任务可能长达数分钟，单独放宽超时

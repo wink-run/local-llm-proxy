@@ -330,6 +330,9 @@ def _worker_row(w) -> dict:
         "connected_at": w.connected_at.isoformat(),
         "status": status,
         "model_latency": model_latency,
+        # 地图黄点：有智能体名片的节点
+        "has_agents": bool(getattr(w, "agents", None)),
+        "agent_count": len(getattr(w, "agents", None) or []),
     }
     lat = getattr(w, "latitude", None)
     lng = getattr(w, "longitude", None)
@@ -438,6 +441,21 @@ async def api_agents(uid: int = Depends(auth_api_key_or_jwt)):
         "agents": pool.list_agents_for_user(user_circle_ids=circles),
         "credits_per_task": AGENT_TASK_CREDITS,
     }
+
+
+class AgentHireBody(BaseModel):
+    assistant_id: str
+    worker_id: Optional[str] = None
+
+
+@app.post("/api/agents/hire")
+async def api_agent_hire(body: AgentHireBody, uid: int = Depends(auth_api_key_or_jwt)):
+    """雇佣上报：真实被雇次数 +1（展示层另加 10–50 偏移）。"""
+    aid = (body.assistant_id or "").strip()
+    if not aid:
+        raise HTTPException(400, "missing assistant_id")
+    count = pool.bump_agent_hire(aid)
+    return {"ok": True, "assistant_id": aid, "hire_count": count}
 
 
 class AgentTaskBody(BaseModel):

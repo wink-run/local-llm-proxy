@@ -172,10 +172,18 @@ function registerAgentHandlers() {
     }
   });
 
-  ipcMain.handle('community:hire', (_e, card) => {
+  ipcMain.handle('community:hire', async (_e, card) => {
     try {
       const { hire } = require('./hired-community-agents');
       const entry = hire(card || {});
+      // 异步上报真实被雇次数，不阻塞本机雇佣结果
+      try {
+        const { reportCommunityAgentHire } = require('./community-agent-client');
+        reportCommunityAgentHire({
+          assistantId: entry.assistant_id,
+          workerId: entry.worker_id,
+        }).catch(() => {});
+      } catch { /* ignore */ }
       return { success: true, hired: entry };
     } catch (e) {
       return { success: false, error: e.message };

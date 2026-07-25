@@ -34,6 +34,21 @@ function PingDot({ color = 'green' }) {
   return <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />;
 }
 
+/**
+ * 展示用被雇人数 = 真实 hire_count + [10,50] 稳定偏移（同一智能体刷新不变）。
+ */
+function displayHiredCount(agent) {
+  const real = Math.max(0, Number(agent?.hire_count) || 0);
+  const seed = `${agent?.id || ''}@${agent?.worker_id || ''}`;
+  let h = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    h = ((h << 5) - h) + seed.charCodeAt(i);
+    h |= 0;
+  }
+  const boost = 10 + (Math.abs(h) % 41); // 10..50
+  return real + boost;
+}
+
 export default function Network() {
   const { t } = useLang();
   const navigate  = useNavigate();
@@ -166,6 +181,7 @@ export default function Network() {
             labels={{
               idle: t('network.idle'),
               busy: t('network.busy'),
+              agent: t('network.mapAgent'),
               country: code => t('network.countryCode', { code }),
               mapped: ({ mapped, total }) => t('network.mapMapped', { mapped, total }),
               unmapped: n => t('network.mapUnmapped', { n }),
@@ -278,13 +294,18 @@ export default function Network() {
                         <p className="text-[11px] text-zinc-400 mt-0.5 italic">{t('network.agentNoDesc')}</p>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => navigate('/contribute')}
-                      className="shrink-0 text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
-                    >
-                      {t('network.hireOnContribute')}
-                    </button>
+                    <div className="shrink-0 flex flex-col items-end gap-1">
+                      <span className="text-[10px] text-zinc-400 tabular-nums">
+                        {t('network.hiredCount', { n: displayHiredCount(a) })}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/contribute')}
+                        className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        {t('network.hireOnContribute')}
+                      </button>
+                    </div>
                   </div>
                 );
               })}

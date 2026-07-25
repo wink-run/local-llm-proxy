@@ -246,6 +246,8 @@ class WorkerPool:
         self._virtual: list = []   # list[VirtualWorkerConnection]
         # 粘性会话：session_key -> (worker_id, expires_at)
         self._sticky: dict[str, tuple[str, float]] = {}
+        # 智能体被雇佣次数（进程内；重启清零）
+        self._agent_hire_counts: dict[str, int] = {}
 
     def add(self, worker: WorkerConnection) -> None:
         """接入真实节点；同 user_id 只保留最新连接，避免重连竞态残留旧 agents 名片。"""
@@ -539,6 +541,7 @@ class WorkerPool:
                     "worker_id": w.worker_id,
                     "owner_nickname": owner,
                     "active_requests": w.active_requests,
+                    "hire_count": self.agent_hire_count(card["id"]),
                 })
         return sorted(out, key=lambda x: (x.get("display_name") or x["id"]))
 
@@ -587,8 +590,24 @@ class WorkerPool:
                     "owner_nickname": owner,
                     "sharer": worker_sharer(w),
                     "active_requests": w.active_requests,
+                    # 真实被雇佣次数（进程内计数；展示侧再加 10–50 稳定偏移）
+                    "hire_count": self.agent_hire_count(card["id"]),
                 })
         return rows
+
+    def agent_hire_count(self, assistant_id: str) -> int:
+        aid = str(assistant_id or "").strip()
+        if not aid:
+            return 0
+        return int(self._agent_hire_counts.get(aid, 0) or 0)
+
+    def bump_agent_hire(self, assistant_id: str) -> int:
+        """雇佣上报 +1；按 assistant_id 聚合（跨 worker 重连）。"""
+        aid = str(assistant_id or "").strip()
+        if not aid:
+            return 0
+        self._agent_hire_counts[aid] = int(self._agent_hire_counts.get(aid, 0) or 0) + 1
+        return self._agent_hire_counts[aid]
 
     def pick_agent_workers(self, assistant_id: str,
                            user_circle_ids: Optional[set] = None,
