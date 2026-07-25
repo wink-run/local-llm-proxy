@@ -126,6 +126,83 @@
 
 ---
 
+## 4.4 Claude Code / Codex 怎么调用（直连会话）
+
+二者都是 **MCP client**，不改它们的协议；Token Bank 只把 MCP 写进各自配置，会话里由模型按工具描述自行调用——与今天 `tb_get_prompt` 完全同构。
+
+### 配置落点（已有 sync）
+
+| 主公 | 配置文件 | 格式 | `TB_CLIENT_ID` |
+|---|---|---|---|
+| Claude Code | `~/.claude.json` → `mcpServers` | JSON | `claude-code` |
+| Codex | `~/.codex/config.toml` | TOML | `codex` |
+
+`mcp-client-sync` 物化内置 server（如 `tokenbank-resources` / 点将工具所在 MCP）时带上：
+
+- stdio 启动：`process.execPath` + 脚本绝对路径 + `ELECTRON_RUN_AS_NODE`
+- env：`TB_CLIENT_ID=claude-code` 或 `codex`（投射门控按主公过滤武将）
+
+### 用户侧前置（启用包）
+
+1. 资源页把智能体（武将）**投射到** Claude Code 和/或 Codex  
+2. 触发 re-sync → 该主公配置里出现点将 MCP  
+3. 教一句口令（显示名）：「用『代码审查』智能体审查当前分支」  
+
+未投射的 assistant：`tb_list_generals` 不出现，`tb_activate_general` 拒绝——与 prompt 投射一致。
+
+### 会话内调用（模型主动，零侵入）
+
+**显式点将（主路径）：**
+
+```
+用户对 Claude Code / Codex：
+  「上代码审查那个智能体」/「用调试武将」
+
+→ 模型发现 MCP 工具 tb_activate_general（或先 tb_list_generals）
+→ 调用 tb_activate_general({ name: "代码审查" })
+→ tokenbank-resources（stdio）按 TB_CLIENT_ID 校验投射
+→ 返回该 assistant 出战文本（soul + 绑定 prompt 正文 + skill 指引）
+→ 模型把返回内容当补充上下文，自己继续干活
+```
+
+**自动举荐：**
+
+```
+模型判断任务偏专业
+→ tb_suggest_general({ task_description: "…" })
+→ 得到候选武将列表 → 再 activate 或告诉用户选哪个
+```
+
+**和今天 Prompt 的对照（帮助建立直觉）：**
+
+| | Prompt（已有） | 武将 / 智能体（本设计） |
+|---|---|---|
+| 用户怎么说 | 「用某某 prompt 做…」 | 「用某某智能体/武将做…」 |
+| 模型调什么 | `tb_list_prompts` → `tb_get_prompt` | `tb_list_generals` → `tb_activate_general` |
+| 拿到什么 | 单条提示词正文 | 智能体 soul + 绑定兵书 |
+| 谁执行 | Claude Code / Codex 自己 | 同上（点将路径） |
+
+### 编排派发（另一条，主公仍是下令方）
+
+仅当走 Token Bank 游乐场 / 编排、且注入了 `tokenbank-agent-bridge` 时：
+
+```
+主 Agent → tb_list_agents（assistant:* 优先）
+        → tb_dispatch_agent({ agent_id: "assistant:…", prompt: "…" })
+        → 武将在对应 runtime 里下场执行，主公汇总
+```
+
+日常在终端里开的 **Claude Code / Codex 直连会话**，默认走 **点将（激活上下文）**，不强制派发——避免用户以为「点了将人却换了个进程」。
+
+### 用户无感 checklist
+
+- 不用改 Claude Code / Codex 命令  
+- 不用手写 MCP JSON（TB 投射后 sync）  
+- 不用懂 tool schema；会说话点将即可  
+- 简单闲聊模型可不调工具 → 无额外延迟  
+
+---
+
 ## 5. 两级点将
 
 ### 5.1 自动举荐 · `tb_suggest_general`
