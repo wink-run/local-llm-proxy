@@ -1,5 +1,5 @@
 'use strict';
-// tokenbank-resources: 能力总览 + 已纳管资源 / 社区目录 / 网关发现
+// tokenbank-resources: 能力总览 + 已纳管资源 / 社区目录 / 网关发现 / 武将点将
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -26,7 +26,9 @@ const SAMPLE = [
 ];
 
 function mockRm() {
+  const hits = [];
   return {
+    hits,
     listResources(filters = {}) {
       let rows = SAMPLE;
       if (filters.type) rows = rows.filter(r => r.type === filters.type);
@@ -37,6 +39,35 @@ function mockRm() {
       }
       return rows;
     },
+    listAssistantsForClient(clientId) {
+      const cid = String(clientId || '').trim();
+      const rows = SAMPLE.filter(r => r.type === 'assistant');
+      if (!cid) {
+        return rows.map(r => ({
+          id: r.id, name: r.name, display_name: r.display_name, description: r.description,
+        }));
+      }
+      return rows
+        .filter(r => (r.projections || []).some(p => p.agentId === cid))
+        .map(r => ({
+          id: r.id, name: r.name, display_name: r.display_name, description: r.description,
+        }));
+    },
+    resolveAssistantForClient(ref, clientId) {
+      const cid = String(clientId || '').trim();
+      const r = SAMPLE.find(x => x.type === 'assistant'
+        && (x.name === ref || x.display_name === ref || x.id === ref || `#${x.id}` === ref));
+      if (!r) return { found: false };
+      if (cid && !(r.projections || []).some(p => p.agentId === cid)) return { found: false };
+      return {
+        found: true,
+        id: r.id,
+        name: r.name,
+        resource: r,
+        text: '你是写作助手\n\n## 可用 Skill\n请在任务中按需遵循以下 Skill：image-gen',
+      };
+    },
+    recordResourceHit(id) { hits.push(id); return true; },
     getResource(id) {
       return SAMPLE.find(r => r.id === id) || null;
     },
@@ -61,7 +92,7 @@ test('TOOLS 含能力总览与资源/目录/网关', () => {
   ]);
 });
 
-test('tb_capabilities 描述分域体系', async () => {
+test('tb_capabilities 描述分域体系与点将工作流', async () => {
   const r = await mcp.handleToolCall('tb_capabilities', {});
   assert.equal(r.isError, false);
   const text = r.content[0].text;
@@ -69,6 +100,7 @@ test('tb_capabilities 描述分域体系', async () => {
   assert.ok(text.includes('tb_list_models'));
   assert.ok(text.includes('tb_list_resources'));
   assert.ok(text.includes('推荐工作流'));
+  assert.ok(text.includes('assistant') || text.includes('武将') || text.includes('点将'));
 });
 
 test('tb_list_resources 可按 type 过滤', async () => {
@@ -86,15 +118,75 @@ test('tb_list_resources 可按 type 过滤', async () => {
   }
 });
 
-test('tb_get_resource: assistant 返回派发 id', async () => {
-  mcp.setResourceManager(mockRm());
+test('tb_list_resources type=assistant 按 TB_CLIENT_ID 投射过滤', async () => {
+  const rm = mockRm();
+  mcp.setResourceManager(rm);
+  const prev = process.env.TB_CLIENT_ID;
   try {
+    process.env.TB_CLIENT_ID = 'cursor';
+    const ok = await mcp.handleToolCall('tb_list_resources', { type: 'assistant' });
+    assert.ok(ok.content[0].text.includes('writer'));
+    assert.ok(ok.content[0].text.includes('武将') || ok.content[0].text.includes('writer'));
+
+    process.env.TB_CLIENT_ID = 'codex';
+    const empty = await mcp.handleToolCall('tb_list_resources', { type: 'assistant' });
+    assert.ok(empty.content[0].text.includes('暂无') || !empty.content[0].text.includes('[assistant] writer'));
+  } finally {
+    if (prev == null) delete process.env.TB_CLIENT_ID;
+    else process.env.TB_CLIENT_ID = prev;
+    mcp.setResourceManager(null);
+  }
+});
+
+test('tb_get_resource: assistant 返回出战全文并记命中', async () => {
+  const rm = mockRm();
+  mcp.setResourceManager(rm);
+  const prev = process.env.TB_CLIENT_ID;
+  try {
+    process.env.TB_CLIENT_ID = 'cursor';
     const r = await mcp.handleToolCall('tb_get_resource', { type: 'assistant', name: 'writer' });
+    assert.equal(r.isError, false);
+    const text = r.content[0].text;
+    assert.ok(text.includes('dispatch_id: assistant:a1'));
+    assert.ok(text.includes('你是写作助手'));
+    assert.ok(text.includes('当前会话'));
+    assert.ok(!text.trim().startsWith('{'), '默认不应只返回 JSON 摘要');
+    assert.deepEqual(rm.hits, ['a1']);
+  } finally {
+    if (prev == null) delete process.env.TB_CLIENT_ID;
+    else process.env.TB_CLIENT_ID = prev;
+    mcp.setResourceManager(null);
+  }
+});
+
+test('tb_get_resource: assistant 未投射 → isError', async () => {
+  mcp.setResourceManager(mockRm());
+  const prev = process.env.TB_CLIENT_ID;
+  try {
+    process.env.TB_CLIENT_ID = 'codex';
+    const r = await mcp.handleToolCall('tb_get_resource', { type: 'assistant', name: 'writer' });
+    assert.equal(r.isError, true);
+  } finally {
+    if (prev == null) delete process.env.TB_CLIENT_ID;
+    else process.env.TB_CLIENT_ID = prev;
+    mcp.setResourceManager(null);
+  }
+});
+
+test('tb_get_resource: mode=summary 仍可取摘要', async () => {
+  mcp.setResourceManager(mockRm());
+  const prev = process.env.TB_CLIENT_ID;
+  try {
+    process.env.TB_CLIENT_ID = 'cursor';
+    const r = await mcp.handleToolCall('tb_get_resource', {
+      type: 'assistant', name: 'writer', mode: 'summary',
+    });
     assert.equal(r.isError, false);
     const body = JSON.parse(r.content[0].text);
     assert.equal(body.dispatch_id, 'assistant:a1');
-    assert.ok(body.skills.includes('image-gen'));
   } finally {
+    if (prev == null) delete process.env.TB_CLIENT_ID;
+    else process.env.TB_CLIENT_ID = prev;
     mcp.setResourceManager(null);
   }
 });

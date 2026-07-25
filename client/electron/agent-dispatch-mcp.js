@@ -15,12 +15,12 @@ const WORKING_DIR = process.env.TB_WORKING_DIR || process.cwd();
 const TOOLS = [
   {
     name: 'tb_list_agents',
-    description: '列出可派发目标。专业智能体（assistant:*）优先。编排必先调用：匹配则派发；无匹配再自做/派 CLI；列表空则降级并告知用户。',
+    description: '【仅编排/游乐场】列出可派发目标。专业智能体（assistant:*）优先。日常直连会话请用 tb_list_resources(type=assistant)+tb_get_resource 点将，勿用本工具。编排时：匹配则派发；无匹配再自做/派 CLI。',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'tb_dispatch_agent',
-    description: '向指定目标派发子任务并等待完成。优先 assistant:<id>；prompt 须含目标+约束+期望产出。失败可换助手或降级 CLI。禁止在终端自行跑 CLI 代替派发。',
+    description: '【仅编排/游乐场】向目标派发子任务并等待完成。优先 assistant:<id>。日常 Cursor/Claude/Codex 会话应 tb_get_resource 点将后自行执行，不要调用本工具。prompt 须含目标+约束+期望产出。',
     inputSchema: {
       type: 'object',
       properties: {

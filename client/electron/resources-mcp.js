@@ -15,6 +15,10 @@ const {
 const { resolveAuthorityDir } = require('./resource-canonical');
 const { parseAssistantConfig } = require('./resource-assistant');
 
+function clientId() {
+  return process.env.TB_CLIENT_ID || process.env.TB_MAIN_AGENT_ID || '';
+}
+
 const TOOLS = [
   {
     name: 'tb_capabilities',
@@ -26,8 +30,8 @@ const TOOLS = [
   {
     name: 'tb_list_resources',
     description:
-      '列出 Token Bank 已纳管的资源（skill / assistant / prompt）。'
-      + '做任务前可查有哪些技能与专业智能体可用；prompt 完整正文仍优先用 tb_get_prompt。',
+      '列出 Token Bank 已纳管的资源。assistant=可点武将（仅投射给当前 Agent 的可见）；'
+      + 'skill/prompt=兵器。点将前用 type=assistant 查将帅榜；prompt 完整正文优先 tb_get_prompt。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -46,8 +50,9 @@ const TOOLS = [
   {
     name: 'tb_get_resource',
     description:
-      '按类型+名称（或 #id）取回已纳管资源详情：skill 正文、assistant 配置摘要、prompt 元数据。'
-      + 'prompt 需展开参数时请改用 tb_get_prompt。',
+      '取回资源详情。type=assistant 时为点将：返回该智能体出战全文（soul+绑定兵器），'
+      + '请在当前会话按正文执行；仅编排场景才用 tb_dispatch_agent。'
+      + 'skill 返回正文；prompt 元数据请改用 tb_get_prompt 取全文。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -58,7 +63,12 @@ const TOOLS = [
         },
         name: {
           type: 'string',
-          description: '资源 name，或 #<id>',
+          description: '资源 name / 显示名，或 #<id>',
+        },
+        mode: {
+          type: 'string',
+          description: 'assistant 专用：activate=出战全文（默认）| summary=轻量摘要',
+          enum: ['activate', 'summary'],
         },
       },
       required: ['name'],
@@ -183,7 +193,7 @@ function formatResourceDetail(r) {
       mcp: cfg.mcp,
       model: cfg.model || null,
       runtime_agent: cfg.runtime_agent,
-      hint: '派发请用 tokenbank-agent-bridge 的 tb_dispatch_agent，agent_id=dispatch_id',
+      hint: '点将请用 mode=activate（默认）取全文并在当前会话执行；仅编排才 tb_dispatch_agent',
     }, null, 2);
   }
   // prompt：只返回元数据，正文走 tb_get_prompt（支持投射门控与 $ARGUMENTS）
@@ -216,27 +226,50 @@ async function handleToolCall(name, args = {}) {
   }
 
   const rm = getResourceManager();
+  const cid = clientId();
 
   if (name === 'tb_list_resources') {
     try {
       const type = String(args.type || 'all').toLowerCase();
-      const query = String(args.query || '').trim();
-      const filters = {};
-      if (type && type !== 'all') filters.type = type;
-      if (query) filters.query = query;
-      const rows = rm.listResources(filters);
+      const query = String(args.query || '').trim().toLowerCase();
+      let rows = [];
+
+      if (type === 'assistant') {
+        rows = (rm.listAssistantsForClient(cid) || []).map((r) => ({ ...r, type: 'assistant' }));
+      } else if (type === 'all') {
+        const skills = rm.listResources({ type: 'skill' }) || [];
+        const prompts = rm.listResources({ type: 'prompt' }) || [];
+        const assistants = (rm.listAssistantsForClient(cid) || []).map((r) => ({ ...r, type: 'assistant' }));
+        rows = [...assistants, ...skills, ...prompts];
+      } else {
+        const filters = { type };
+        if (query) filters.query = query;
+        rows = rm.listResources(filters) || [];
+      }
+
+      if (query && (type === 'assistant' || type === 'all')) {
+        rows = rows.filter((r) => {
+          const blob = `${r.name || ''} ${r.display_name || ''} ${r.description || ''}`.toLowerCase();
+          return blob.includes(query);
+        });
+      }
+
       if (!rows.length) {
         return textResult(
-          type !== 'all'
-            ? `（暂无已纳管的 ${type}；可用 tb_list_catalog 查看社区目录）`
-            : '（暂无已纳管资源；可用 tb_list_catalog 查看社区目录）',
+          type === 'assistant'
+            ? '（当前 Agent 暂无已投射的智能体/武将；请先在 Token Bank「启用到」本 Agent）'
+            : (type !== 'all'
+              ? `（暂无已纳管的 ${type}；可用 tb_list_catalog 查看社区目录）`
+              : '（暂无已纳管资源；可用 tb_list_catalog 查看社区目录）'),
         );
       }
       const counts = { skill: 0, assistant: 0, prompt: 0 };
       for (const r of rows) {
         if (counts[r.type] != null) counts[r.type] += 1;
       }
-      const summary = `已纳管 ${rows.length} 项：skill=${counts.skill} assistant=${counts.assistant} prompt=${counts.prompt}`;
+      const summary = type === 'assistant'
+        ? `可点武将 ${rows.length} 员（已投射给当前 Agent）`
+        : `已纳管 ${rows.length} 项：skill=${counts.skill} assistant=${counts.assistant} prompt=${counts.prompt}`;
       const lines = rows.map(formatResourceLine);
       return textResult(`${summary}\n${lines.join('\n')}`);
     } catch (e) {
@@ -248,13 +281,59 @@ async function handleToolCall(name, args = {}) {
     const ref = String(args.name || args.ref || '').trim();
     if (!ref) return textResult('缺少 name', true);
     const type = args.type ? String(args.type).toLowerCase() : '';
+    const mode = String(args.mode || 'activate').toLowerCase();
     try {
+      // 显式点将，或命中 assistant 资源时走投射门控 + 出战全文
+      if (type === 'assistant' && typeof rm.resolveAssistantForClient === 'function') {
+        const resolved = rm.resolveAssistantForClient(ref, cid);
+        if (!resolved.found) {
+          return textResult(
+            `未找到或未投射给当前 Agent 的智能体: ${ref}。可先 tb_list_resources(type=assistant)。`,
+            true,
+          );
+        }
+        if (mode === 'summary' && resolved.resource) {
+          return textResult(formatResourceDetail(resolved.resource));
+        }
+        try { rm.recordResourceHit?.(resolved.id); } catch { /* ignore */ }
+        const title = resolved.resource?.display_name || resolved.name;
+        return textResult([
+          `dispatch_id: assistant:${resolved.id}`,
+          `# 武将出战：${title}`,
+          '（请在当前会话按下列正文执行；仅编排/游乐场才使用 tb_dispatch_agent）',
+          '',
+          resolved.text || '(无出战正文)',
+        ].join('\n'));
+      }
+
       const r = findManagedResource(rm, type || null, ref);
       if (!r) {
         return textResult(
           `未找到资源: ${ref}${type ? ` (type=${type})` : ''}。可先 tb_list_resources 或 tb_list_catalog。`,
           true,
         );
+      }
+      if (r.type === 'assistant' && typeof rm.resolveAssistantForClient === 'function') {
+        const resolved = rm.resolveAssistantForClient(r.name || ref, cid);
+        if (!resolved.found) {
+          return textResult(
+            `智能体未投射给当前 Agent: ${ref}。请先在 Token Bank 启用到本 Agent。`,
+            true,
+          );
+        }
+        if (mode === 'summary') return textResult(formatResourceDetail(resolved.resource || r));
+        try { rm.recordResourceHit?.(resolved.id); } catch { /* ignore */ }
+        const title = resolved.resource?.display_name || resolved.name;
+        return textResult([
+          `dispatch_id: assistant:${resolved.id}`,
+          `# 武将出战：${title}`,
+          '（请在当前会话按下列正文执行；仅编排/游乐场才使用 tb_dispatch_agent）',
+          '',
+          resolved.text || '(无出战正文)',
+        ].join('\n'));
+      }
+      if (r.type === 'skill' || r.type === 'prompt') {
+        try { rm.recordResourceHit?.(r.id); } catch { /* ignore */ }
       }
       return textResult(formatResourceDetail(r));
     } catch (e) {

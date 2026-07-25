@@ -42,10 +42,16 @@ function labelsFor(lang) {
     active: '活跃',
     stopped: '已停',
     pillGw: '网关',
-    pillAgent: '贡献',
+    pillAgent: '出租算力',
     pillCircles: '圈子',
-    contributing: '贡献中',
-    notContributing: '未贡献',
+    contributing: '出租中',
+    notContributing: '未出租',
+    squadTitle: '队伍',
+    squadTag: '将军',
+    squadEmpty: '启用一员武将到 Cursor / Claude',
+    squadToday: '今日点将 {n}',
+    squadCopy: '复制口令',
+    squadCopied: '已复制',
     postsUnit: '帖',
     circleLogin: '登录看帖',
     circleEmpty: '暂无新帖',
@@ -76,10 +82,16 @@ function labelsFor(lang) {
     active: 'Active',
     stopped: 'Off',
     pillGw: 'GW',
-    pillAgent: 'Share',
+    pillAgent: 'Rent GPU',
     pillCircles: 'Circles',
-    contributing: 'On',
-    notContributing: 'Off',
+    contributing: 'Renting',
+    notContributing: 'Idle',
+    squadTitle: 'Squad',
+    squadTag: 'GENERALS',
+    squadEmpty: 'Enable a general to Cursor / Claude',
+    squadToday: 'Invokes today {n}',
+    squadCopy: 'Copy invoke',
+    squadCopied: 'Copied',
     postsUnit: 'posts',
     circleLogin: 'Sign in',
     circleEmpty: 'No posts',
@@ -168,6 +180,28 @@ function buildState() {
     else if (circleCount <= 0) circleLabel = L.circleEmpty;
     else circleLabel = `${circleCount}${L.postsUnit}`;
 
+    // 队伍：今日点将 + 快捷口令（武将库显性化）
+    let generalsTodayCount = 0;
+    let quickInvokes = [];
+    try {
+      const slice = d.getGeneralsSlice?.() || {};
+      generalsTodayCount = Number(slice.todayCount) || 0;
+      quickInvokes = Array.isArray(slice.quickInvokes)
+        ? slice.quickInvokes.slice(0, 3).map((q) => ({
+          id: String(q.id || ''),
+          displayName: String(q.displayName || q.name || ''),
+          clientId: String(q.clientId || ''),
+          invokeText: String(q.invokeText || ''),
+          routeLabel: String(q.routeLabel || ''),
+        }))
+        : [];
+    } catch { /* ignore */ }
+
+    const squadBit = lang === 'en'
+      ? (generalsTodayCount > 0 ? ` · invokes ${generalsTodayCount}` : '')
+      : (generalsTodayCount > 0 ? ` · 点将 ${generalsTodayCount}` : '');
+    const subOut = String(subtitle || L.notRefreshed) + squadBit;
+
     return {
       lang,
       isMac: process.platform === 'darwin',
@@ -181,13 +215,15 @@ function buildState() {
       outFmt: String(outFmt ?? '0'),
       calls,
       callsLabel: `${calls}${L.callsUnit}`,
-      subtitle: String(subtitle || L.notRefreshed),
+      subtitle: subOut,
       lastRefreshAt: lastRefreshAt || 0,
       circlePostsCount: circleCount,
       circlePostsLabel: String(circleLabel),
       circlePostsOk: !!circlePosts.ok,
       circleLoggedIn: !!circlePosts.loggedIn,
       apps,
+      generalsTodayCount,
+      quickInvokes,
       labels: {
         ...L,
         gatewayRunningDetail: gwDetail,
@@ -444,6 +480,18 @@ function registerIpc() {
         d.setShowTokens(!d.getShowTokens());
         d.refreshTrayIcon?.();
         break;
+      case 'openSquad':
+        hide();
+        d.showMainWindow?.();
+        try { d.navigateResources?.(); } catch { /* ignore */ }
+        break;
+      case 'copyInvoke': {
+        const text = String(payload.text || '');
+        if (text && d.copyText) {
+          try { d.copyText(text); } catch { /* ignore */ }
+        }
+        break;
+      }
       default:
         break;
     }

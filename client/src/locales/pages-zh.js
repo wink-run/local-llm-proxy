@@ -1438,9 +1438,12 @@ export default {
   'circles.detail.previewEmpty': '暂无内容，请先在编辑 Tab 输入',
   'circles.detail.markdownBadge': 'Markdown',
 
-  // ── 资产页 ──
-  'resources.title': '资产管理',
-  'resources.subtitle': '统一管理提示词、技能与智能体：先纳管进 Token Bank，再安装到各 Agent',
+  // ── 资产页（武将库 / 兵器库）──
+  'resources.title': '武将库 · 兵器库',
+  'resources.subtitle': '智能体是武将，Skill/Prompt 是兵器：启用到 Cursor / Claude / Codex 后即可点将出战',
+  'resources.invokeHint': '用「{name}」智能体处理当前任务',
+  'resources.enabledWithInvoke': '✅ 已启用「{name}」并投射。口令已复制：{invoke}',
+  'resources.enabledNeedProject': '✅ 「{name}」已入库。请再投射到 Agent 后即可点将。口令：{invoke}',
   'resources.type.all': '全部',
   'resources.type.prompt': '提示词',
   'resources.type.skill': '技能',
@@ -1523,11 +1526,11 @@ export default {
   'resources.reco.remineHint': '换资产可复用画像;「重新挖掘画像」才会重跑分析',
   'resources.reco.reason': '匹配理由',
   'resources.reco.downloads': '下载 {n}',
-  // 推荐卡片动作统一为「纳管」（进 TB）；落到 Agent 用「安装到 Agent」
-  'resources.reco.install': '纳管',
-  'resources.reco.adopt': '纳管',
-  'resources.reco.installed': '已纳管',
-  'resources.reco.adopted': '已纳管',
+  // 推荐卡片：启用=入库+投射+口令（反藏而不用）
+  'resources.reco.install': '启用',
+  'resources.reco.adopt': '启用',
+  'resources.reco.installed': '已启用',
+  'resources.reco.adopted': '已启用',
   'resources.reco.working': '处理中…',
   'resources.reco.noSessions': '还没有可分析的纳管智能体会话。先用 Claude Code / Codex 等工作一阵再来挖掘。',
   'resources.reco.analyzeFailed': '分析失败{detail}。可直接补充诉求后发现。',
@@ -1535,8 +1538,8 @@ export default {
   'resources.reco.noParse': '没能从对话解析出画像,可直接在下面描述你想要的{type}。',
   'resources.reco.noNew': '这次没找到与当前不同的新项,已保留上次推荐。',
   'resources.reco.noCandidates': '没解析出候选,可稍后重试或补充诉求。',
-  'resources.reco.installedOk': '✅ {name} 已纳管到 Token Bank。',
-  'resources.reco.installedWithSkills': '✅ {name} 已纳管，并同步纳管了 {n} 个配套技能（可在技能列表查看）。',
+  'resources.reco.installedOk': '✅ {name} 已启用。',
+  'resources.reco.installedWithSkills': '✅ {name} 已启用，并同步了 {n} 个配套技能。',
   'resources.reco.partialSkills': '部分配套技能未装上:{detail}',
   'resources.reco.adoptNoResource': '纳管未返回有效资源,请重试。',
   'resources.reco.adoptNotInList': '「{name}」写入后未出现在已纳管列表,请重试或查看日志。',

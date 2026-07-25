@@ -214,6 +214,9 @@ const MIGRATIONS = [
   'ALTER TABLE requests ADD COLUMN agent_id TEXT',
   'ALTER TABLE requests ADD COLUMN mcp_server_id TEXT',
   'ALTER TABLE requests ADD COLUMN mcp_capability TEXT',
+  // 武将/兵器点将命中记账
+  'ALTER TABLE resources ADD COLUMN use_count INTEGER DEFAULT 0',
+  'ALTER TABLE resources ADD COLUMN last_used_at INTEGER',
 ];
 
 /** agent_task_steps 列迁移：必须在 AGENT_SCHEMA 建表之后执行，否则新库会 no such table 拖垮 init */

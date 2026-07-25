@@ -535,6 +535,13 @@
 
     <div class="body">
       <div class="apps-hd">
+        <span class="name" id="squadTitle">—</span>
+        <span class="tag" id="squadTag">GENERALS</span>
+      </div>
+      <div id="squadMeta" class="sub" style="padding:0 14px 6px;font-size:11px;opacity:.7"></div>
+      <div class="apps-list" id="squadList"></div>
+
+      <div class="apps-hd">
         <span class="name" id="appsTitle">—</span>
         <span class="tag" id="appsTag">APPS</span>
       </div>
@@ -575,6 +582,42 @@
       ).join('\n');
     }
 
+    function renderSquad(state) {
+      const labels = L(state);
+      $('squadTitle').textContent = labels.squadTitle || '队伍';
+      $('squadTag').textContent = labels.squadTag || 'GENERALS';
+      const n = Number(state.generalsTodayCount) || 0;
+      $('squadMeta').textContent = (labels.squadToday || '今日点将 {n}').replace('{n}', String(n));
+      const list = $('squadList');
+      list.innerHTML = '';
+      const invokes = Array.isArray(state.quickInvokes) ? state.quickInvokes : [];
+      if (!invokes.length) {
+        const empty = document.createElement('button');
+        empty.type = 'button';
+        empty.className = 'menu-row';
+        empty.innerHTML = `<span class="label">${labels.squadEmpty || '启用武将'}</span>`;
+        empty.addEventListener('click', () => window.trayAPI.action('openSquad'));
+        list.appendChild(empty);
+        return;
+      }
+      for (const q of invokes) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'menu-row';
+        const sub = q.clientId ? `<span class="muted" style="font-size:10px">${q.clientId}</span>` : '';
+        row.innerHTML = `<span class="label">${q.displayName || '—'}</span>${sub}`;
+        row.title = labels.squadCopy || '复制口令';
+        row.addEventListener('click', async () => {
+          await window.trayAPI.action('copyInvoke', { text: q.invokeText || '' });
+          row.querySelector('.label').textContent = `${q.displayName} · ${labels.squadCopied || '已复制'}`;
+          setTimeout(() => {
+            if (row.isConnected) row.querySelector('.label').textContent = q.displayName || '—';
+          }, 1200);
+        });
+        list.appendChild(row);
+      }
+    }
+
     function render(state) {
       if (!state) return;
       const labels = L(state);
@@ -583,6 +626,8 @@
       dot.className = 'dot' + (alive ? ' on' : (state.gatewayRunning === false && !state.agentRunning ? '' : ''));
 
       $('subtitle').textContent = state.subtitle || labels.notRefreshed || '—';
+
+      try { renderSquad(state); } catch { /* ignore */ }
 
       // Control deck：网关 / 用量 / 贡献 / 圈子
       const deck = $('deck');

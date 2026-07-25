@@ -1298,6 +1298,46 @@ function createTray() {
     probeActiveModels: () => probeActiveAppModels(),
     refreshCirclePosts: () => refreshCirclePostsCache(),
     getCirclePosts: () => getCirclePostsSummary(),
+    // 托盘「队伍」：今日点将 + 快捷口令
+    getGeneralsSlice: () => {
+      try {
+        const resourceManager = require('./resource-manager');
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const todayCount = resourceManager.countResourceHitsSince(start.getTime(), ['assistant']);
+        const lang = _trayLang === 'en' ? 'en' : 'zh';
+        const quickInvokes = [];
+        for (const cid of ['cursor', 'claude-code', 'codex']) {
+          const rows = resourceManager.listQuickInvokeAssistants(cid, 3) || [];
+          for (const row of rows) {
+            if (quickInvokes.some((q) => q.id === row.id)) continue;
+            const name = row.display_name || row.name;
+            const invokeText = lang === 'en'
+              ? `Use the "${name}" agent from Token Bank for this task. Call tb_list_resources(type=assistant) then tb_get_resource, then follow it in this session.`
+              : `用「${name}」智能体处理当前任务。先 tb_list_resources(type=assistant) 再 tb_get_resource 取回出战正文，在本会话按正文执行。`;
+            quickInvokes.push({
+              id: row.id,
+              displayName: name,
+              clientId: cid,
+              invokeText,
+            });
+            if (quickInvokes.length >= 3) break;
+          }
+          if (quickInvokes.length >= 3) break;
+        }
+        return { todayCount, quickInvokes };
+      } catch (e) {
+        console.warn('[tray] getGeneralsSlice:', e.message);
+        return { todayCount: 0, quickInvokes: [] };
+      }
+    },
+    copyText: (text) => {
+      try { require('electron').clipboard.writeText(String(text || '')); } catch { /* ignore */ }
+    },
+    navigateResources: () => {
+      showMainWindow();
+      try { mainWindow?.webContents?.send('app:navigate', '/resources'); } catch { /* ignore */ }
+    },
   });
 
   try {

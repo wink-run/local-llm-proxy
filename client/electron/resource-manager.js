@@ -56,6 +56,7 @@ const {
   resolveAssistantRuntimeAgent,
   withAssistantRuntimeAgent,
   hasAssistantEnableProjection,
+  resolveAssistantContext,
   ASSISTANT_RUNTIME_IDS,
   DEFAULT_RUNTIME_AGENT,
 } = require('./resource-assistant');
@@ -530,6 +531,168 @@ class ResourceManager {
       'SELECT 1 FROM resource_projections WHERE resource_id = ? AND agent_id = ? LIMIT 1',
     ).get(r.id, cid);
     return row ? r : { found: false };
+  }
+
+  /** 投射给该 client 的智能体(武将)轻量列表;clientId 为空 → 全部 assistant */
+  listAssistantsForClient(clientId) {
+    this.init();
+    const db = this._getDb();
+    const cid = String(clientId || '').trim();
+    if (!cid) {
+      return db.prepare(`
+        SELECT id, name, display_name, description FROM resources
+        WHERE type = 'assistant' ORDER BY updated_at DESC
+      `).all();
+    }
+    return db.prepare(`
+      SELECT DISTINCT r.id, r.name, r.display_name, r.description
+      FROM resources r
+      JOIN resource_projections ps ON ps.resource_id = r.id
+      WHERE r.type = 'assistant' AND ps.agent_id = ?
+      ORDER BY r.updated_at DESC
+    `).all(cid);
+  }
+
+  /** 该 client 是否有 ≥1 条智能体投射 */
+  hasAssistantProjections(clientId) {
+    this.init();
+    const cid = String(clientId || '').trim();
+    if (!cid) return false;
+    const row = this._getDb().prepare(`
+      SELECT 1 FROM resource_projections ps
+      JOIN resources r ON r.id = ps.resource_id
+      WHERE ps.agent_id = ? AND r.type = 'assistant' LIMIT 1
+    `).get(cid);
+    return !!row;
+  }
+
+  /**
+   * 解析智能体引用并做投射校验；返回出战全文(soul+绑定兵器)。
+   * clientId 为空不过滤投射。
+   */
+  resolveAssistantForClient(ref, clientId = '') {
+    this.init();
+    const raw = String(ref || '').trim();
+    if (!raw) return { found: false };
+
+    let resource = this._findByTypeName('assistant', raw);
+    if (!resource) {
+      const id = raw.startsWith('#') ? raw.slice(1).trim() : raw;
+      const byId = id ? this.getResource(id) : null;
+      if (byId && byId.type === 'assistant') resource = byId;
+    }
+    if (!resource) {
+      const row = this._getDb().prepare(`
+        SELECT id FROM resources
+        WHERE type = 'assistant' AND (display_name = ? OR name = ?)
+        LIMIT 1
+      `).get(raw, raw);
+      if (row) resource = this.getResource(row.id);
+    }
+    if (!resource || resource.type !== 'assistant') return { found: false };
+
+    const cid = String(clientId || '').trim();
+    if (cid) {
+      const proj = this._getDb().prepare(
+        'SELECT 1 FROM resource_projections WHERE resource_id = ? AND agent_id = ? LIMIT 1',
+      ).get(resource.id, cid);
+      if (!proj) return { found: false };
+    }
+
+    const config = parseAssistantConfig(resource.content);
+    const text = resolveAssistantContext(config, this);
+    return {
+      found: true,
+      id: resource.id,
+      name: resource.name,
+      resource,
+      config,
+      text,
+    };
+  }
+
+  /** 记录资源被 MCP/点将命中(use_count / last_used_at) */
+  recordResourceHit(resourceId) {
+    this.init();
+    const id = String(resourceId || '').trim();
+    if (!id) return false;
+    const now = Date.now();
+    try {
+      const r = this._getDb().prepare(`
+        UPDATE resources
+        SET use_count = COALESCE(use_count, 0) + 1, last_used_at = ?, updated_at = updated_at
+        WHERE id = ?
+      `).run(now, id);
+      return (r.changes || 0) > 0;
+    } catch (e) {
+      // 旧库尚未迁移列时降级写 metadata，避免打断点将
+      try {
+        const row = this._getDb().prepare('SELECT metadata FROM resources WHERE id = ?').get(id);
+        if (!row) return false;
+        let meta = {};
+        try { meta = JSON.parse(row.metadata || '{}') || {}; } catch { meta = {}; }
+        meta.use_count = Number(meta.use_count || 0) + 1;
+        meta.last_used_at = now;
+        this._getDb().prepare('UPDATE resources SET metadata = ? WHERE id = ?')
+          .run(JSON.stringify(meta), id);
+        return true;
+      } catch {
+        console.warn('[resource-manager] recordResourceHit:', e.message);
+        return false;
+      }
+    }
+  }
+
+  /** 今日点将/取用次数(assistant+prompt)，供 Tray */
+  countResourceHitsSince(sinceTs, types = ['assistant', 'prompt']) {
+    this.init();
+    const since = Number(sinceTs) || 0;
+    const typeList = (Array.isArray(types) ? types : ['assistant', 'prompt'])
+      .map((t) => String(t || '').trim())
+      .filter(Boolean);
+    if (!typeList.length) return 0;
+    try {
+      const placeholders = typeList.map(() => '?').join(',');
+      const row = this._getDb().prepare(`
+        SELECT COUNT(*) AS n FROM resources
+        WHERE type IN (${placeholders})
+          AND last_used_at IS NOT NULL AND last_used_at >= ?
+      `).get(...typeList, since);
+      return Number(row?.n || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Tray 快捷口令：已投射且优先近用的智能体 */
+  listQuickInvokeAssistants(clientId, limit = 3) {
+    this.init();
+    const cid = String(clientId || '').trim();
+    const lim = Math.max(1, Math.min(10, Number(limit) || 3));
+    try {
+      let rows;
+      if (cid) {
+        rows = this._getDb().prepare(`
+          SELECT DISTINCT r.id, r.name, r.display_name, r.description, r.last_used_at, r.use_count
+          FROM resources r
+          JOIN resource_projections ps ON ps.resource_id = r.id
+          WHERE r.type = 'assistant' AND ps.agent_id = ?
+          ORDER BY COALESCE(r.last_used_at, 0) DESC, r.updated_at DESC
+          LIMIT ?
+        `).all(cid, lim);
+      } else {
+        rows = this._getDb().prepare(`
+          SELECT id, name, display_name, description, last_used_at, use_count
+          FROM resources WHERE type = 'assistant'
+          ORDER BY COALESCE(last_used_at, 0) DESC, updated_at DESC
+          LIMIT ?
+        `).all(lim);
+      }
+      return rows;
+    } catch {
+      // 无 last_used_at 列时回退
+      return this.listAssistantsForClient(cid).slice(0, lim);
+    }
   }
 
   installFromCatalog(catalogId) {
