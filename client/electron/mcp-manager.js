@@ -328,8 +328,8 @@ class MCPManager {
     const db = this._getDb();
     const row = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_RESOURCES_ID);
     const meta = JSON.stringify({
-      description: '内置资源发现：tb_capabilities / tb_list_resources / tb_get_resource / tb_list_catalog / tb_list_gateway',
-      tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_list_catalog', 'tb_list_gateway'],
+      description: '内置资源发现：能力总览 / 资源 / tb_get_prompt / 目录 / 网关',
+      tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_get_prompt', 'tb_list_prompts', 'tb_list_catalog', 'tb_list_gateway'],
     });
     if (!row) {
       db.prepare(`
@@ -840,7 +840,7 @@ class MCPManager {
 
   /**
    * 将 Agent 上扫描到的 MCP 纳管进 Token Bank（不改动该 Agent 原配置、不自动同步到其他 Agent）
-   * 纳管后可在「已纳管」页选择安装到其他 Agent
+   * 纳管后可在「已纳管」页选择投射到其他应用
    */
   importFromAgent({ clientId, clientKey, originAgents }) {
     this.init();
@@ -1033,7 +1033,8 @@ class MCPManager {
       ctx.resourcesLauncher = writeElectronAsNodeLauncher({
         name: `resources-orch-${taskId}`,
         scriptPath: RESOURCES_SCRIPT,
-        env: {},
+        // 与 prompts 一致：按主 Agent 过滤可点武将
+        env: { TB_CLIENT_ID: mainAgentId || '' },
       });
       cleanupFns.push(() => { try { fs.unlinkSync(ctx.resourcesLauncher); } catch {} });
     }
@@ -1204,7 +1205,7 @@ class MCPManager {
         command: writeElectronAsNodeLauncher({
           name: `resources-${mainAgentId || 'default'}`,
           scriptPath: RESOURCES_SCRIPT,
-          env: {},
+          env: { TB_CLIENT_ID: mainAgentId || '' },
         }),
         args: [],
         env: {},

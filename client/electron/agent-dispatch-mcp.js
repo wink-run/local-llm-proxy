@@ -38,7 +38,7 @@ const TOOLS = [
   },
   {
     name: 'tb_get_prompt',
-    description: '按名称或 #id 取回 Token Bank 已纳管的提示词正文（可带参数，模板里的 $ARGUMENTS 会被填充）。用于快速引用提示词模板，无需自己拼写全文。',
+    description: '按名称或显示名取回 Token Bank 提示词正文（$ARGUMENTS 可填）。日常会话优先 tokenbank-resources / tokenbank-prompts 同名工具；本桥亦可用。',
     inputSchema: {
       type: 'object',
       properties: {

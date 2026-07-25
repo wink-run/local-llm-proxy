@@ -30,16 +30,29 @@ test('applyPromptArguments: 含 $ARGUMENTS 但参数为空 → 占位符替换�
   assert.equal(applyPromptArguments('审查 $ARGUMENTS 完毕', ''), '审查  完毕');
 });
 
-// ── resolvePrompt：按 name / #id 查找（桩掉 DB 访问）───────────
-function withStubLookup(fn) {
+// ── resolvePrompt：按 name / #id / display_name 查找（桩掉 DB 访问）───────────
+function withStubLookup(fn, { byDisplayName = null } = {}) {
   const origInit = resourceManager.init;
   const origFind = resourceManager._findByTypeName;
   const origGet = resourceManager.getResource;
+  const origDb = resourceManager._getDb;
   resourceManager.init = () => {};
+  resourceManager._getDb = () => ({
+    prepare: (sql) => ({
+      get: (...args) => {
+        if (!byDisplayName) return null;
+        if (String(sql).includes('display_name') && args[0] === byDisplayName.display_name) {
+          return { id: byDisplayName.id };
+        }
+        return null;
+      },
+    }),
+  });
   try { return fn(); } finally {
     resourceManager.init = origInit;
     resourceManager._findByTypeName = origFind;
     resourceManager.getResource = origGet;
+    resourceManager._getDb = origDb;
   }
 }
 
@@ -68,6 +81,20 @@ test('resolvePrompt: name 未命中时按 #id 回退查找', () => {
     assert.equal(r.found, true);
     assert.equal(r.text, '正文');
   });
+});
+
+test('resolvePrompt: 按 display_name（中文名）命中', () => {
+  withStubLookup(() => {
+    resourceManager._findByTypeName = () => null;
+    resourceManager.getResource = (id) =>
+      id === 'res-prompt-xiaohei'
+        ? { id: 'res-prompt-xiaohei', type: 'prompt', name: 'xiaohei', content: '黑猫正文' }
+        : null;
+    const r = resourceManager.resolvePrompt('小黑', '');
+    assert.equal(r.found, true);
+    assert.equal(r.name, 'xiaohei');
+    assert.equal(r.text, '黑猫正文');
+  }, { byDisplayName: { id: 'res-prompt-xiaohei', display_name: '小黑' } });
 });
 
 test('resolvePrompt: 找不到 → found=false，不抛错', () => {

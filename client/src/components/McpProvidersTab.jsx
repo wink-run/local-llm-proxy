@@ -153,7 +153,7 @@ export default function McpProvidersTab() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // 与 Skill/Prompt 一致：只列出本机已安装的 Agent（不再用 syncEnabled 裁剪）
+  // 与 Skill/Prompt 一致：只列出本机已纳管的应用（不再用 syncEnabled 裁剪）
   const syncWritableAgents = (syncStatus?.targets || []).filter(t => t.installed);
 
   // 当前筛选的 Agent 已不在「已安装」列表时回退到全部
@@ -254,7 +254,7 @@ export default function McpProvidersTab() {
     ));
   }
 
-  /** 收集某 MCP 当前已安装到的可写 Agent */
+  /** 收集某 MCP 当前已投射到的可写 Agent */
   function getInstalledAgentIds(server) {
     if (!server) return [];
     const ids = new Set();
@@ -800,7 +800,7 @@ export default function McpProvidersTab() {
   const totalCatalogCount = catalog.length;
   const managedCount = servers.length;
 
-  // 应用筛选：仅本机已安装的 Agent（有残留 MCP 配置但未装的不展示）
+  // 应用筛选：仅本机已纳管的应用（有残留 MCP 配置但未装的不展示）
   const visibleAgents = agentInstallations.filter(a => a.installed);
   const activeAgent = visibleAgents.find(a => a.id === agentTab) || null;
 

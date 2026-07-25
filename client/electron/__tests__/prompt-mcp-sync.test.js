@@ -41,7 +41,7 @@ test('serverToEntry: models server 物化为 shell launcher', () => {
   assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
 });
 
-test('serverToEntry: resources server 物化为 shell launcher', () => {
+test('serverToEntry: resources server 物化为 shell launcher 并内嵌 TB_CLIENT_ID', () => {
   const entry = sync.serverToEntry({
     id: 'tokenbank-resources', name: 'tokenbank-resources', status: 'active',
     command: '__DYNAMIC_ELECTRON__', args: '[]', env: '{"ELECTRON_RUN_AS_NODE":"1"}', builtin: 1,
@@ -49,6 +49,8 @@ test('serverToEntry: resources server 物化为 shell launcher', () => {
   assert.ok(String(entry.command).endsWith('resources-codex.sh'), entry.command);
   const sh = require('fs').readFileSync(entry.command, 'utf8');
   assert.ok(sh.includes('resources-mcp.js'));
+  // 与 prompts 一致：否则空 client 会列出全部 assistant
+  assert.ok(sh.includes("TB_CLIENT_ID='codex'") || sh.includes('TB_CLIENT_ID=codex'));
 });
 
 test('serverToEntry: URL/SSE MCP 可写出 url 条目', () => {

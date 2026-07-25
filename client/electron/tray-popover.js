@@ -46,10 +46,10 @@ function labelsFor(lang) {
     pillCircles: '圈子',
     contributing: '出租中',
     notContributing: '未出租',
-    squadTitle: '队伍',
-    squadTag: '将军',
-    squadEmpty: '启用一员武将到 Cursor / Claude',
-    squadToday: '今日点将 {n}',
+    squadTitle: '资源',
+    squadTag: 'RESOURCES',
+    squadEmpty: '启用一个智能体到 Cursor / Claude',
+    squadToday: '今日取用 {n}',
     squadCopy: '复制口令',
     squadCopied: '已复制',
     postsUnit: '帖',
@@ -86,10 +86,10 @@ function labelsFor(lang) {
     pillCircles: 'Circles',
     contributing: 'Renting',
     notContributing: 'Idle',
-    squadTitle: 'Squad',
-    squadTag: 'GENERALS',
-    squadEmpty: 'Enable a general to Cursor / Claude',
-    squadToday: 'Invokes today {n}',
+    squadTitle: 'Resources',
+    squadTag: 'RESOURCES',
+    squadEmpty: 'Enable an assistant to Cursor / Claude',
+    squadToday: 'Used today {n}',
     squadCopy: 'Copy invoke',
     squadCopied: 'Copied',
     postsUnit: 'posts',
@@ -180,7 +180,7 @@ function buildState() {
     else if (circleCount <= 0) circleLabel = L.circleEmpty;
     else circleLabel = `${circleCount}${L.postsUnit}`;
 
-    // 队伍：今日点将 + 快捷口令（武将库显性化）
+    // 资源：今日取用 + 快捷口令
     let generalsTodayCount = 0;
     let quickInvokes = [];
     try {
@@ -198,8 +198,8 @@ function buildState() {
     } catch { /* ignore */ }
 
     const squadBit = lang === 'en'
-      ? (generalsTodayCount > 0 ? ` · invokes ${generalsTodayCount}` : '')
-      : (generalsTodayCount > 0 ? ` · 点将 ${generalsTodayCount}` : '');
+      ? (generalsTodayCount > 0 ? ` · used ${generalsTodayCount}` : '')
+      : (generalsTodayCount > 0 ? ` · 取用 ${generalsTodayCount}` : '');
     const subOut = String(subtitle || L.notRefreshed) + squadBit;
 
     return {

@@ -669,6 +669,29 @@ function getSkillLastUsedMap(opts = {}) {
   return map;
 }
 
+/**
+ * skill_key → { count, lastTs }（Hit-or-Exit 回写资源命中）
+ */
+function getSkillCallStatsMap() {
+  const map = new Map();
+  if (!db) return map;
+  try {
+    const rows = db.prepare(
+      'SELECT skill_key, COUNT(*) AS n, MAX(ts) AS last_ts FROM skill_calls GROUP BY skill_key',
+    ).all();
+    for (const r of rows) {
+      if (!r.skill_key) continue;
+      map.set(String(r.skill_key).toLowerCase(), {
+        count: Number(r.n) || 0,
+        lastTs: Number(r.last_ts) || 0,
+      });
+    }
+  } catch (e) {
+    console.error('[local-stats] getSkillCallStatsMap failed:', e.message);
+  }
+  return map;
+}
+
 /** 批量写入工具调用（INSERT OR IGNORE by call_uid） */
 function recordToolCalls(calls = []) {
   if (!db || !_insertToolCallStmt || !calls.length) return 0;
@@ -1824,7 +1847,7 @@ module.exports = {
   queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
   getImportState, setImportState, resetSessionData, resetImportState, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
-  recordSkillCalls, deleteSkillCallsBySourcePath, getSkillLastUsedMap,
+  recordSkillCalls, deleteSkillCallsBySourcePath, getSkillLastUsedMap, getSkillCallStatsMap,
   recordToolCalls, deleteToolCallsBySourcePath,
   querySkillUsageStats, queryToolUsageStats, queryMcpUsageStats,
   todaySinceTs, sinceTsForDays, sinceMsForDays, queryGatewayInputCostRate, queryModelProviderLatency,

@@ -445,6 +445,23 @@ class AgentExecutor extends EventEmitter {
     const parentTaskId = options.parentTaskId;
     const canonicalId = await this.resolveAgentId(agentId);
 
+    // 召唤专业智能体：记命中并弹息票（与 tb_get_resource 点将对齐）
+    if (isAssistantAgentId(canonicalId)) {
+      try {
+        const resourceManager = require('./resource-manager');
+        const rid = assistantResourceId(canonicalId);
+        const cid = String(
+          options.clientId
+          || process.env.TB_CLIENT_ID
+          || process.env.TB_MAIN_AGENT_ID
+          || '',
+        ).trim();
+        resourceManager.recordResourceHit?.(rid, cid);
+      } catch (e) {
+        console.warn('[agent-executor] recordResourceHit on dispatch:', e.message);
+      }
+    }
+
     // 派发子任务：归属父窗口 session，继承父会话实例 ID
     let sessionKey = options.sessionKey || canonicalId;
     let sessionInstanceId = options.sessionInstanceId || null;

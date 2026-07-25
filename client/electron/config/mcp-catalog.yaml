@@ -89,7 +89,7 @@ items:
   id: tokenbank-resources
   name: tokenbank-resources
   display_name: Token Bank Resources
-  description: 内置资源发现：tb_capabilities 能力总览、已纳管 skill/assistant、社区目录、网关 API
+  description: 内置资源发现：能力总览、skill/assistant/prompt、tb_get_prompt、社区目录、网关 API
   type: stdio
   command: __DYNAMIC_ELECTRON__
   args: []
@@ -103,6 +103,8 @@ items:
     - tb_capabilities
     - tb_list_resources
     - tb_get_resource
+    - tb_get_prompt
+    - tb_list_prompts
     - tb_list_catalog
     - tb_list_gateway
     tags:

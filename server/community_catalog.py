@@ -71,7 +71,16 @@ def normalize_catalog_doc(doc: dict) -> dict:
     out = {"version": int(doc.get("version") or 1)}
     for key in _SECTIONS:
         val = doc.get(key)
-        out[key] = [x for x in val if isinstance(x, dict)] if isinstance(val, list) else []
+        items = [x for x in val if isinstance(x, dict)] if isinstance(val, list) else []
+        # 纠正误写的 type=agent（资源类型应为 assistant）
+        if key == "assistants":
+            fixed = []
+            for item in items:
+                if item.get("type") == "agent":
+                    item = {**item, "type": "assistant"}
+                fixed.append(item)
+            items = fixed
+        out[key] = items
     return out
 
 

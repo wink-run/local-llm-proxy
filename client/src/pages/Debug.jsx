@@ -831,6 +831,8 @@ export default function Debug() {
       } catch { /* ignore */ }
 
       if (!sess.taskSteps?.some(s => s.content?.trim())) return;
+      // 仍有未闭合工具：只是在等结果，绝不可提前收尾成「未收到结果/失败」
+      if (hasOpenToolCalls(sess.taskSteps)) return;
       // 派发镜像：有步骤但 DB 未终态时，仍走委派收尾
       if (sess.currentTask?.parentTaskId) {
         finishDelegatedChildRef.current?.(

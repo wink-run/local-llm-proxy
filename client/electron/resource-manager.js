@@ -88,7 +88,25 @@ class ResourceManager {
   init() {
     if (this._ready) return;
     this._getDb();
+    // 回滚未完成的 assistant→agent 改名：库内 type=agent 恢复为 assistant
+    this._migrateAgentTypeToAssistant();
     this._ready = true;
+  }
+
+  /** 将误写为 agent 的资源类型纠正回 assistant（幂等） */
+  _migrateAgentTypeToAssistant() {
+    try {
+      const db = this._getDb();
+      const info = db.prepare(
+        "UPDATE resources SET type = 'assistant', updated_at = ? WHERE type = 'agent'",
+      ).run(Date.now());
+      if (info.changes > 0) {
+        console.log(`[resource-manager] migrated ${info.changes} resource(s) type agent → assistant`);
+        this._invalidateAgentList?.();
+      }
+    } catch (e) {
+      console.warn('[resource-manager] migrate agent→assistant failed:', e.message);
+    }
   }
 
   /** 是否内置智能体（不可删除；source=builtin） */
@@ -141,9 +159,10 @@ class ResourceManager {
    * 无可投射 Agent 时仅纳管，不抛错。
    */
   ensureBuiltinAssistants() {
-    // 注意：不可再调 init()，避免递归；由 init / IPC 保证 DB 就绪
+    // 注意：不可再调 init() 若其内部会 ensureBuiltin 形成递归；此处只保证 DB + 迁移
     if (!this._ready) {
       this._getDb();
+      this._migrateAgentTypeToAssistant();
       this._ready = true;
     }
     const results = [];
@@ -288,6 +307,15 @@ class ResourceManager {
 
   _rowToResource(row) {
     if (!row) return null;
+    const metadata = this._parseJson(row.metadata, {});
+    // 命中字段：优先列，兼容旧库写在 metadata 的降级
+    const useCount = Math.max(
+      0,
+      Number(row.use_count != null ? row.use_count : metadata.use_count) || 0,
+    );
+    const lastUsedAt = row.last_used_at != null
+      ? Number(row.last_used_at) || null
+      : (metadata.last_used_at != null ? Number(metadata.last_used_at) || null : null);
     const resource = {
       id: row.id,
       type: row.type,
@@ -296,12 +324,14 @@ class ResourceManager {
       display_name: row.type === 'skill' ? row.name : (row.display_name || row.name),
       description: row.description || '',
       content: row.content || '',
-      metadata: this._parseJson(row.metadata, {}),
+      metadata,
       source: row.source || 'local',
       source_url: row.source_url || null,
       hash: row.hash,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      use_count: useCount,
+      last_used_at: lastUsedAt,
     };
     if (resource.type === 'skill') {
       resource.authorityPath = resolveAuthorityDir(resource);
@@ -442,12 +472,80 @@ class ResourceManager {
     const sets = needAnnotate
       ? { managedSet: this._getManagedDepKeySet(), catalogSet: this._getCatalogDepKeySet() }
       : null;
+    // Skill：会话 skill_calls 回填命中，避免 Cursor 附加 Skill 仍显示「未使用」
+    let skillStats = null;
+    const needSkillHits = !filters.type || filters.type === 'skill';
+    if (needSkillHits) {
+      try { skillStats = localStats.getSkillCallStatsMap?.() || null; } catch { skillStats = null; }
+    }
     return rows.map(row => {
       const resource = this._rowToResource(row);
       resource.projections = this._getProjections(resource.id);
       if (needAnnotate) this._annotateAssistantDeps(resource, sets);
+      if (skillStats && resource.type === 'skill') {
+        this._mergeSkillCallHits(resource, skillStats);
+      }
       return resource;
     });
+  }
+
+  /**
+   * 用 skill_calls 合并命中字段（只抬升，不覆盖更大的 MCP 命中）
+   * @param {object} resource
+   * @param {Map<string, { count: number, lastTs: number }>} statsMap
+   */
+  _mergeSkillCallHits(resource, statsMap) {
+    if (!resource || resource.type !== 'skill' || !statsMap) return resource;
+    const key = String(resource.name || '').trim().toLowerCase();
+    const alt = String(resource.display_name || '').trim().toLowerCase();
+    const st = statsMap.get(key) || (alt && alt !== key ? statsMap.get(alt) : null);
+    if (!st) return resource;
+    const last = Number(st.lastTs) || 0;
+    const count = Number(st.count) || 0;
+    if (last > (Number(resource.last_used_at) || 0)) resource.last_used_at = last;
+    if (count > (Number(resource.use_count) || 0)) resource.use_count = count;
+    return resource;
+  }
+
+  /**
+   * 将 skill_calls 汇总写回 resources.use_count / last_used_at（Hit-or-Exit）
+   * @returns {{ updated: number }}
+   */
+  applySessionSkillHits() {
+    this.init();
+    let statsMap;
+    try { statsMap = localStats.getSkillCallStatsMap?.(); } catch { statsMap = null; }
+    if (!statsMap || !statsMap.size) return { updated: 0 };
+
+    const db = this._getDb();
+    const skills = db.prepare(
+      "SELECT id, name, display_name, use_count, last_used_at FROM resources WHERE type = 'skill'",
+    ).all();
+    let updated = 0;
+    const upd = db.prepare(`
+      UPDATE resources
+      SET use_count = ?, last_used_at = ?, updated_at = updated_at
+      WHERE id = ?
+    `);
+    const run = db.transaction((rows) => {
+      for (const row of rows) {
+        const key = String(row.name || '').trim().toLowerCase();
+        const alt = String(row.display_name || '').trim().toLowerCase();
+        const st = statsMap.get(key) || (alt && alt !== key ? statsMap.get(alt) : null);
+        if (!st) continue;
+        const nextCount = Math.max(Number(row.use_count) || 0, Number(st.count) || 0);
+        const nextLast = Math.max(Number(row.last_used_at) || 0, Number(st.lastTs) || 0);
+        if (nextCount === (Number(row.use_count) || 0)
+          && nextLast === (Number(row.last_used_at) || 0)) continue;
+        if (!nextLast && !nextCount) continue;
+        upd.run(nextCount, nextLast || null, row.id);
+        updated += 1;
+      }
+    });
+    try { run(skills); } catch (e) {
+      console.warn('[resource-manager] applySessionSkillHits:', e.message);
+    }
+    return { updated };
   }
 
   getResource(resourceId) {
@@ -472,11 +570,20 @@ class ResourceManager {
     const raw = String(ref || '').trim();
     if (!raw) return { found: false };
 
+    // 先按稳定 name，再 #id；最后按 display_name（UI 常用中文名如「小黑」）
     let resource = this._findByTypeName('prompt', raw);
     if (!resource) {
       const id = raw.startsWith('#') ? raw.slice(1).trim() : raw;
       const byId = id ? this.getResource(id) : null;
       if (byId && byId.type === 'prompt') resource = byId;
+    }
+    if (!resource) {
+      const row = this._getDb().prepare(`
+        SELECT id FROM resources
+        WHERE type = 'prompt' AND (display_name = ? OR name = ?)
+        LIMIT 1
+      `).get(raw, raw);
+      if (row) resource = this.getResource(row.id);
     }
     if (!resource || resource.type !== 'prompt') return { found: false };
 
@@ -611,19 +718,24 @@ class ResourceManager {
     };
   }
 
-  /** 记录资源被 MCP/点将命中(use_count / last_used_at) */
-  recordResourceHit(resourceId) {
+  /** 记录资源被 MCP/点将命中(use_count / last_used_at)，并通知主窗口息票 */
+  recordResourceHit(resourceId, clientId = '') {
     this.init();
     const id = String(resourceId || '').trim();
     if (!id) return false;
     const now = Date.now();
+    let ok = false;
+    let useCount = 0;
+    let name = '';
+    let displayName = '';
+    let type = '';
     try {
       const r = this._getDb().prepare(`
         UPDATE resources
         SET use_count = COALESCE(use_count, 0) + 1, last_used_at = ?, updated_at = updated_at
         WHERE id = ?
       `).run(now, id);
-      return (r.changes || 0) > 0;
+      ok = (r.changes || 0) > 0;
     } catch (e) {
       // 旧库尚未迁移列时降级写 metadata，避免打断点将
       try {
@@ -635,12 +747,41 @@ class ResourceManager {
         meta.last_used_at = now;
         this._getDb().prepare('UPDATE resources SET metadata = ? WHERE id = ?')
           .run(JSON.stringify(meta), id);
-        return true;
+        ok = true;
       } catch {
         console.warn('[resource-manager] recordResourceHit:', e.message);
         return false;
       }
     }
+    if (!ok) return false;
+    try {
+      const row = this._getDb().prepare(
+        'SELECT name, display_name, type, use_count, metadata FROM resources WHERE id = ?',
+      ).get(id);
+      if (row) {
+        name = row.name || '';
+        displayName = row.display_name || row.name || '';
+        // 残留 type=agent 时仍按 assistant 播武将特效
+        type = row.type === 'agent' ? 'assistant' : (row.type || '');
+        useCount = Number(row.use_count || 0) || 0;
+        if (!useCount) {
+          try {
+            const meta = JSON.parse(row.metadata || '{}') || {};
+            useCount = Number(meta.use_count || 0) || 0;
+          } catch { /* ignore */ }
+        }
+      }
+      const { notifyResourceHit } = require('./resource-hit-or-exit');
+      notifyResourceHit({
+        id,
+        name,
+        displayName,
+        type,
+        useCount,
+        clientId: String(clientId || '').trim(),
+      });
+    } catch { /* 息票失败不影响点将 */ }
+    return true;
   }
 
   /** 今日点将/取用次数(assistant+prompt)，供 Tray */
@@ -700,7 +841,19 @@ class ResourceManager {
     const item = getCatalogItem(catalogId);
     if (!item) throw new Error('目录项不存在');
 
-    const existing = this._findByTypeName(item.type, item.name);
+    // 先按 type+name；再按稳定 id（避免 type 曾被误改时重复 INSERT 撞 PRIMARY KEY）
+    const stableId = `res-${item.type}-${item.name}`;
+    let existing = this._findByTypeName(item.type, item.name) || this.getResource(stableId);
+    if (existing && existing.type !== item.type && item.type === 'assistant') {
+      try {
+        this._getDb().prepare(
+          'UPDATE resources SET type = ?, updated_at = ? WHERE id = ?',
+        ).run(item.type, Date.now(), existing.id);
+        existing = this.getResource(existing.id);
+      } catch (e) {
+        console.warn('[resource-manager] fix resource type:', existing.id, e.message);
+      }
+    }
     if (existing) {
       let installedDependencies = [];
       // 内置智能体：纠正 source / metadata
@@ -863,7 +1016,9 @@ class ResourceManager {
     this.init();
     const db = this._getDb();
     const now = Date.now();
-    const type = data.type || 'prompt';
+    // 残留 type=agent 一律按 assistant 入库，避免 UNIQUE / 列表漏项
+    let type = data.type || 'prompt';
+    if (type === 'agent') type = 'assistant';
     const name = String(data.name || '').trim();
     if (!name) throw new Error('name 不能为空');
 
@@ -1455,8 +1610,8 @@ class ResourceManager {
   }
 
   /**
-   * prompt 投射目标 = 本机已安装的 Agent（与 Skill 一致）
-   * （投射驱动下发 tokenbank-prompts，不必先「安装到 Agent」，避免鸡生蛋）
+   * prompt 投射目标 = 本机已纳管的应用（与 Skill 一致）
+   * （投射驱动下发 tokenbank-prompts，不必先「投射到应用」，避免鸡生蛋）
    */
   listPromptAgentTargets() {
     const { CLIENT_TARGETS } = require('./mcp-agent-targets');
@@ -2151,7 +2306,8 @@ class ResourceManager {
   }
 
   /**
-   * 扫描闲置 Skill（默认 60 天无会话调用）
+   * 扫描闲置资源（默认 60 天无命中）：Skill + 智能体
+   * 智能体以 use_count/last_used_at 为准；Skill 仍走会话调用扫描
    * @param {{ days?: number }} options
    */
   listIdleSkills(options = {}) {
@@ -2164,8 +2320,48 @@ class ResourceManager {
       console.warn('[resource-manager] syncSkillUsage:', e.message);
     }
     const { listIdleSkills } = require('./resource-skill-cleanup');
+    const { classifyLifecycle, isLifecycleExempt } = require('./resource-hit-or-exit');
     const skills = this.listResources({ type: 'skill' });
-    return { success: true, ...listIdleSkills(skills, options) };
+    const result = listIdleSkills(skills, options);
+    const days = Math.max(1, Number(result.days) || 60);
+    const now = Number(result.scannedAt) || Date.now();
+    const MS_DAY = 24 * 60 * 60 * 1000;
+
+    // 智能体：启用后长期 0 命中也进清理候选（冷藏=撤投射，不删库）
+    // 内置智能体不参与评估
+    const assistants = this.listResources({ type: 'assistant' });
+    let assistantEvalCount = 0;
+    for (const a of assistants) {
+      if (isLifecycleExempt(a)) continue;
+      assistantEvalCount += 1;
+      const life = classifyLifecycle(a, now);
+      if (life.layer === 'exempt') continue;
+      if (life.useCount > 0) continue;
+      if (life.projectionCount === 0 && life.layer === 'shelf') {
+        // 从未启用：按纳管天数算闲置
+        const ageDays = Math.floor((now - (Number(a.created_at) || now)) / MS_DAY);
+        if (ageDays < days) continue;
+      } else if (life.ageMs < days * MS_DAY) {
+        continue;
+      }
+      result.items.push({
+        id: a.id,
+        name: a.name,
+        display_name: a.display_name || a.name,
+        description: a.description || '',
+        type: 'assistant',
+        authorityPath: null,
+        lastActivityAt: life.lastUsedAt || 0,
+        lastActivitySource: life.lastUsedAt ? 'hit' : 'never',
+        fileActivityAt: 0,
+        idleDays: Math.floor(life.ageMs / MS_DAY) || days,
+        projectionCount: life.projectionCount,
+        cleanupMode: 'unproject', // 智能体只撤投射，不删资源
+      });
+    }
+    result.items.sort((a, b) => a.lastActivityAt - b.lastActivityAt);
+    result.totalManaged = skills.length + assistantEvalCount;
+    return { success: true, ...result };
   }
 
   /**
@@ -2218,7 +2414,7 @@ class ResourceManager {
   }
 
   /**
-   * 一键清理闲置 Skill：先取消可移除投射，再删除权威目录并移出纳管
+   * 一键清理闲置项：Skill 撤投射并删权威目录；智能体仅撤全部投射（冷藏，保留库内）
    * @param {string[]} resourceIds
    */
   cleanupSkills(resourceIds = []) {
@@ -2233,8 +2429,35 @@ class ResourceManager {
           results.push({ id: resourceId, success: false, error: '资产不存在' });
           continue;
         }
+
+        // 智能体：只撤投射，不删库（冷藏 / Hit-or-Exit）
+        if (resource.type === 'assistant') {
+          let removed = 0;
+          for (const proj of resource.projections || []) {
+            try {
+              this.unproject({
+                resourceId,
+                agentId: proj.agentId,
+                projectionId: proj.id,
+              });
+              removed += 1;
+            } catch (e) {
+              console.warn('[resource-manager] cleanup assistant unproject:', e.message);
+            }
+          }
+          results.push({
+            id: resourceId,
+            name: resource.name,
+            type: 'assistant',
+            success: true,
+            mode: 'unproject',
+            removedProjections: removed,
+          });
+          continue;
+        }
+
         if (resource.type !== 'skill') {
-          results.push({ id: resourceId, success: false, error: '仅支持清理 Skill' });
+          results.push({ id: resourceId, success: false, error: '仅支持清理 Skill 或智能体' });
           continue;
         }
 
@@ -2257,6 +2480,7 @@ class ResourceManager {
         results.push({
           id: resourceId,
           name: resource.name,
+          type: 'skill',
           success: true,
           deletedFiles: del.deletedFiles || null,
         });

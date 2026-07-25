@@ -121,6 +121,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cleanupSkills: (params) => ipcRenderer.invoke('resource:cleanupSkills', params || {}),
     mineDemand: (options) => ipcRenderer.invoke('resource:mineDemand', options || {}),
     installSkillhub: (params) => ipcRenderer.invoke('resource:installSkillhub', params || {}),
+    // 点将/取用命中息票
+    onHit: (cb) => {
+      const h = (_e, data) => cb(data);
+      ipcRenderer.on('resource:hit', h);
+      return () => ipcRenderer.removeListener('resource:hit', h);
+    },
+    /** 轮询最近命中（IPC 丢事件时兜底） */
+    pollHit: () => ipcRenderer.invoke('resource:pollHit'),
   },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),

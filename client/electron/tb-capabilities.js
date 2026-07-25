@@ -8,8 +8,8 @@ const CAPABILITY_DOMAINS = [
     id: 'overview',
     mcp: 'tokenbank-resources',
     title: '能力总览与资源发现（含武将点将）',
-    tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_list_catalog', 'tb_list_gateway'],
-    when: '不确定能力时先 tb_capabilities；智能体=武将：tb_list_resources(type=assistant)→tb_get_resource 取正文后在当前会话执行；skill/prompt 为兵器；社区目录用 tb_list_catalog',
+    tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_get_prompt', 'tb_list_prompts', 'tb_list_catalog', 'tb_list_gateway'],
+    when: '不确定能力时先 tb_capabilities；智能体=武将：tb_list_resources(type=assistant)→tb_get_resource 取正文后在当前会话执行；提示词优先本 MCP 的 tb_get_prompt；skill 为兵器；社区目录用 tb_list_catalog',
   },
   {
     id: 'models',
@@ -21,9 +21,9 @@ const CAPABILITY_DOMAINS = [
   {
     id: 'prompts',
     mcp: 'tokenbank-prompts',
-    title: '提示词',
+    title: '提示词（专用 MCP，与 resources 同名工具等价）',
     tools: ['tb_list_prompts', 'tb_get_prompt'],
-    when: '用户提到「用某某提示词」时，先 list 再 get，禁止臆造正文',
+    when: '用户提到「用某某提示词」时 list/get；亦可在 tokenbank-resources 上调同名工具',
   },
   {
     id: 'dispatch',
@@ -73,8 +73,8 @@ function formatCapabilitiesOverview() {
   lines.push('## 推荐工作流');
   lines.push('1. tb_capabilities → 了解全貌');
   lines.push('2. 任务需模型 → tb_list_models / tb_resolve_model（勿假设 skill 里的模型名一定存在）');
-  lines.push('3. 点将（日常直连会话）→ tb_list_resources(type=assistant) → tb_get_resource(type=assistant) 取全文 → 当前会话按正文执行');
-  lines.push('4. 兵器：skill → tb_list_resources/tb_get_resource；提示词 → tb_list_prompts / tb_get_prompt');
+  lines.push('3. 点将（日常直连会话）→ tb_list_resources(type=agent) → tb_get_resource(type=agent) 取全文 → 当前会话按正文执行');
+  lines.push('4. 兵器：skill → tb_list_resources/tb_get_resource；提示词 → tb_get_prompt / tb_list_prompts（resources 或 prompts MCP 均可）');
   lines.push('5. 社区未安装项 → tb_list_catalog（安装/启用请用户在 Token Bank UI 操作）');
   lines.push('6. 仅编排/游乐场才派发 → tb_list_agents / tb_dispatch_agent');
   lines.push('7. 直连网关 API → tb_list_gateway 查路径，base = ' + base);
@@ -83,7 +83,7 @@ function formatCapabilitiesOverview() {
   lines.push('- 智能体是武将：点将=取正文同会话执行；武将不能自己冲锋');
   lines.push('- 只读发现优先；安装/投射/改配置留给 Token Bank 客户端 UI');
   lines.push('- skill 硬编码模型失败时，用 tb_resolve_model 切换到网关实际可用模型');
-  lines.push('- 禁止臆造 prompt/skill/assistant 正文；以 MCP 取回内容为准');
+  lines.push('- 禁止臆造 prompt/skill/agent 正文；以 MCP 取回内容为准');
   return lines.join('\n');
 }
 
@@ -91,7 +91,7 @@ function formatCapabilitiesOverview() {
 function formatOrchestratorCapabilityHint() {
   return [
     '- 不确定本软件能力时先 tb_capabilities；模型用 tb_list_models / tb_resolve_model；',
-    '  点将：tb_list_resources(type=assistant)→tb_get_resource；提示词用 tb_list_prompts / tb_get_prompt；',
+    '  点将：tb_list_resources(type=agent)→tb_get_resource；提示词用 tb_list_prompts / tb_get_prompt；',
     '  编排派发才用 tb_dispatch_agent。',
   ].join('\n');
 }

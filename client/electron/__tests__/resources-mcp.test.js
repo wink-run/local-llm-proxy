@@ -81,13 +81,15 @@ function mockRm() {
   };
 }
 
-test('TOOLS 含能力总览与资源/目录/网关', () => {
+test('TOOLS 含能力总览与资源/目录/网关/提示词别名', () => {
   const names = mcp.TOOLS.map(t => t.name).sort();
   assert.deepEqual(names, [
     'tb_capabilities',
+    'tb_get_prompt',
     'tb_get_resource',
     'tb_list_catalog',
     'tb_list_gateway',
+    'tb_list_prompts',
     'tb_list_resources',
   ]);
 });
@@ -207,6 +209,26 @@ test('tb_list_gateway 含图像与 TTS 端点', async () => {
   assert.ok(r.content[0].text.includes('/v1/images/generations'));
   assert.ok(r.content[0].text.includes('/v1/audio/speech'));
   assert.ok(r.content[0].text.includes('11430') || r.content[0].text.includes('http'));
+});
+
+test('tb_get_prompt 在 resources MCP 上可用（别名，避免 No such tool）', async () => {
+  const rm = require('../resource-manager');
+  const orig = rm.resolvePromptForClient;
+  rm.resolvePromptForClient = (ref, _args, cid) =>
+    ref === '小黑' && cid === 'cursor'
+      ? { found: true, id: 'p1', name: 'xiaohei', text: '黑猫正文' }
+      : { found: false };
+  const prev = process.env.TB_CLIENT_ID;
+  process.env.TB_CLIENT_ID = 'cursor';
+  try {
+    const r = await mcp.handleToolCall('tb_get_prompt', { name: '小黑' });
+    assert.equal(r.isError, false);
+    assert.equal(r.content[0].text, '黑猫正文');
+  } finally {
+    rm.resolvePromptForClient = orig;
+    if (prev == null) delete process.env.TB_CLIENT_ID;
+    else process.env.TB_CLIENT_ID = prev;
+  }
 });
 
 test('initialize 返回 tokenbank-resources', () => {

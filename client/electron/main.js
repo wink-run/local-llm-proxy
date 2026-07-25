@@ -344,23 +344,38 @@ let mainWindow = null;
 let tray = null;
 
 // ── 单实例锁 ──────────────────────────────────────────────────────────────────
-// 只允许一个桌面实例：第二个实例拿不到锁就直接退出（避免 11430/5173 端口冲突、
-// 重复托盘/网关/会话同步），并把已有实例的窗口拉到前台。必须在 app.whenReady/建窗/
-// 起网关之前完成——放在这里即先于文件底部的 whenReady 执行。
-// 注：仅约束 Electron 桌面 app；无头 CLI（cli/gateway.js）是另一入口，不受此锁影响。
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-  process.exit(0);
-}
-app.on('second-instance', () => {
-  try {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      if (!mainWindow.isVisible()) mainWindow.show();
-      mainWindow.focus();
+// 正式包：只允许一个桌面实例；第二个拿不到锁就退出，已有实例靠 second-instance 拉前台。
+// 开发态：不抢 SingletonLock，与正式包共用 …/Token Bank 配置目录，避免 npm electron
+// 占锁后点 Token Bank.app「闪退」，也避免为隔离目录导致配置像「丢失」。
+// 注：无头 CLI（cli/gateway.js）是另一入口，不受此锁影响。
+if (!isDev) {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    process.exit(0);
+  }
+  app.on('second-instance', () => {
+    try {
+      const focusWin = (win) => {
+        if (!win || win.isDestroyed()) return false;
+        if (win.isMinimized()) win.restore();
+        if (!win.isVisible()) win.show();
+        win.focus();
+        return true;
+      };
+      if (focusWin(mainWindow)) return;
+      if (typeof createWindow === 'function') {
+        createWindow();
+        focusWin(mainWindow);
+        return;
+      }
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (focusWin(w)) return;
+      }
+    } catch (e) {
+      console.warn('[main] second-instance:', e.message);
     }
-  } catch {}
-});
+  });
+}
 /** 菜单栏是否显示 ↑↓Token 两行文字（仅 macOS）。持久化在 localConfig.tray_show_tokens，默认开 */
 let showTrayTokens = true;
 /** macOS 点关闭仅隐藏窗口；托盘/Cmd+Q 退出时设为 true，避免 close 拦截 quit */
@@ -1298,7 +1313,7 @@ function createTray() {
     probeActiveModels: () => probeActiveAppModels(),
     refreshCirclePosts: () => refreshCirclePostsCache(),
     getCirclePosts: () => getCirclePostsSummary(),
-    // 托盘「队伍」：今日点将 + 快捷口令
+    // 托盘「资源」：今日取用 + 快捷口令
     getGeneralsSlice: () => {
       try {
         const resourceManager = require('./resource-manager');
@@ -2255,8 +2270,67 @@ function registerIPC() {
   try {
     const agentExecutor = require('./agent-executor');
     const resourceManager = require('./resource-manager');
-    const { startDispatchServer } = require('./agent-dispatch-server');
+    const { startDispatchServer, setResourceHitHandler } = require('./agent-dispatch-server');
     startDispatchServer(agentExecutor, resourceManager);
+    setResourceHitHandler((evt) => {
+      // React ResourceHitToast（徽记卡牌特效）：IPC + CustomEvent 双投；勿再 DOM 硬注卡片
+      const payload = evt && typeof evt === 'object' ? evt : {};
+      const deliverTo = (win) => {
+        if (!win || win.isDestroyed()) return;
+        try {
+          if (!win.isVisible()) win.show();
+          if (win.isMinimized()) win.restore();
+          try { win.focus(); } catch { /* ignore */ }
+          try { win.moveTop(); } catch { /* ignore */ }
+          // 短暂置顶，避免被 Cursor 挡住看不见卡牌
+          try {
+            win.setAlwaysOnTop(true, 'floating');
+            setTimeout(() => {
+              try { if (!win.isDestroyed()) win.setAlwaysOnTop(false); } catch { /* ignore */ }
+            }, 4500);
+          } catch { /* ignore */ }
+
+          win.webContents.send('resource:hit', payload);
+          // CustomEvent 不依赖 preload；清残留 DOM；一次性解除误点的「不再提示」
+          const js = `(() => {
+  try {
+    if (localStorage.getItem('tokenbank.resourceHitToast.fxReset') !== 'v2') {
+      localStorage.removeItem('tokenbank.resourceHitToast.dismissed');
+      localStorage.setItem('tokenbank.resourceHitToast.fxReset', 'v2');
+    }
+  } catch (e) {}
+  try {
+    var n = document.getElementById('tb-hit-force');
+    if (n) n.remove();
+  } catch (e) {}
+  try {
+    window.dispatchEvent(new CustomEvent('tb-resource-hit', { detail: ${JSON.stringify(payload)} }));
+  } catch (e) {}
+  return true;
+})();`;
+          win.webContents.executeJavaScript(js, true).catch(() => {});
+        } catch (e) {
+          console.warn('[resource-hit] deliver:', e && e.message);
+        }
+      };
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        deliverTo(mainWindow);
+      } else {
+        try {
+          const { BrowserWindow } = require('electron');
+          const win = BrowserWindow.getAllWindows().find((w) => {
+            try {
+              const u = w.webContents.getURL();
+              return u.startsWith('http://localhost:') || u.includes('index.html');
+            } catch { return false; }
+          });
+          if (win) deliverTo(win);
+        } catch (e) {
+          console.warn('[resource-hit] no window:', e.message);
+        }
+      }
+    });
   } catch (e) {
     console.warn('[dispatch-server] start skipped:', e.message);
   }

@@ -77,11 +77,12 @@ function serverToEntry(serverRow, clientId) {
   }
 
   // 内置资源发现 MCP：能力总览 + skill/assistant/社区目录
+  // 必须带 TB_CLIENT_ID，否则 listAssistantsForClient 空 client 会回退列出全部武将
   if (serverRow.id === BUILTIN_RESOURCES_ID || serverRow.name === BUILTIN_RESOURCES_ID) {
     const launcher = writeElectronAsNodeLauncher({
       name: `resources-${clientId || 'default'}`,
       scriptPath: RESOURCES_SCRIPT,
-      env: {},
+      env: { TB_CLIENT_ID: clientId || '' },
     });
     return {
       command: launcher,
@@ -355,7 +356,7 @@ function filterServersForClient(servers, clientId) {
     // 须在该 Agent 的同步分配列表中（取消勾选 = 不再下发）
     if (!getServerSyncClients(s).includes(clientId)) return false;
     if (s.id === BUILTIN_PROMPTS_ID) {
-      // 用户已在「安装到 Agent」里显式勾选 → 直接下发（否则无法先装 MCP 再投射）
+      // 用户已在「投射到应用」里显式勾选 → 直接下发（否则无法先投射 MCP 再投射资源）
       if (Array.isArray(s.metadata?.sync_clients)) return true;
       // 未显式配置时：懒下发，仅对已有 prompt 投射的 Agent 写入
       try { return require('./resource-manager').hasPromptProjections(clientId); }
@@ -402,7 +403,7 @@ function getSyncStatus() {
         scannedCount: scannedKeys.length,
         syncedCount,
         syncEnabled: t.sync !== false,
-        // 与 Skill/Prompt 一致：仅展示本机已安装的 Agent
+        // 与 Skill/Prompt 一致：仅展示本机已纳管的应用
         installed,
         bindings: state.clients[id]?.bindings || [],
         scannedKeys,

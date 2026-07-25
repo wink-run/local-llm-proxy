@@ -163,12 +163,18 @@ function writeCommunityCatalogCache(payload) {
   if (!payload || typeof payload !== 'object') return false;
   const hasContent = COMMUNITY_SECTIONS.some(k => Array.isArray(payload[k]) && payload[k].length);
   if (!hasContent) return false;
+  // 纠正误写的 type=agent，避免下次同步又污染本机库
+  const assistants = (Array.isArray(payload.assistants) ? payload.assistants : []).map((item) => {
+    if (!item || typeof item !== 'object') return item;
+    if (item.type !== 'agent') return item;
+    return { ...item, type: 'assistant' };
+  });
   const doc = {
     version: payload.version || 1,
     mcp: Array.isArray(payload.mcp) ? payload.mcp : [],
     prompts: Array.isArray(payload.prompts) ? payload.prompts : [],
     skills: Array.isArray(payload.skills) ? payload.skills : [],
-    assistants: Array.isArray(payload.assistants) ? payload.assistants : [],
+    assistants,
   };
   const dir = path.dirname(USER_COMMUNITY_CATALOG);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

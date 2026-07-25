@@ -544,9 +544,10 @@ function groupNestedSteps(steps = []) {
 
 /** 将轮次 steps 与 result 摘要合并为时间线条目 */
 function buildTurnTimeline(turn, delegations = {}, agentNames = {}, t) {
-  // 历史轮次若曾漏闭合工具，展示前补齐，避免满屏「未完成」且后半段像被截断
+  // 仅对已终态轮次补闭合；进行中的轮次保留 pending，避免把「等待结果」画成失败
   const rawSteps = Array.isArray(turn.steps) ? turn.steps : [];
-  const steps = hasOpenToolCalls(rawSteps)
+  const terminal = ['completed', 'failed', 'cancelled'].includes(turn.status);
+  const steps = terminal && hasOpenToolCalls(rawSteps)
     ? closePendingToolSteps(
       rawSteps,
       turn.status === 'cancelled'

@@ -31,7 +31,8 @@ const TOOLS = [
     name: 'tb_list_resources',
     description:
       '列出 Token Bank 已纳管的资源。assistant=可点武将（仅投射给当前 Agent 的可见）；'
-      + 'skill/prompt=兵器。点将前用 type=assistant 查将帅榜；prompt 完整正文优先 tb_get_prompt。',
+      + 'skill/prompt=兵器。点将前用 type=assistant 查将帅榜。'
+      + '取提示词正文请用本 MCP 的 tb_get_prompt（也可用 tokenbank-prompts），勿臆造工具名。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -52,7 +53,7 @@ const TOOLS = [
     description:
       '取回资源详情。type=assistant 时为点将：返回该智能体出战全文（soul+绑定兵器），'
       + '请在当前会话按正文执行；仅编排场景才用 tb_dispatch_agent。'
-      + 'skill 返回正文；prompt 元数据请改用 tb_get_prompt 取全文。',
+      + 'skill 返回正文；prompt 返回全文（投射门控，等同 tb_get_prompt）。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -73,6 +74,26 @@ const TOOLS = [
       },
       required: ['name'],
     },
+  },
+  {
+    // 与 tokenbank-prompts 同名别名：模型常误在本 MCP 上调 tb_get_prompt，直接可用可避免 No such tool
+    name: 'tb_get_prompt',
+    description:
+      '按名称或显示名取回已投射提示词正文（支持 $ARGUMENTS）。'
+      + '用户说「用某某提示词」时用本工具；也可用 tokenbank-prompts 同名工具。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '提示词 name / 显示名，或 #<id>' },
+        args: { type: 'string', description: '可选参数，填充模板里的 $ARGUMENTS' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'tb_list_prompts',
+    description: '列出当前 Agent 已投射的提示词（name/显示名/描述）。取正文前可先 list。',
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'tb_list_catalog',
@@ -142,17 +163,19 @@ function findManagedResource(rm, type, ref) {
     if (byId && (!type || byId.type === type)) return byId;
     return null;
   }
+  const matchName = (r) => r.name === raw || r.id === raw
+    || (r.display_name && r.display_name === raw);
   if (type) {
     const list = rm.listResources({ type });
-    const hit = list.find(r => r.name === raw || r.id === raw);
+    const hit = list.find(matchName);
     if (hit) return hit;
   }
-  // 未指定 type：按 id 再按各类型名尝试
+  // 未指定 type：按 id 再按各类型名/显示名尝试
   const byId = rm.getResource(raw);
   if (byId) return byId;
   for (const t of ['skill', 'assistant', 'prompt']) {
     const list = rm.listResources({ type: t });
-    const hit = list.find(r => r.name === raw);
+    const hit = list.find(matchName);
     if (hit) return hit;
   }
   return null;
@@ -196,14 +219,14 @@ function formatResourceDetail(r) {
       hint: '点将请用 mode=activate（默认）取全文并在当前会话执行；仅编排才 tb_dispatch_agent',
     }, null, 2);
   }
-  // prompt：只返回元数据，正文走 tb_get_prompt（支持投射门控与 $ARGUMENTS）
+  // prompt 元数据（全文由 handleToolCall 走 resolvePromptForClient）
   return JSON.stringify({
     type: 'prompt',
     id: r.id,
     name: r.name,
     display_name: r.display_name,
     description: r.description,
-    hint: '取正文请用 tb_get_prompt（tokenbank-prompts）',
+    hint: '取正文请用 tb_get_prompt，或 tb_get_resource(type=prompt)',
   }, null, 2);
 }
 
@@ -227,6 +250,12 @@ async function handleToolCall(name, args = {}) {
 
   const rm = getResourceManager();
   const cid = clientId();
+
+  // 提示词：与 tokenbank-prompts 同实现，避免模型误挂在本 MCP 上 No such tool
+  if (name === 'tb_get_prompt' || name === 'tb_list_prompts') {
+    const promptMcp = require('./prompt-mcp');
+    return promptMcp.handleToolCall(name, args);
+  }
 
   if (name === 'tb_list_resources') {
     try {
@@ -295,7 +324,7 @@ async function handleToolCall(name, args = {}) {
         if (mode === 'summary' && resolved.resource) {
           return textResult(formatResourceDetail(resolved.resource));
         }
-        try { rm.recordResourceHit?.(resolved.id); } catch { /* ignore */ }
+        try { rm.recordResourceHit?.(resolved.id, cid); } catch { /* ignore */ }
         const title = resolved.resource?.display_name || resolved.name;
         return textResult([
           `dispatch_id: assistant:${resolved.id}`,
@@ -304,6 +333,19 @@ async function handleToolCall(name, args = {}) {
           '',
           resolved.text || '(无出战正文)',
         ].join('\n'));
+      }
+
+      // 显式取提示词全文（name / 显示名均可）
+      if (type === 'prompt' && typeof rm.resolvePromptForClient === 'function') {
+        const resolved = rm.resolvePromptForClient(ref, '', cid);
+        if (!resolved.found) {
+          return textResult(
+            `未找到或未投射给当前 Agent 的提示词: ${ref}。可先 tb_list_prompts。`,
+            true,
+          );
+        }
+        try { rm.recordResourceHit?.(resolved.id, cid); } catch { /* ignore */ }
+        return textResult(resolved.text || '');
       }
 
       const r = findManagedResource(rm, type || null, ref);
@@ -322,7 +364,7 @@ async function handleToolCall(name, args = {}) {
           );
         }
         if (mode === 'summary') return textResult(formatResourceDetail(resolved.resource || r));
-        try { rm.recordResourceHit?.(resolved.id); } catch { /* ignore */ }
+        try { rm.recordResourceHit?.(resolved.id, cid); } catch { /* ignore */ }
         const title = resolved.resource?.display_name || resolved.name;
         return textResult([
           `dispatch_id: assistant:${resolved.id}`,
@@ -332,8 +374,21 @@ async function handleToolCall(name, args = {}) {
           resolved.text || '(无出战正文)',
         ].join('\n'));
       }
+      // prompt：直接返回全文（投射门控），与 tb_get_prompt 一致，减少二次误调
+      if (r.type === 'prompt' && typeof rm.resolvePromptForClient === 'function') {
+        const resolved = rm.resolvePromptForClient(r.name || ref, '', cid);
+        if (!resolved.found) {
+          return textResult(
+            `提示词未投射给当前 Agent: ${ref}。请先在 Token Bank 投射到本 Agent，或 tb_list_prompts。`,
+            true,
+          );
+        }
+        try { rm.recordResourceHit?.(resolved.id || r.id, cid); } catch { /* ignore */ }
+        if (mode === 'summary') return textResult(formatResourceDetail(r));
+        return textResult(resolved.text || '');
+      }
       if (r.type === 'skill' || r.type === 'prompt') {
-        try { rm.recordResourceHit?.(r.id); } catch { /* ignore */ }
+        try { rm.recordResourceHit?.(r.id, cid); } catch { /* ignore */ }
       }
       return textResult(formatResourceDetail(r));
     } catch (e) {
