@@ -243,6 +243,23 @@ class AgentExecutor extends EventEmitter {
     const raw = String(agentId || '').trim();
     if (!raw) throw new Error('缺少 agent_id');
 
+    const {
+      isCommunityAgentId,
+      getHired,
+      makeCommunityAgentId,
+      parseCommunityAgentId,
+    } = require('./hired-community-agents');
+
+    // 社区雇佣武将：community:<assistant_id>[@worker_id]
+    if (isCommunityAgentId(raw)) {
+      const hired = getHired(raw);
+      if (hired?.id) return hired.id;
+      const parsed = parseCommunityAgentId(raw);
+      if (parsed?.assistant_id) {
+        return makeCommunityAgentId(parsed.assistant_id, parsed.worker_id);
+      }
+    }
+
     const agents = await this.listAvailableAgents();
     const exact = agents.find(a => a.id === raw);
     if (exact) return exact.id;
@@ -256,6 +273,13 @@ class AgentExecutor extends EventEmitter {
       if (raw.startsWith(ASSISTANT_ID_PREFIX) && a.id.endsWith(raw.slice(ASSISTANT_ID_PREFIX.length))) {
         return a.id;
       }
+    }
+
+    // 按显示名匹配已雇佣社区武将
+    const community = agents.filter(a => a.type === 'community');
+    for (const a of community) {
+      if (a.name?.toLowerCase() === lower) return a.id;
+      if (a.assistantId === raw) return a.id;
     }
 
     const resourceManager = require('./resource-manager');
@@ -275,9 +299,12 @@ class AgentExecutor extends EventEmitter {
    */
   async listAvailableAgents(options = {}) {
     const now = Date.now();
+    const hiredEntries = () => require('./hired-community-agents').toAgentListEntries();
     if (!options.force && AGENT_LIST_CACHE.agents
       && (now - AGENT_LIST_CACHE.at) < AGENT_LIST_CACHE.ttlMs) {
-      return AGENT_LIST_CACHE.agents;
+      // 雇佣名单可能刚写入：缓存里刷新 community 段
+      const base = AGENT_LIST_CACHE.agents.filter((a) => a.type !== 'community');
+      return [...base, ...hiredEntries()];
     }
 
     // 并行探测各 CLI：先 resolve 可执行路径，避免慢速 npx 包下载探测
@@ -311,7 +338,12 @@ class AgentExecutor extends EventEmitter {
     )).filter(Boolean);
 
     const cliIds = new Set(cliAgents.map(a => a.id));
-    const agents = [...cliAgents, ...this._listCustomAssistants(cliIds)];
+    const agents = [
+      ...cliAgents,
+      ...this._listCustomAssistants(cliIds),
+      // 已雇佣的社区武将（远程执行，无正文）
+      ...require('./hired-community-agents').toAgentListEntries(),
+    ];
 
     AGENT_LIST_CACHE.at = now;
     AGENT_LIST_CACHE.agents = agents;
@@ -445,6 +477,29 @@ class AgentExecutor extends EventEmitter {
     const parentTaskId = options.parentTaskId;
     const canonicalId = await this.resolveAgentId(agentId);
 
+    // 社区雇佣武将：远程派发（对方本机执行，不下载正文）
+    const { isCommunityAgentId } = require('./hired-community-agents');
+    if (isCommunityAgentId(canonicalId)) {
+      return this._dispatchCommunityAndWait(canonicalId, prompt, options);
+    }
+
+    // 召唤专业智能体：记命中并弹息票（与 tb_get_resource 点将对齐）
+    if (isAssistantAgentId(canonicalId)) {
+      try {
+        const resourceManager = require('./resource-manager');
+        const rid = assistantResourceId(canonicalId);
+        const cid = String(
+          options.clientId
+          || process.env.TB_CLIENT_ID
+          || process.env.TB_MAIN_AGENT_ID
+          || '',
+        ).trim();
+        resourceManager.recordResourceHit?.(rid, cid);
+      } catch (e) {
+        console.warn('[agent-executor] recordResourceHit on dispatch:', e.message);
+      }
+    }
+
     // 派发子任务：归属父窗口 session，继承父会话实例 ID
     let sessionKey = options.sessionKey || canonicalId;
     let sessionInstanceId = options.sessionInstanceId || null;
@@ -537,6 +592,173 @@ class AgentExecutor extends EventEmitter {
   }
 
   /**
+   * 社区雇佣武将：经云端 /api/agent-tasks 在对方设备执行，只回结果
+   */
+  async _dispatchCommunityAndWait(canonicalId, prompt, options = {}) {
+    const { getHired, parseCommunityAgentId } = require('./hired-community-agents');
+    const { runCommunityAgentTask } = require('./community-agent-client');
+    const hired = getHired(canonicalId);
+    const parsed = parseCommunityAgentId(canonicalId) || {};
+    const assistantId = hired?.assistant_id || parsed.assistant_id;
+    const workerId = hired?.worker_id || parsed.worker_id || null;
+    if (!assistantId) throw new Error(`无效社区智能体 id: ${canonicalId}`);
+
+    const parentTaskId = options.parentTaskId;
+    const taskId = `community-${Date.now().toString(36)}`;
+    const sessionKey = options.sessionKey
+      || options.parentSessionKey
+      || canonicalId;
+
+    this.emit('task:dispatched', {
+      parentTaskId,
+      childTaskId: taskId,
+      agentId: canonicalId,
+      prompt,
+      parentSessionKey: sessionKey,
+      parentSessionInstanceId: options.parentSessionInstanceId || null,
+      timestamp: Date.now(),
+    });
+
+    if (parentTaskId) {
+      this.emit('task:step', {
+        taskId: parentTaskId,
+        stepType: 'delegation',
+        phase: 'start',
+        agentId: canonicalId,
+        childTaskId: taskId,
+        content: prompt,
+        timestamp: Date.now(),
+      });
+    }
+
+    try {
+      const result = await runCommunityAgentTask({
+        assistantId,
+        prompt,
+        workerId,
+        timeoutMs: options.timeoutMs,
+      });
+      const ok = !!result?.ok;
+      const status = {
+        status: ok ? 'completed' : (result?.status || 'failed'),
+        agent_id: canonicalId,
+        error: ok ? null : (result?.error || result?.status || 'failed'),
+        result: {
+          output: result?.output || '',
+          summary: result?.output || '',
+        },
+        usage: result?.usage || null,
+      };
+
+      if (parentTaskId) {
+        this.emit('task:step', {
+          taskId: parentTaskId,
+          stepType: 'delegation',
+          phase: 'complete',
+          agentId: canonicalId,
+          childTaskId: taskId,
+          content: status.result.summary || status.error || status.status,
+          status: status.status,
+          timestamp: Date.now(),
+        });
+      }
+      this.emit('task:completed', { taskId, ...status, timestamp: Date.now() });
+      return status;
+    } catch (err) {
+      if (parentTaskId) {
+        this.emit('task:step', {
+          taskId: parentTaskId,
+          stepType: 'delegation',
+          phase: 'complete',
+          agentId: canonicalId,
+          childTaskId: taskId,
+          content: err.message,
+          status: 'failed',
+          timestamp: Date.now(),
+        });
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * 游乐场 execute：社区雇佣智能体走云端派发（对方设备执行）
+   */
+  async _runCommunityTaskForExecute(taskId, agentId, prompt, options = {}) {
+    const db = this._getDb();
+    const { getHired, parseCommunityAgentId } = require('./hired-community-agents');
+    const { runCommunityAgentTask } = require('./community-agent-client');
+    const hired = getHired(agentId);
+    const parsed = parseCommunityAgentId(agentId) || {};
+    const assistantId = hired?.assistant_id || parsed.assistant_id;
+    const workerId = hired?.worker_id || parsed.worker_id || null;
+    if (!assistantId) throw new Error(`无效社区智能体 id: ${agentId}`);
+
+    this.emit('task:step', {
+      taskId,
+      stepType: 'community',
+      phase: 'start',
+      agentId,
+      content: `远程执行 · ${hired?.display_name || assistantId}`,
+      timestamp: Date.now(),
+    });
+
+    const result = await runCommunityAgentTask({
+      assistantId,
+      prompt,
+      workerId,
+      timeoutMs: options.timeoutMs,
+    });
+
+    if (this._isTaskCancelled(taskId)) {
+      this.taskMetaCache.delete(taskId);
+      return;
+    }
+
+    if (!result?.ok) {
+      throw new Error(result?.error || result?.status || 'community task failed');
+    }
+
+    const payload = {
+      success: true,
+      summary: result.output || '',
+      output: result.output || '',
+      stderr: '',
+      files: [],
+      stepCount: 0,
+      usage: result.usage || null,
+    };
+    try {
+      db.prepare(`
+        UPDATE agent_tasks
+        SET status = 'completed', result = ?, completed_at = ?
+        WHERE id = ?
+      `).run(JSON.stringify(payload), Date.now(), taskId);
+    } catch (e) {
+      console.warn('[AgentExecutor] community task complete persist failed:', e.message);
+      try {
+        db.prepare(`
+          UPDATE agent_tasks SET status = 'completed', completed_at = ? WHERE id = ?
+        `).run(Date.now(), taskId);
+      } catch { /* ignore */ }
+    }
+
+    this.emit('task:completed', {
+      taskId,
+      result: {
+        success: true,
+        summary: payload.summary,
+        stderr: '',
+        files: [],
+        stepCount: 0,
+      },
+      status: 'completed',
+      ...this._taskEventMeta(taskId),
+    });
+    this.taskMetaCache.delete(taskId);
+  }
+
+  /**
    * 异步执行任务
    */
   async _executeAsync(taskId, agentId, prompt, options) {
@@ -552,6 +774,13 @@ class AgentExecutor extends EventEmitter {
     let orchestratorCleanup = null;
 
     try {
+      // 已雇佣社区智能体：远程派发，勿走本地 CLI
+      const { isCommunityAgentId } = require('./hired-community-agents');
+      if (isCommunityAgentId(agentId)) {
+        await this._runCommunityTaskForExecute(taskId, agentId, prompt, options);
+        return;
+      }
+
       const { agentId: effectiveAgentId, assistant } = this._resolveAssistant(agentId);
       const { mode = 'direct', workingDir = process.cwd(), mcpProfile, continueSession, cliSessionId } = options;
 

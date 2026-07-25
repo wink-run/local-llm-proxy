@@ -9,7 +9,7 @@ const {
   pathFromEncodedSlug, nameFromGithubprojectsSlug, pickUsage,
   buildTraceStats, fileTimeSpan, stepTs,
 } = require('./shared');
-const { extractSkillsFromCursorTool } = require('../skill-signals');
+const { extractSkillsFromCursorTool, extractSkillsFromCursorRecord } = require('../skill-signals');
 
 const AGENT_ID = 'cursor';
 const PROFILE = 'cursor-transcript';
@@ -205,6 +205,15 @@ function trace(sessionId) {
           text: clipTraceText(userText),
           ...(usage || {}),
         });
+        // /slash 手动附加 Skill：正文内联，无 Read/Skill 工具，仍计入生态用量
+        const attached = extractSkillsFromCursorRecord(data);
+        for (const sk of attached) {
+          steps.push({
+            idx: steps.length, kind: 'tool',
+            label: `Skill · ${sk.raw}`, ts,
+            tool: 'attach_skill', skill: sk.raw, signal: sk.signal,
+          });
+        }
       } else if (role === 'assistant') {
         agentTurns++;
         const content = msg.content;

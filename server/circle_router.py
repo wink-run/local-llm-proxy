@@ -302,6 +302,7 @@ async def get_circle_detail(circle_id: int, uid: int = Depends(get_current_user_
     member_count = await db.circle_member_count(circle_id)
     posts = await db.list_circle_posts(circle_id, uid)
     models = _pool.models_for_circle(circle_id)
+    agents = _pool.agents_for_circle(circle_id)
     return {
         "circle": {
             "id": circle["id"],
@@ -315,6 +316,7 @@ async def get_circle_detail(circle_id: int, uid: int = Depends(get_current_user_
             "created_at": circle.get("created_at"),
         },
         "models": models,
+        "agents": agents,
         "posts": posts,
     }
 

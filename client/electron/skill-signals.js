@@ -7,6 +7,9 @@
 /** skills/<name>/SKILL.md 或 skills-cursor/<name>/SKILL.md */
 const SKILL_MD_BREADCRUMB_RE = /(?:^|[/\\])(?:skills-cursor|skills)[/\\]+([^/\\<>*]+)[/\\]+SKILL\.md/gi;
 
+/** Cursor 手动附加：`Skill Name: apple-design`（/slash 点选，正文内联，无工具调用） */
+const ATTACHED_SKILL_NAME_RE = /^\s*Skill Name:\s*(.+?)\s*$/gim;
+
 /** 读文件类工具：打开 SKILL.md 视为激活（不含 Shell，避免 ls 误报） */
 const READ_SKILL_TOOLS = new Set([
   'Read', 'read_file', 'readFile', 'read',
@@ -42,6 +45,43 @@ function extractSkillNamesFromPathText(text) {
     names.add(raw);
   }
   return [...names];
+}
+
+/**
+ * 从任意文本提取 Skill（路径面包屑 + Cursor 手动附加名）
+ * @returns {{ raw: string, key: string, signal: string }[]}
+ */
+function extractSkillsFromTextBlob(text, { signalPrefix = 'text' } = {}) {
+  if (!text || typeof text !== 'string') return [];
+  const out = [];
+  const seen = new Set();
+  const push = (raw, signal) => {
+    const s = String(raw || '').trim();
+    if (!s) return;
+    const key = normalizeSkillKey(s);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ raw: s, key, signal });
+  };
+
+  for (const raw of extractSkillNamesFromPathText(text)) {
+    push(raw, `${signalPrefix}-path`);
+  }
+
+  // 仅在「手动附加」块内采 Skill Name，避免正文误报
+  const attachIdx = text.indexOf('manually_attached_skills');
+  const attachBlock = attachIdx >= 0
+    ? text.slice(attachIdx, attachIdx + 8000)
+    : (/Skill Name:\s*.+\nPath:\s*.+SKILL\.md/i.test(text) ? text : '');
+  if (attachBlock) {
+    ATTACHED_SKILL_NAME_RE.lastIndex = 0;
+    let m;
+    while ((m = ATTACHED_SKILL_NAME_RE.exec(attachBlock)) !== null) {
+      push(m[1], `${signalPrefix}-attach`);
+    }
+  }
+
+  return out;
 }
 
 /**
@@ -96,9 +136,36 @@ function extractSkillsFromCursorTool(toolName, input) {
   return extractSkillsFromToolCall(toolName, input, { signalPrefix: 'cursor' });
 }
 
-/** Cursor agent-transcripts 单行 assistant 消息 */
+/**
+ * Cursor agent-transcripts 单行消息
+ * - assistant：tool_use Read/Skill 路径
+ * - user：/slash 手动附加（manually_attached_skills 内联，无工具调用）
+ */
 function extractSkillsFromCursorRecord(data) {
-  if (!data || data.role !== 'assistant') return [];
+  if (!data || typeof data !== 'object') return [];
+  const role = data.role;
+
+  if (role === 'user') {
+    const msg = data.message || {};
+    const content = msg.content;
+    const chunks = [];
+    if (typeof content === 'string') chunks.push(content);
+    else if (Array.isArray(content)) {
+      for (const item of content) {
+        if (!item) continue;
+        if (typeof item === 'string') chunks.push(item);
+        else if (typeof item.text === 'string') chunks.push(item.text);
+        else if (typeof item.content === 'string') chunks.push(item.content);
+      }
+    }
+    const blob = chunks.join('\n');
+    if (!blob) return [];
+    // 无附加标记且无 SKILL.md 路径时跳过，降低误报
+    if (!/manually_attached_skills|Skill Name:|SKILL\.md/i.test(blob)) return [];
+    return extractSkillsFromTextBlob(blob, { signalPrefix: 'cursor' });
+  }
+
+  if (role !== 'assistant') return [];
   const content = data.message?.content;
   if (!Array.isArray(content)) return [];
   const out = [];
@@ -136,9 +203,11 @@ function extractSkillsFromOpenAiToolCalls(toolCalls) {
 
 module.exports = {
   SKILL_MD_BREADCRUMB_RE,
+  ATTACHED_SKILL_NAME_RE,
   READ_SKILL_TOOLS,
   normalizeSkillKey,
   extractSkillNamesFromPathText,
+  extractSkillsFromTextBlob,
   extractSkillsFromToolCall,
   extractSkillsFromCursorTool,
   extractSkillsFromCursorRecord,

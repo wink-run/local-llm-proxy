@@ -166,7 +166,7 @@ function fallbackCatalog() {
       category: 'agent',
       categoryGroup: 'tokenbank',
       icon: '📚',
-      tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_list_catalog', 'tb_list_gateway'],
+      tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_get_prompt', 'tb_list_prompts', 'tb_list_catalog', 'tb_list_gateway'],
       tags: ['内置', '资源'],
     },
     configFields: [],

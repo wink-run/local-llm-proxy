@@ -95,10 +95,14 @@ export default function AgentSessionHistoryPanel({
       const res = await window.electronAPI.agent.getTaskStatus(item.taskId);
       if (!res.success || !res.status) return;
       const status = res.status;
-      const steps = closePendingToolSteps(
-        stepsFromTaskStatus(status),
-        status.status === 'cancelled' ? t('debug.agent.aborted') : t('debug.agent.noResult'),
-      );
+      // 任务仍在跑：保留未闭合工具为 pending，勿补「未收到结果」失败态
+      const stepsRaw = stepsFromTaskStatus(status);
+      const steps = ['running', 'pending'].includes(status.status)
+        ? stepsRaw
+        : closePendingToolSteps(
+          stepsRaw,
+          status.status === 'cancelled' ? t('debug.agent.aborted') : t('debug.agent.noResult'),
+        );
       onRestore?.({
         conversationTurns: [{
           user: status.prompt || item.title,

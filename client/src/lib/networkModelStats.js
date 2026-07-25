@@ -5,6 +5,8 @@ export function normalizeNetworkPayload(payload) {
     summary: payload.summary && typeof payload.summary === 'object' ? payload.summary : {},
     workers: Array.isArray(payload.workers) ? payload.workers : [],
     available_models: Array.isArray(payload.available_models) ? payload.available_models : [],
+    // 公开在线社区智能体名片（无正文）
+    available_agents: Array.isArray(payload.available_agents) ? payload.available_agents : [],
   };
 }
 

@@ -15,6 +15,7 @@ export default function Circles() {
   const navigate = useNavigate();
   const [owned, setOwned]           = useState([]);
   const [joined, setJoined]         = useState([]);
+  const [listLoading, setListLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName]             = useState('');
   const [desc, setDesc]             = useState('');
@@ -36,25 +37,33 @@ export default function Circles() {
   });
 
   async function load() {
-    const [o, j] = await Promise.all([listMyCircles(), listJoinedCircles()]);
-    const ownedList = o.data?.circles || [];
-    const ownedIds  = new Set(ownedList.map(c => c.id));
-    const joinedList = (j.data?.circles || []).filter(c => !ownedIds.has(c.id));
-    const allCircles = [...ownedList, ...joinedList];
+    setListLoading(true);
+    try {
+      const [o, j] = await Promise.all([listMyCircles(), listJoinedCircles()]);
+      const ownedList = o.data?.circles || [];
+      const ownedIds  = new Set(ownedList.map(c => c.id));
+      const joinedList = (j.data?.circles || []).filter(c => !ownedIds.has(c.id));
+      const allCircles = [...ownedList, ...joinedList];
 
-    // Fetch members for all circles in parallel
-    const memberMap = {};
-    await Promise.all(allCircles.map(async c => {
-      try {
-        const r = await listCircleMembers(c.id);
-        memberMap[c.id] = r.data?.members || [];
-      } catch (_) {
-        memberMap[c.id] = [];
-      }
-    }));
+      // Fetch members for all circles in parallel
+      const memberMap = {};
+      await Promise.all(allCircles.map(async c => {
+        try {
+          const r = await listCircleMembers(c.id);
+          memberMap[c.id] = r.data?.members || [];
+        } catch (_) {
+          memberMap[c.id] = [];
+        }
+      }));
 
-    setOwned(ownedList.map(c => ({ ...c, members: memberMap[c.id] || [] })));
-    setJoined(joinedList.map(c => ({ ...c, members: memberMap[c.id] || [] })));
+      setOwned(ownedList.map(c => ({ ...c, members: memberMap[c.id] || [] })));
+      setJoined(joinedList.map(c => ({ ...c, members: memberMap[c.id] || [] })));
+    } catch (_) {
+      setOwned([]);
+      setJoined([]);
+    } finally {
+      setListLoading(false);
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -219,7 +228,13 @@ export default function Circles() {
             {t('circles.createBtn')}
           </button>
         </div>
-        {owned.length === 0
+        {listLoading
+          ? (
+            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
+              <p className="text-sm text-gray-400 dark:text-gray-500">{t('common.loading')}</p>
+            </div>
+          )
+          : owned.length === 0
           ? (
             <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
               <p className="text-sm text-gray-400 dark:text-gray-500">{t('circles.noOwned')}</p>
@@ -256,7 +271,13 @@ export default function Circles() {
         </div>
         {joinError && <p className="text-red-500 text-xs">{joinError}</p>}
 
-        {joined.length === 0
+        {listLoading
+          ? (
+            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
+              <p className="text-sm text-gray-400 dark:text-gray-500">{t('common.loading')}</p>
+            </div>
+          )
+          : joined.length === 0
           ? (
             <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center space-y-2">
               <p className="text-sm text-gray-400 dark:text-gray-500">{t('circles.noJoined')}</p>

@@ -9,6 +9,7 @@ import ResourceAssetCard, {
 } from './ResourceAssetCard';
 import PortraitShareModal, { PortraitVisualBoard } from './PortraitShareCard';
 import { tagToPurpose } from '../lib/resource-purpose';
+import { completeEnablePackage, copyText } from '../lib/resource-enable';
 
 const FINDER_NAME = 'resource-finder';
 const MAX_RECS = 30;
@@ -1071,7 +1072,7 @@ export default function PersonalizedRecommend({
     const key = recKey(rec);
     setErr(''); setMsg(''); setInstalling((s) => ({ ...s, [key]: 'busy' }));
     /** 纳管成功:本地标记已纳管,并用落库资源对齐名称/说明/正文 */
-    const markDone = (okMsg, resource) => {
+    const markDone = async (okMsg, resource) => {
       setInstalling((s) => ({ ...s, [key]: 'done' }));
       setItems((prev) => {
         const next = (prev || []).map((r) => {
@@ -1092,7 +1093,21 @@ export default function PersonalizedRecommend({
         saveLast(typeFilter, next);
         return next;
       });
-      if (okMsg) setMsg(okMsg);
+      // 启用包：默认投射到主公 + 复制点将口令
+      let finalMsg = okMsg || '';
+      if (resource?.id) {
+        try {
+          const lang = (typeof navigator !== 'undefined' && String(navigator.language || '').startsWith('zh'))
+            ? 'zh' : 'en';
+          const pack = await completeEnablePackage(resource, { lang });
+          if (pack.invokeText) await copyText(pack.invokeText);
+          const name = resource.display_name || resource.name || key;
+          finalMsg = pack.projected
+            ? t('resources.enabledWithInvoke', { name, invoke: pack.invokeText })
+            : t('resources.enabledNeedProject', { name, invoke: pack.invokeText });
+        } catch { /* 保留 okMsg */ }
+      }
+      if (finalMsg) setMsg(finalMsg);
     };
     /** 写入本机列表并复核;失败则不算安装成功 */
     const commitAdopted = async (resource, meta = {}) => {
@@ -1120,7 +1135,7 @@ export default function PersonalizedRecommend({
         });
         if (!res || !res.success) throw new Error((res && res.error) || 'install skill failed');
         await commitAdopted(res.resource, { slug });
-        markDone(t('resources.reco.installedOk', { name: slug }), res.resource);
+        await markDone(t('resources.reco.installedOk', { name: slug }), res.resource);
       } else if (rtype === 'assistant') {
         // 目录项优先;否则按自建 soul + 真实技能纳管
         let catalogId = rec.catalogId;
@@ -1138,7 +1153,7 @@ export default function PersonalizedRecommend({
             deps: res.installedDependencies || [],
           });
           const depN = (res.installedDependencies && res.installedDependencies.length) || 0;
-          markDone(depN
+          await markDone(depN
             ? t('resources.reco.installedWithSkills', { name: rec.name || key, n: depN })
             : t('resources.reco.installedOk', { name: rec.name || key }), res.resource);
         } else {
@@ -1186,7 +1201,7 @@ export default function PersonalizedRecommend({
           await commitAdopted(res.resource, { composed: true });
           const depN = ((res.installedDependencies && res.installedDependencies.length) || 0) + hubOk
             || skills.length;
-          markDone(t('resources.reco.installedWithSkills', { name: rec.name || key, n: depN }), res.resource);
+          await markDone(t('resources.reco.installedWithSkills', { name: rec.name || key, n: depN }), res.resource);
         }
       } else {
         // 提示词:saveResource 落库
@@ -1199,7 +1214,7 @@ export default function PersonalizedRecommend({
         });
         if (!res || !res.success) throw new Error((res && res.error) || 'save failed');
         await commitAdopted(res.resource, {});
-        markDone(t('resources.reco.installedOk', { name: rec.name || key }), res.resource);
+        await markDone(t('resources.reco.installedOk', { name: rec.name || key }), res.resource);
       }
     } catch (e) { setErr(e.message || String(e)); setInstalling((s) => ({ ...s, [key]: undefined })); }
   };

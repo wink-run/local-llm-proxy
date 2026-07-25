@@ -237,6 +237,334 @@
   }
 }
 
+/* 出战提示：居中弹入 */
+@keyframes tb-hit-pop {
+  0% { opacity: 0; transform: scale(0.72) translateY(28px); }
+  55% { opacity: 1; transform: scale(1.08) translateY(-6px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes tb-hit-out {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to { opacity: 0; transform: scale(0.88) translateY(16px); }
+}
+
+@keyframes tb-hit-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 整层自动淡入 / 淡出（含氛围与卡片） */
+@keyframes tb-hit-root-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes tb-hit-root-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.tb-hit-root-enter {
+  animation: tb-hit-root-in 0.48s ease-out both;
+}
+.tb-hit-root-leave {
+  animation: tb-hit-root-out 0.9s ease-in both;
+}
+
+.tb-hit-enter {
+  animation: tb-hit-pop 0.55s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.tb-hit-leave {
+  animation: tb-hit-out 0.36s var(--ease-in, cubic-bezier(0.4, 0, 1, 1)) both;
+}
+
+.tb-hit-scrim {
+  animation: tb-hit-scrim-in 0.28s ease-out both;
+}
+
+/* 类型色调氛围（挂在外层 wrapper） */
+.tb-hit-accent-assistant .tb-hit-scrim-tint {
+  background: radial-gradient(ellipse at center, rgba(217, 119, 6, 0.28), rgba(9, 9, 11, 0.45) 70%);
+}
+.tb-hit-accent-skill .tb-hit-scrim-tint {
+  background: radial-gradient(ellipse at center, rgba(2, 132, 199, 0.3), rgba(9, 9, 11, 0.45) 70%);
+}
+.tb-hit-accent-prompt .tb-hit-scrim-tint {
+  background: radial-gradient(ellipse at center, rgba(225, 29, 72, 0.28), rgba(9, 9, 11, 0.45) 70%);
+}
+.dark .tb-hit-accent-assistant .tb-hit-scrim-tint {
+  background: radial-gradient(ellipse at center, rgba(245, 158, 11, 0.35), rgba(0, 0, 0, 0.55) 72%);
+}
+.dark .tb-hit-accent-skill .tb-hit-scrim-tint {
+  background: radial-gradient(ellipse at center, rgba(56, 189, 248, 0.32), rgba(0, 0, 0, 0.55) 72%);
+}
+.dark .tb-hit-accent-prompt .tb-hit-scrim-tint {
+  background: radial-gradient(ellipse at center, rgba(251, 113, 133, 0.32), rgba(0, 0, 0, 0.55) 72%);
+}
+
+.tb-hit-toast {
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.22),
+    0 1px 0 rgba(255, 255, 255, 0.5) inset;
+}
+
+.tb-hit-accent-assistant .tb-hit-toast {
+  box-shadow:
+    0 0 0 2px rgba(217, 119, 6, 0.55),
+    0 22px 64px rgba(217, 119, 6, 0.28),
+    0 1px 0 rgba(255, 255, 255, 0.45) inset;
+}
+.tb-hit-accent-skill .tb-hit-toast {
+  box-shadow:
+    0 0 0 2px rgba(2, 132, 199, 0.55),
+    0 22px 64px rgba(2, 132, 199, 0.28),
+    0 1px 0 rgba(255, 255, 255, 0.45) inset;
+}
+.tb-hit-accent-prompt .tb-hit-toast {
+  box-shadow:
+    0 0 0 2px rgba(225, 29, 72, 0.55),
+    0 22px 64px rgba(225, 29, 72, 0.28),
+    0 1px 0 rgba(255, 255, 255, 0.45) inset;
+}
+
+/* —— 按类型入场（大幅） —— */
+@keyframes tb-hit-stamp {
+  0% { opacity: 0; transform: scale(1.55) rotate(-14deg) translateY(-40px); }
+  35% { opacity: 1; transform: scale(0.88) rotate(4deg) translateY(6px); }
+  55% { transform: scale(1.1) rotate(-2deg) translateY(-2px); }
+  75% { transform: scale(0.97) rotate(1deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0) translateY(0); }
+}
+.tb-hit-enter-stamp {
+  animation: tb-hit-stamp 0.72s cubic-bezier(0.2, 1.35, 0.32, 1) both;
+}
+
+@keyframes tb-hit-slash {
+  0% { opacity: 0; transform: translateX(-72px) skewX(-12deg) scale(0.9) rotate(-3deg); }
+  45% { opacity: 1; transform: translateX(14px) skewX(5deg) scale(1.06) rotate(1deg); }
+  70% { transform: translateX(-4px) skewX(-1deg) scale(0.99); }
+  100% { opacity: 1; transform: translateX(0) skewX(0) scale(1) rotate(0); }
+}
+.tb-hit-enter-slash {
+  animation: tb-hit-slash 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* prompt 入场：勿对 .tb-sheet 使用 filter/blur（与 backdrop-filter 冲突，Electron 下整卡消失） */
+@keyframes tb-hit-ink {
+  0% { opacity: 0; transform: scale(0.78) translateY(28px); }
+  45% { opacity: 1; transform: scale(1.08) translateY(-6px); }
+  70% { transform: scale(0.98) translateY(2px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.tb-hit-enter-ink {
+  animation: tb-hit-ink 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 徽记：类型专属大动作 */
+@keyframes tb-hit-emblem-stamp-kf {
+  0% { opacity: 0; transform: scale(2.2) rotate(-25deg); filter: brightness(1.4); }
+  40% { opacity: 1; transform: scale(0.82) rotate(8deg); }
+  65% { transform: scale(1.18) rotate(-3deg); filter: brightness(1.15); }
+  100% { opacity: 1; transform: scale(1) rotate(0); filter: none; }
+}
+.tb-hit-emblem-stamp {
+  animation: tb-hit-emblem-stamp-kf 0.75s 0.05s cubic-bezier(0.2, 1.4, 0.3, 1) both;
+}
+
+@keyframes tb-hit-emblem-slash-kf {
+  0% { opacity: 0; transform: translateX(-40px) rotate(-35deg) scale(0.7); }
+  50% { opacity: 1; transform: translateX(8px) rotate(12deg) scale(1.15); }
+  100% { opacity: 1; transform: translateX(0) rotate(0) scale(1); }
+}
+.tb-hit-emblem-slash {
+  animation: tb-hit-emblem-slash-kf 0.7s 0.04s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes tb-hit-emblem-ink-kf {
+  0% { opacity: 0; transform: scale(0.35) rotate(-8deg); }
+  45% { opacity: 1; transform: scale(1.28) rotate(4deg); }
+  70% { transform: scale(0.94) rotate(-1deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+.tb-hit-emblem-ink {
+  animation: tb-hit-emblem-ink-kf 0.8s 0.05s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.tb-hit-emblem {
+  transform-origin: center center;
+}
+
+/* 类型芯片着色 */
+.tb-hit-accent-assistant .tb-hit-type-chip { color: #b45309; }
+.tb-hit-accent-skill .tb-hit-type-chip { color: #0369a1; }
+.tb-hit-accent-prompt .tb-hit-type-chip { color: #be123c; }
+.dark .tb-hit-accent-assistant .tb-hit-type-chip { color: #fbbf24; }
+.dark .tb-hit-accent-skill .tb-hit-type-chip { color: #38bdf8; }
+.dark .tb-hit-accent-prompt .tb-hit-type-chip { color: #fb7185; }
+
+/* 全屏爆发：双环 + 闪光 + 射线 */
+.tb-hit-burst {
+  pointer-events: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  z-index: 0;
+}
+.tb-hit-burst-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 999px;
+  border-style: solid;
+  transform: translate(-50%, -50%);
+}
+.tb-hit-burst-ring-a {
+  width: 48px;
+  height: 48px;
+  border-width: 3px;
+  animation: tb-hit-ring-expand 0.9s cubic-bezier(0.1, 0.8, 0.2, 1) both;
+}
+.tb-hit-burst-ring-b {
+  width: 32px;
+  height: 32px;
+  border-width: 2px;
+  animation: tb-hit-ring-expand 1.05s 0.08s cubic-bezier(0.1, 0.8, 0.2, 1) both;
+}
+.tb-hit-accent-assistant .tb-hit-burst-ring { border-color: rgba(245, 158, 11, 0.85); }
+.tb-hit-accent-skill .tb-hit-burst-ring { border-color: rgba(56, 189, 248, 0.85); }
+.tb-hit-accent-prompt .tb-hit-burst-ring { border-color: rgba(251, 113, 133, 0.85); }
+
+@keyframes tb-hit-ring-expand {
+  0% { transform: translate(-50%, -50%) scale(0.3); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(14); opacity: 0; }
+}
+
+.tb-hit-burst-flash {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 120px;
+  height: 120px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  animation: tb-hit-flash 0.55s ease-out both;
+}
+.tb-hit-accent-assistant .tb-hit-burst-flash {
+  background: radial-gradient(circle, rgba(251, 191, 36, 0.75) 0%, transparent 70%);
+}
+.tb-hit-accent-skill .tb-hit-burst-flash {
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.75) 0%, transparent 70%);
+}
+.tb-hit-accent-prompt .tb-hit-burst-flash {
+  background: radial-gradient(circle, rgba(251, 113, 133, 0.75) 0%, transparent 70%);
+}
+@keyframes tb-hit-flash {
+  0% { transform: translate(-50%, -50%) scale(0.2); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(3.2); opacity: 0; }
+}
+
+.tb-hit-burst-ray {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 72px;
+  margin-left: -3px;
+  margin-top: -72px;
+  border-radius: 3px;
+  transform-origin: bottom center;
+  animation: tb-hit-ray 0.7s ease-out both;
+}
+.tb-hit-accent-assistant .tb-hit-burst-ray { background: linear-gradient(to top, rgba(245, 158, 11, 0.9), transparent); }
+.tb-hit-accent-skill .tb-hit-burst-ray { background: linear-gradient(to top, rgba(56, 189, 248, 0.9), transparent); }
+.tb-hit-accent-prompt .tb-hit-burst-ray { background: linear-gradient(to top, rgba(251, 113, 133, 0.9), transparent); }
+.tb-hit-burst-ray-1 { transform: translate(-50%, -50%) rotate(0deg); animation-delay: 0.02s; }
+.tb-hit-burst-ray-2 { transform: translate(-50%, -50%) rotate(120deg); animation-delay: 0.06s; }
+.tb-hit-burst-ray-3 { transform: translate(-50%, -50%) rotate(240deg); animation-delay: 0.1s; }
+@keyframes tb-hit-ray {
+  0% { opacity: 0; height: 16px; }
+  35% { opacity: 1; height: 96px; }
+  100% { opacity: 0; height: 140px; }
+}
+
+/* 卡片内特效层：斜光 / 墨晕（可溢出一点） */
+.tb-hit-fx-layer {
+  pointer-events: none;
+  position: absolute;
+  inset: -20%;
+  overflow: visible;
+  border-radius: inherit;
+  z-index: 0;
+}
+.tb-hit-accent-skill .tb-hit-fx-layer::after {
+  content: '';
+  position: absolute;
+  top: -30%;
+  left: -40%;
+  width: 45%;
+  height: 160%;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(56, 189, 248, 0.55) 42%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 62%
+  );
+  animation: tb-hit-beam 0.75s ease-out both;
+}
+@keyframes tb-hit-beam {
+  0% { transform: translateX(0) skewX(-8deg); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateX(380%); opacity: 0; }
+}
+
+.tb-hit-accent-prompt .tb-hit-fx-layer::before,
+.tb-hit-accent-prompt .tb-hit-fx-layer::after {
+  content: '';
+  position: absolute;
+  border-radius: 999px;
+  animation: tb-hit-blob 1s ease-out both;
+}
+.tb-hit-accent-prompt .tb-hit-fx-layer::before {
+  width: 110px;
+  height: 110px;
+  left: 8%;
+  top: 10%;
+  background: rgba(225, 29, 72, 0.55);
+  animation-delay: 0.04s;
+}
+.tb-hit-accent-prompt .tb-hit-fx-layer::after {
+  width: 72px;
+  height: 72px;
+  right: 6%;
+  bottom: 8%;
+  background: rgba(251, 113, 133, 0.6);
+  animation-delay: 0.14s;
+}
+@keyframes tb-hit-blob {
+  0% { transform: scale(0.15); opacity: 0.9; }
+  100% { transform: scale(3.2); opacity: 0; }
+}
+
+.tb-hit-accent-assistant .tb-hit-fx-layer::after {
+  content: '';
+  position: absolute;
+  left: 22%;
+  top: 40%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border-radius: 999px;
+  border: 3px solid rgba(245, 158, 11, 0.8);
+  animation: tb-hit-inner-ring 0.85s ease-out both;
+}
+@keyframes tb-hit-inner-ring {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(10); opacity: 0; }
+}
+
 /* Electron macOS hiddenInset：指定区域可拖动窗口 */
 .electron-drag {
   -webkit-app-region: drag;
@@ -254,6 +582,25 @@
   }
   .tb-enter {
     animation: tb-fade 0.2s ease both;
+  }
+  .tb-hit-enter,
+  .tb-hit-enter-stamp,
+  .tb-hit-enter-slash,
+  .tb-hit-enter-ink,
+  .tb-hit-leave,
+  .tb-hit-root-enter,
+  .tb-hit-root-leave,
+  .tb-hit-scrim,
+  .tb-hit-emblem,
+  .tb-hit-emblem-stamp,
+  .tb-hit-emblem-slash,
+  .tb-hit-emblem-ink,
+  .tb-hit-fx-layer::before,
+  .tb-hit-fx-layer::after,
+  .tb-hit-burst-ring,
+  .tb-hit-burst-flash,
+  .tb-hit-burst-ray {
+    animation: tb-fade 0.2s ease both !important;
   }
   body {
     transition: none;

@@ -199,7 +199,7 @@ const api = {
   },
 
   /**
-   * prompt 投射：与 Skill 一致，本机已安装的 Agent 均可（不看 resource_project / sync）
+   * prompt 投射：与 Skill 一致，本机已纳管的应用均可（不看 resource_project / sync）
    * 实际 MCP 写入仍由 mcp-client-sync 按目标格式处理
    */
   listPromptProjectableAgentIds() {

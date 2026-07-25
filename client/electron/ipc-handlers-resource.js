@@ -549,6 +549,16 @@ function registerResourceHandlers() {
       return { success: false, error: error.message };
     }
   });
+
+  // 息票兜底：读最近一次命中（MCP 写盘后渲染进程轮询）
+  ipcMain.handle('resource:pollHit', async () => {
+    try {
+      const { readLatestHit } = require('./resource-hit-or-exit');
+      return readLatestHit();
+    } catch {
+      return null;
+    }
+  });
 }
 
 module.exports = { registerResourceHandlers };

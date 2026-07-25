@@ -11,6 +11,46 @@ const {
 const { buildTraceStats } = require('../session-trace/shared');
 const { buildStepsFromSpans } = require('../session-trace/workbuddy-trace');
 
+test('Cursor 手动附加 Skill（user 消息）计入 Trace', () => {
+  const record = {
+    role: 'user',
+    message: {
+      content: [{
+        type: 'text',
+        text: [
+          '<manually_attached_skills>',
+          'Skill Name: apple-design',
+          'Path: /Users/ully/.claude/skills/apple-design/SKILL.md',
+          'SKILL.md content:',
+          '# Apple Design',
+          '</manually_attached_skills>',
+          '/apple-design当前的设计有何改进',
+        ].join('\n'),
+      }],
+    },
+  };
+  const hits = extractSkillsFromCursorRecord(record);
+  assert.ok(hits.some((h) => h.key === 'apple-design'), hits);
+  assert.ok(hits.some((h) => h.signal === 'cursor-attach' || h.signal === 'cursor-path'), hits);
+
+  const steps = hits.map((sk) => ({
+    kind: 'tool',
+    tool: 'attach_skill',
+    skill: sk.raw,
+    label: `Skill · ${sk.raw}`,
+  }));
+  const stats = buildTraceStats(steps, {});
+  assert.ok(stats.skills_used.some((s) => s.name === 'apple-design'));
+});
+
+test('普通 user 提示不含 Skill 时不误报', () => {
+  const hits = extractSkillsFromCursorRecord({
+    role: 'user',
+    message: { content: [{ type: 'text', text: '帮我改一下按钮样式' }] },
+  });
+  assert.equal(hits.length, 0);
+});
+
 test('Cursor Read skills-cursor/SKILL.md 解析为 Skill', () => {
   const hits = extractSkillsFromCursorTool('Read', {
     path: '/Users/ully/.cursor/skills-cursor/canvas/SKILL.md',

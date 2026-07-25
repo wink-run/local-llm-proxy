@@ -427,7 +427,7 @@ function expandEntity(compact) {
     session_import: sessionImport,
     session_trace: sessionTrace,
     session_usage_import: sessionUsageImport,
-    // 可作为「投射到 Agent」目标（不依赖 proxy/session 基础设施）
+    // 可作为「投射到应用」目标（不依赖 proxy/session 基础设施）
     resource_project: !!userCaps.resource_project,
     ops,
     integrations: { ...(ops.integrations || {}), ...(vars.integrations || {}) },

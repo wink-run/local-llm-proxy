@@ -243,9 +243,12 @@ function normalizeCacheItem(raw) {
   if (!raw || !(raw.catalog_id || raw.catalogId)) return null;
   if (!raw.name && !raw.catalog_id) return null;
   const name = raw.name || raw.catalog_id;
+  // 未完成的 assistant→agent 改名残留：统一回 assistant
+  let type = raw.type;
+  if (type === 'agent') type = 'assistant';
   return {
     catalogId: raw.catalog_id || raw.catalogId,
-    type: raw.type,
+    type,
     name,
     display_name: raw.display_name || raw.displayName || name,
     description: raw.description || '',

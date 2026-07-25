@@ -42,10 +42,16 @@ function labelsFor(lang) {
     active: '活跃',
     stopped: '已停',
     pillGw: '网关',
-    pillAgent: '贡献',
+    pillAgent: '出租算力',
     pillCircles: '圈子',
-    contributing: '贡献中',
-    notContributing: '未贡献',
+    contributing: '出租中',
+    notContributing: '未出租',
+    squadTitle: '资源',
+    squadTag: 'RESOURCES',
+    squadEmpty: '启用一个智能体到 Cursor / Claude',
+    squadToday: '今日取用 {n}',
+    squadCopy: '复制口令',
+    squadCopied: '已复制',
     postsUnit: '帖',
     circleLogin: '登录看帖',
     circleEmpty: '暂无新帖',
@@ -76,10 +82,16 @@ function labelsFor(lang) {
     active: 'Active',
     stopped: 'Off',
     pillGw: 'GW',
-    pillAgent: 'Share',
+    pillAgent: 'Rent GPU',
     pillCircles: 'Circles',
-    contributing: 'On',
-    notContributing: 'Off',
+    contributing: 'Renting',
+    notContributing: 'Idle',
+    squadTitle: 'Resources',
+    squadTag: 'RESOURCES',
+    squadEmpty: 'Enable an assistant to Cursor / Claude',
+    squadToday: 'Used today {n}',
+    squadCopy: 'Copy invoke',
+    squadCopied: 'Copied',
     postsUnit: 'posts',
     circleLogin: 'Sign in',
     circleEmpty: 'No posts',
@@ -168,6 +180,28 @@ function buildState() {
     else if (circleCount <= 0) circleLabel = L.circleEmpty;
     else circleLabel = `${circleCount}${L.postsUnit}`;
 
+    // 资源：今日取用 + 快捷口令
+    let generalsTodayCount = 0;
+    let quickInvokes = [];
+    try {
+      const slice = d.getGeneralsSlice?.() || {};
+      generalsTodayCount = Number(slice.todayCount) || 0;
+      quickInvokes = Array.isArray(slice.quickInvokes)
+        ? slice.quickInvokes.slice(0, 3).map((q) => ({
+          id: String(q.id || ''),
+          displayName: String(q.displayName || q.name || ''),
+          clientId: String(q.clientId || ''),
+          invokeText: String(q.invokeText || ''),
+          routeLabel: String(q.routeLabel || ''),
+        }))
+        : [];
+    } catch { /* ignore */ }
+
+    const squadBit = lang === 'en'
+      ? (generalsTodayCount > 0 ? ` · used ${generalsTodayCount}` : '')
+      : (generalsTodayCount > 0 ? ` · 取用 ${generalsTodayCount}` : '');
+    const subOut = String(subtitle || L.notRefreshed) + squadBit;
+
     return {
       lang,
       isMac: process.platform === 'darwin',
@@ -181,13 +215,15 @@ function buildState() {
       outFmt: String(outFmt ?? '0'),
       calls,
       callsLabel: `${calls}${L.callsUnit}`,
-      subtitle: String(subtitle || L.notRefreshed),
+      subtitle: subOut,
       lastRefreshAt: lastRefreshAt || 0,
       circlePostsCount: circleCount,
       circlePostsLabel: String(circleLabel),
       circlePostsOk: !!circlePosts.ok,
       circleLoggedIn: !!circlePosts.loggedIn,
       apps,
+      generalsTodayCount,
+      quickInvokes,
       labels: {
         ...L,
         gatewayRunningDetail: gwDetail,
@@ -444,6 +480,18 @@ function registerIpc() {
         d.setShowTokens(!d.getShowTokens());
         d.refreshTrayIcon?.();
         break;
+      case 'openSquad':
+        hide();
+        d.showMainWindow?.();
+        try { d.navigateResources?.(); } catch { /* ignore */ }
+        break;
+      case 'copyInvoke': {
+        const text = String(payload.text || '');
+        if (text && d.copyText) {
+          try { d.copyText(text); } catch { /* ignore */ }
+        }
+        break;
+      }
       default:
         break;
     }

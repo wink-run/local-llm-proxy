@@ -34,8 +34,8 @@ const BUILTIN_CLI_COMMANDS = new Set([
 // Codex：无结构化 Skill 事件，靠读 SKILL.md 路径面包屑
 const CODEX_SKILL_RE = /skills[/\\]+([\w.-]+)[/\\]+SKILL\.md/gi;
 
-// v2：同一次扫盘同时写入 skill_calls + tool_calls（换前缀以便已扫文件补录工具）
-const IMPORT_PREFIX = 'agent-usage::v2::';
+// v3：Cursor /slash 手动附加 Skill 计入 skill_calls（换前缀以便已扫文件补录）
+const IMPORT_PREFIX = 'agent-usage::v3::';
 
 /** 解析工具名 → key / kind / mcp_server */
 function classifyToolName(rawName) {
@@ -522,7 +522,19 @@ function syncSkillUsage(localStats) {
   }
 
   console.log('[skill-usage]', JSON.stringify({ scanned, skipped, recorded, toolsRecorded }));
-  return { ok: true, scanned, skipped, recorded, toolsRecorded };
+
+  // 会话命中回写资源表，供 Hit-or-Exit / 闲置评估
+  let resourcesUpdated = 0;
+  try {
+    const resourceManager = require('./resource-manager');
+    if (typeof resourceManager.applySessionSkillHits === 'function') {
+      resourcesUpdated = resourceManager.applySessionSkillHits().updated || 0;
+    }
+  } catch (e) {
+    console.warn('[skill-usage] applySessionSkillHits:', e.message);
+  }
+
+  return { ok: true, scanned, skipped, recorded, toolsRecorded, resourcesUpdated };
 }
 
 /** 供 Trace 统计：skills_used 形态 [{ name, count }] */

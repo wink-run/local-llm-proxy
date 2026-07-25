@@ -34,6 +34,21 @@ function PingDot({ color = 'green' }) {
   return <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />;
 }
 
+/**
+ * 展示用被雇人数 = 真实 hire_count + [10,50] 稳定偏移（同一智能体刷新不变）。
+ */
+function displayHiredCount(agent) {
+  const real = Math.max(0, Number(agent?.hire_count) || 0);
+  const seed = `${agent?.id || ''}@${agent?.worker_id || ''}`;
+  let h = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    h = ((h << 5) - h) + seed.charCodeAt(i);
+    h |= 0;
+  }
+  const boost = 10 + (Math.abs(h) % 41); // 10..50
+  return real + boost;
+}
+
 export default function Network() {
   const { t } = useLang();
   const navigate  = useNavigate();
@@ -87,6 +102,8 @@ export default function Network() {
 
   const totalNodes  = network?.summary?.online_workers ?? 0;
   const totalModels = modelStats.length;
+  const agentList   = Array.isArray(network?.available_agents) ? network.available_agents : [];
+  const totalAgents = agentList.length;
   const totalTokens = network?.summary?.contrib_tokens
     ?? network?.workers?.reduce((s, w) => s + (w.period_tokens || 0), 0)
     ?? 0;
@@ -120,7 +137,7 @@ export default function Network() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.globalNodes')}</div>
           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">{loading ? '—' : totalNodes}</div>
@@ -130,6 +147,11 @@ export default function Network() {
           <div className="text-xs text-zinc-400">{t('network.availableModels')}</div>
           <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{loading ? '—' : totalModels}</div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.dedupModels')}</div>
+        </div>
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div className="text-xs text-zinc-400">{t('network.availableAgents')}</div>
+          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{loading ? '—' : totalAgents}</div>
+          <div className="text-xs text-zinc-400 mt-0.5">{t('network.availableAgentsHint')}</div>
         </div>
         <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.contribTokens')}</div>
@@ -159,6 +181,7 @@ export default function Network() {
             labels={{
               idle: t('network.idle'),
               busy: t('network.busy'),
+              agent: t('network.mapAgent'),
               country: code => t('network.countryCode', { code }),
               mapped: ({ mapped, total }) => t('network.mapMapped', { mapped, total }),
               unmapped: n => t('network.mapUnmapped', { n }),
@@ -174,7 +197,8 @@ export default function Network() {
       ) : (
         <div className="grid grid-cols-2 gap-5">
 
-          {/* Left: Model list */}
+          {/* Left: Model list + Agents list */}
+          <div className="space-y-5">
           <div className="tb-table-shell rounded-2xl">
             <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.modelsTitle')}</h2>
@@ -233,6 +257,60 @@ export default function Network() {
                 );
               })}
             </div>
+          </div>
+
+          {/* 可用智能体：公开在线名片 */}
+          <div className="tb-table-shell rounded-2xl">
+            <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
+              <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.agentsTitle')}</h2>
+              <span className="tb-table-cell-meta">{t('network.agentsCount', { n: totalAgents })}</span>
+            </div>
+            <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50 max-h-80 overflow-y-auto">
+              {agentList.length === 0 ? (
+                <div className="px-5 py-6 text-xs text-zinc-400">{t('network.noOnlineAgents')}</div>
+              ) : agentList.map((a) => {
+                const title = a.display_name || a.name || a.id;
+                const blurb = String(a.description || '').trim();
+                const key = `${a.worker_id || ''}:${a.id}`;
+                return (
+                  <div key={key} className="flex items-start gap-3 px-5 py-3">
+                    <PingDot color="green" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                          {title}
+                        </span>
+                        {a.runtime && (
+                          <span className="text-[10px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded shrink-0">
+                            {a.runtime}
+                          </span>
+                        )}
+                      </div>
+                      {blurb ? (
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-2 leading-relaxed">
+                          {blurb}
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-zinc-400 mt-0.5 italic">{t('network.agentNoDesc')}</p>
+                      )}
+                    </div>
+                    <div className="shrink-0 flex flex-col items-end gap-1">
+                      <span className="text-[10px] text-zinc-400 tabular-nums">
+                        {t('network.hiredCount', { n: displayHiredCount(a) })}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/contribute')}
+                        className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        {t('network.hireOnContribute')}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
           </div>
 
           {/* Right column */}

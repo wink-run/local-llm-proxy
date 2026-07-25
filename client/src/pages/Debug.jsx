@@ -831,6 +831,8 @@ export default function Debug() {
       } catch { /* ignore */ }
 
       if (!sess.taskSteps?.some(s => s.content?.trim())) return;
+      // 仍有未闭合工具：只是在等结果，绝不可提前收尾成「未收到结果/失败」
+      if (hasOpenToolCalls(sess.taskSteps)) return;
       // 派发镜像：有步骤但 DB 未终态时，仍走委派收尾
       if (sess.currentTask?.parentTaskId) {
         finishDelegatedChildRef.current?.(
@@ -2512,18 +2514,15 @@ export default function Debug() {
 
       {/* ── Input bar（毛玻璃；顶缘可拖调高）── */}
       <div className={`${chromeBottom} px-4 py-3${composerResizing ? ' select-none' : ''}`}>
-        {/* 中间框线：向上拖增高输入区 */}
+        {/* 顶缘隐式拖拽热区：无蓝线/分割条，仅 cursor 提示可调高输入区 */}
         <div
           role="separator"
           aria-orientation="horizontal"
+          aria-label={t('debug.composerResize')}
           title={t('debug.composerResize')}
           onMouseDown={onComposerResizeStart}
-          className={`absolute left-0 right-0 top-0 h-1.5 -mt-0.5 z-50 cursor-row-resize group
-            ${composerResizing ? 'bg-blue-400/40' : 'hover:bg-blue-400/25'}`}
-        >
-          <span className={`absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 w-10 h-0.5 rounded-full transition-colors
-            ${composerResizing ? 'bg-blue-500' : 'bg-zinc-300 dark:bg-zinc-600 group-hover:bg-blue-400'}`} />
-        </div>
+          className="absolute left-0 right-0 top-0 h-2 -mt-1 z-50 cursor-row-resize bg-transparent"
+        />
         {mode === 'llm' ? (
           <div className="space-y-2">
             {/* 提示词模版 / 历史 */}

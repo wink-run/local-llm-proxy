@@ -12,6 +12,12 @@ const os = require('os');
 
 const CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
 const { normalizeAgentForwardCfg } = require('../shared/agent-forward-url');
+const {
+  normalizeContributeAssistants,
+  buildAgentCards,
+  assertAssistantContributed,
+  validateAssistantEligible,
+} = require('./contribute-assistants');
 
 // 贡献者 worker 回传上游错误时，把上游的限流/配额重置时刻从响应头(Retry-After / *-ratelimit-*-reset)
 // 解析出来、规范成 " (reset at <ISO+00:00>)" 追加到错误文本——这些头在 p2p 多跳中会丢，但错误文本
@@ -30,6 +36,8 @@ let ws = null;
 let running = false;
 let _onLog = null;
 let _onStatus = null;
+/** 主动重连时忽略 close 触发的自动重连，避免双连接 */
+let _skipAutoReconnect = false;
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 let activeRequests = 0;
@@ -544,26 +552,126 @@ function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
 
+/** 构建注册用武将名片（无正文）；runtime 不可用则不上报 */
+async function collectAgentCardsForRegister(cfg) {
+  const entries = normalizeContributeAssistants(cfg);
+  if (!entries.length) return [];
+  try {
+    const resourceManager = require('./resource-manager');
+    resourceManager.init();
+    const resources = resourceManager.listResources({ type: 'assistant' }) || [];
+    let availableIds = null; // null=探测失败，跳过 runtime 可用性硬过滤
+    try {
+      const executor = require('./agent-executor');
+      const agents = await executor.listAvailableAgents();
+      availableIds = new Set(
+        (agents || [])
+          .map((a) => a.id)
+          .filter((id) => id && !String(id).startsWith('assistant:')),
+      );
+    } catch { /* 探测失败时仍按投射资格上报，接单时再拒 */ }
+
+    // 空 Set 仍为 truthy，不能当成「探测失败」；无 CLI 时保留投射校验、放宽 runtime 探测
+    const runtimeCheck = (availableIds && availableIds.size > 0)
+      ? (id) => availableIds.has(id)
+      : undefined;
+
+    const cards = buildAgentCards(entries, resources, {
+      isRuntimeAvailable: runtimeCheck,
+    });
+    if (entries.length && !cards.length) {
+      const reasons = entries.map((e) => {
+        const r = resources.find((x) => x.id === e.id);
+        const v = r
+          ? validateAssistantEligible(r, { isRuntimeAvailable: runtimeCheck || (() => true) })
+          : { ok: false, reason: 'not_found' };
+        return `${e.id}:${v.reason || 'filtered'}`;
+      });
+      log(`[agent] contribute assistants filtered out: ${reasons.join(', ')}`);
+    }
+    return cards;
+  } catch (e) {
+    log(`[agent] agents card build failed: ${e.message}`);
+    return [];
+  }
+}
+
+/** 处理社区派发的武将任务 */
+async function handleAgentTask(msg, cfg) {
+  const taskId = String(msg.task_id || msg.req_id || '').trim();
+  const assistantId = String(msg.assistant_id || '').trim();
+  const prompt = String(msg.prompt || '').trim();
+  if (!taskId || !assistantId || !prompt) {
+    send({
+      type: 'agent_task_result',
+      task_id: taskId || null,
+      status: 'rejected',
+      error: 'missing task_id, assistant_id or prompt',
+    });
+    return;
+  }
+  const liveCfg = loadConfig() || cfg;
+  try {
+    assertAssistantContributed(liveCfg, assistantId);
+  } catch (e) {
+    send({ type: 'agent_task_result', task_id: taskId, status: 'rejected', error: e.message });
+    return;
+  }
+  const started = Date.now();
+  log(`[agent] agent_task → ${taskId} assistant=${assistantId}`);
+  try {
+    const executor = require('./agent-executor');
+    const status = await executor.dispatchAndWait(`assistant:${assistantId}`, prompt, {
+      mode: 'worker',
+      clientId: 'contribute',
+    });
+    const output = status?.result?.summary
+      || status?.result?.output
+      || '';
+    const ok = status?.status === 'completed';
+    send({
+      type: 'agent_task_result',
+      task_id: taskId,
+      status: ok ? 'completed' : (status?.status || 'failed'),
+      output: String(output || '').slice(0, 200_000),
+      error: ok ? null : (status?.error || status?.result?.output || 'failed'),
+      usage: { duration_ms: Date.now() - started },
+    });
+  } catch (e) {
+    send({
+      type: 'agent_task_result',
+      task_id: taskId,
+      status: 'failed',
+      error: e.message,
+      usage: { duration_ms: Date.now() - started },
+    });
+  }
+}
+
 // ── WebSocket session ─────────────────────────────────────────────────────────
 
 function connect(cfg) {
-  log(`[agent] connecting → ${cfg.server_url}`);
-  ws = new WebSocket(cfg.server_url, { handshakeTimeout: 10000 });
+  // 每次连接都读最新配置，避免「已在跑时改勾选武将」仍用旧 closure
+  const liveCfg = loadConfig() || cfg;
+  log(`[agent] connecting → ${liveCfg.server_url}`);
+  ws = new WebSocket(liveCfg.server_url, { handshakeTimeout: 10000 });
+  const thisSocket = ws;
 
   ws.on('open', () => {
-    const models = cfg.model_groups?.length
-      ? cfg.model_groups.flatMap(g => g.models || [])
-      : (cfg.models || []);
+    const models = liveCfg.model_groups?.length
+      ? liveCfg.model_groups.flatMap(g => g.models || [])
+      : (liveCfg.models || []);
     const regMsg = {
       type: 'register',
-      worker_key: cfg.worker_key,
+      worker_key: liveCfg.worker_key,
       models,
-      name: cfg.name || os.hostname(),
+      name: liveCfg.name || os.hostname(),
+      caps: ['agents'],
     };
-    if (cfg.contribute_circle_ids?.length) {
-      regMsg.circle_ids = cfg.contribute_circle_ids;
-    } else if (cfg.contribute_circle_id) {
-      regMsg.circle_ids = [cfg.contribute_circle_id];
+    if (liveCfg.contribute_circle_ids?.length) {
+      regMsg.circle_ids = liveCfg.contribute_circle_ids;
+    } else if (liveCfg.contribute_circle_id) {
+      regMsg.circle_ids = [liveCfg.contribute_circle_id];
     }
     // 先用缓存 IP 立即注册，不等待公网探测（最多 16s）阻塞连接
     const cachedIp = (_cachedPublicIp && Date.now() - _cachedPublicIpAt < PUBLIC_IP_TTL_MS)
@@ -572,9 +680,24 @@ function connect(cfg) {
       regMsg.public_ip = cachedIp;
       log(`[agent] public_ip=${cachedIp} (cached)`);
     }
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(regMsg));
-    }
+    // 智能体名片：始终带上 agents 字段（含空数组），停止贡献后才能清掉社区列表
+    collectAgentCardsForRegister(liveCfg).then((agents) => {
+      regMsg.agents = agents;
+      if (agents.length) {
+        log(`[agent] agents: ${agents.map((a) => a.display_name || a.name).join(', ')}`);
+      } else {
+        log('[agent] agents: (none — contribute list empty or filtered)');
+      }
+      if (thisSocket.readyState === WebSocket.OPEN) {
+        thisSocket.send(JSON.stringify(regMsg));
+      }
+    }).catch((e) => {
+      log(`[agent] agents card build failed: ${e.message}`);
+      regMsg.agents = [];
+      if (thisSocket.readyState === WebSocket.OPEN) {
+        thisSocket.send(JSON.stringify(regMsg));
+      }
+    });
     if (!cachedIp) {
       fetchPublicIp().then((ip) => {
         if (ip) log(`[agent] public_ip=${ip} (background, next reconnect)`);
@@ -589,9 +712,9 @@ function connect(cfg) {
 
     if (msg.type === 'registered') {
       log(`[agent] connected worker_id=${msg.worker_id}`);
-      const allModels = cfg.model_groups?.length
-        ? cfg.model_groups.flatMap(g => g.models || [])
-        : (cfg.models || []);
+      const allModels = liveCfg.model_groups?.length
+        ? liveCfg.model_groups.flatMap(g => g.models || [])
+        : (liveCfg.models || []);
       const modelsSummary = allModels
         .map(m => typeof m === 'string' ? m : `${m.name}(${m.type || 'chat'})`)
         .join(', ');
@@ -609,9 +732,9 @@ function connect(cfg) {
       log(`[agent] → req_id=${req_id} model=${payload.model} stream=${!!payload.stream}`);
       activeRequests++;
       try {
-        const liveCfg = loadConfig() || cfg;
-        assertModelContributed(liveCfg, payload.model);
-        await forwardRequest(req_id, payload, resolveModelCfg(liveCfg, payload.model));
+        const fresh = loadConfig() || liveCfg;
+        assertModelContributed(fresh, payload.model);
+        await forwardRequest(req_id, payload, resolveModelCfg(fresh, payload.model));
       } catch (e) {
         log(`[agent] error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
@@ -625,12 +748,21 @@ function connect(cfg) {
       log(`[agent] image → req_id=${req_id} model=${payload.model}`);
       activeRequests++;
       try {
-        const liveCfg = loadConfig() || cfg;
-        assertModelContributed(liveCfg, payload.model);
-        await forwardImageRequest(req_id, payload, resolveModelCfg(liveCfg, payload.model));
+        const fresh = loadConfig() || liveCfg;
+        assertModelContributed(fresh, payload.model);
+        await forwardImageRequest(req_id, payload, resolveModelCfg(fresh, payload.model));
       } catch (e) {
         log(`[agent] image error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
+      } finally {
+        activeRequests = Math.max(0, activeRequests - 1);
+      }
+    }
+
+    if (msg.type === 'agent_task') {
+      activeRequests++;
+      try {
+        await handleAgentTask(msg, liveCfg);
       } finally {
         activeRequests = Math.max(0, activeRequests - 1);
       }
@@ -641,23 +773,49 @@ function connect(cfg) {
 
   ws.on('close', (code) => {
     log(`[agent] disconnected code=${code}`);
-    ws = null;
+    // 仅清理当前这条连接，避免重连竞态把新 ws 引用置空
+    if (ws === thisSocket) ws = null;
+    if (_skipAutoReconnect) return;
     if (running) {
       log('[agent] reconnecting in 5s…');
-      setTimeout(() => { if (running) connect(cfg); }, 5000);
+      setTimeout(() => { if (running && !ws) connect(loadConfig() || liveCfg); }, 5000);
     } else {
       _onStatus?.({ running: false });
     }
   });
 }
 
+/** 已在运行时用最新配置重连（保存勾选武将后必须调用） */
+function reconnectWithLatestConfig() {
+  const cfg = loadConfig();
+  if (!cfg?.worker_key) {
+    log('[agent] reconnect skipped — config/worker_key missing');
+    return;
+  }
+  log('[agent] applying latest config (reconnect)');
+  _skipAutoReconnect = true;
+  if (ws) {
+    try { ws.close(); } catch { /* ignore */ }
+    ws = null;
+  }
+  _skipAutoReconnect = false;
+  running = true;
+  _onStatus?.({ running: true });
+  connect(cfg);
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 function start({ onLog, onStatus } = {}) {
   console.log('[agent-worker] start called, running=', running);
-  if (running) return;
-  _onLog = onLog;
-  _onStatus = onStatus;
+  if (onLog) _onLog = onLog;
+  if (onStatus) _onStatus = onStatus;
+
+  // 已在跑：热重载配置（否则新勾选的武将不会出现在社区列表）
+  if (running) {
+    reconnectWithLatestConfig();
+    return;
+  }
 
   const cfg = loadConfig();
   console.log('[agent-worker] config loaded:', cfg ? 'ok' : 'null');
@@ -672,7 +830,8 @@ function start({ onLog, onStatus } = {}) {
     return;
   }
   const hasGroups = cfg.model_groups?.length > 0 && cfg.model_groups.some(g => g.base_url);
-  if (!hasGroups && !cfg.llm_base_url) {
+  const hasAssistants = normalizeContributeAssistants(cfg).length > 0;
+  if (!hasGroups && !cfg.llm_base_url && !hasAssistants) {
     onLog?.('[agent] llm_base_url missing — set your local LLM address in Agent config');
     onStatus?.({ running: false, error: 'llm_base_url missing' });
     return;
@@ -696,4 +855,4 @@ function stop() {
 
 function isRunning() { return running; }
 
-module.exports = { start, stop, isRunning, getStats, resetSuffixFromHeaders };
+module.exports = { start, stop, isRunning, getStats, resetSuffixFromHeaders, reconnectWithLatestConfig };

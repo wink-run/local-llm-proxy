@@ -176,12 +176,14 @@ function listIdleSkills(resources, options = {}) {
       name: resource.name,
       display_name: resource.display_name || resource.name,
       description: resource.description || '',
+      type: 'skill',
       authorityPath: resolveAuthorityDir(resource) || null,
       lastActivityAt,
       lastActivitySource,
       fileActivityAt: fsMs || 0,
       idleDays,
       projectionCount: (resource.projections || []).length,
+      cleanupMode: 'delete',
     });
   }
 

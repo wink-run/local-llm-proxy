@@ -13,6 +13,24 @@ const INFO_PATH = path.join(TB_DIR, 'dispatch-server.json');
 
 let server = null;
 let endpoint = null;
+/** 主进程注册：MCP 命中后弹息票 */
+let onResourceHit = null;
+
+function setResourceHitHandler(fn) {
+  onResourceHit = typeof fn === 'function' ? fn : null;
+}
+
+/** 主进程内直达息票（避免 /dispatch 处理中再 HTTP 回环） */
+function deliverResourceHitLocal(evt) {
+  if (typeof onResourceHit !== 'function') return false;
+  try {
+    onResourceHit(evt || {});
+    return true;
+  } catch (e) {
+    console.warn('[dispatch-server] deliverResourceHitLocal:', e.message);
+    return false;
+  }
+}
 
 function generateToken() {
   return crypto.randomBytes(24).toString('hex');
@@ -97,6 +115,9 @@ function startDispatchServer(agentExecutor, resourceManager) {
         const args = url.searchParams.get('args') || '';
         const clientId = url.searchParams.get('clientId') || '';
         const result = resourceManager.resolvePromptForClient(name, args, clientId);
+        if (result?.found && result.id) {
+          try { resourceManager.recordResourceHit?.(result.id, clientId); } catch { /* ignore */ }
+        }
         sendJson(res, 200, result);
         return;
       }
@@ -115,9 +136,20 @@ function startDispatchServer(agentExecutor, resourceManager) {
           parentTaskId: body.parentTaskId || body.parent_task_id,
           parentSessionKey: body.parentSessionKey || body.parent_session_key,
           parentSessionInstanceId: body.parentSessionInstanceId || body.parent_session_instance_id,
+          clientId: body.clientId || body.client_id || process.env.TB_CLIENT_ID || '',
           mode: 'worker',
         });
         sendJson(res, 200, { status });
+        return;
+      }
+
+      // 点将/取用命中 → 主窗口息票（不挡 MCP）
+      if (req.method === 'POST' && url.pathname === '/resource-hit') {
+        const body = await readJsonBody(req);
+        try { onResourceHit?.(body || {}); } catch (e) {
+          console.warn('[dispatch-server] resource-hit handler:', e.message);
+        }
+        sendJson(res, 200, { ok: true });
         return;
       }
 
@@ -151,5 +183,7 @@ module.exports = {
   startDispatchServer,
   stopDispatchServer,
   getDispatchEndpoint,
+  setResourceHitHandler,
+  deliverResourceHitLocal,
   INFO_PATH,
 };

@@ -214,6 +214,9 @@ const MIGRATIONS = [
   'ALTER TABLE requests ADD COLUMN agent_id TEXT',
   'ALTER TABLE requests ADD COLUMN mcp_server_id TEXT',
   'ALTER TABLE requests ADD COLUMN mcp_capability TEXT',
+  // 武将/兵器点将命中记账
+  'ALTER TABLE resources ADD COLUMN use_count INTEGER DEFAULT 0',
+  'ALTER TABLE resources ADD COLUMN last_used_at INTEGER',
 ];
 
 /** agent_task_steps 列迁移：必须在 AGENT_SCHEMA 建表之后执行，否则新库会 no such table 拖垮 init */
@@ -662,6 +665,29 @@ function getSkillLastUsedMap(opts = {}) {
     }
   } catch (e) {
     console.error('[local-stats] getSkillLastUsedMap failed:', e.message);
+  }
+  return map;
+}
+
+/**
+ * skill_key → { count, lastTs }（Hit-or-Exit 回写资源命中）
+ */
+function getSkillCallStatsMap() {
+  const map = new Map();
+  if (!db) return map;
+  try {
+    const rows = db.prepare(
+      'SELECT skill_key, COUNT(*) AS n, MAX(ts) AS last_ts FROM skill_calls GROUP BY skill_key',
+    ).all();
+    for (const r of rows) {
+      if (!r.skill_key) continue;
+      map.set(String(r.skill_key).toLowerCase(), {
+        count: Number(r.n) || 0,
+        lastTs: Number(r.last_ts) || 0,
+      });
+    }
+  } catch (e) {
+    console.error('[local-stats] getSkillCallStatsMap failed:', e.message);
   }
   return map;
 }
@@ -1821,7 +1847,7 @@ module.exports = {
   queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
   getImportState, setImportState, resetSessionData, resetImportState, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
-  recordSkillCalls, deleteSkillCallsBySourcePath, getSkillLastUsedMap,
+  recordSkillCalls, deleteSkillCallsBySourcePath, getSkillLastUsedMap, getSkillCallStatsMap,
   recordToolCalls, deleteToolCallsBySourcePath,
   querySkillUsageStats, queryToolUsageStats, queryMcpUsageStats,
   todaySinceTs, sinceTsForDays, sinceMsForDays, queryGatewayInputCostRate, queryModelProviderLatency,

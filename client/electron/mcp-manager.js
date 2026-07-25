@@ -16,26 +16,25 @@ const { formatOrchestratorCapabilityHint } = require('./tb-capabilities');
 /** 编排层系统提示（Claude / Codex 共用） */
 const ORCHESTRATOR_SYSTEM = [
   '你是 Token Bank 聚合入口的主 Agent（编排层），不是默认执行者。',
-  '核心职责：分析任务 → 匹配并派发专业智能体 → 汇总交付。少废话、少空转、结果导向。',
+  '核心职责：分析任务 → 匹配并派发已雇佣社区智能体 → 汇总交付。少废话、少空转、结果导向。',
   '',
   '【标准流程 — 按序执行】',
   '1. 分析：用 1～3 句拆解目标、约束（路径/格式/语言）、成功标准；复杂任务拆成可独立派发的子步骤（依赖清晰：可并行则并行，有先后则串行）。',
-  '2. 发现：立刻 tb_list_agents（专业智能体 assistant:* 优先）；禁止先在 shell 里 which/npm/跑 codex|claude|gemini 等 CLI。',
-  '3. 匹配：按名称/能力/描述选最合适的 type=assistant；系统类（资产发现/安装等）仅任务明确相关时选用，不作通用干活助手。',
-  '4. 派发：有匹配必须 tb_dispatch_agent，禁止自己做本可派发的专业活。',
-  '   子任务 prompt 要自洽：目标 + 输入/上下文 + 约束 + 期望产出（路径/格式）；勿丢用户关键细节，勿让子 Agent 再猜编排意图。',
-  '5. 汇总：综合各子结果，用清晰结构回复用户（结论 → 关键产出/路径 → 未完成项）；去掉子 Agent 的过程噪音，不重复粘贴大段原始日志。',
+  '2. 发现：立刻 tb_list_agents（仅返回本机已雇佣的 community:*，列表刻意精简）；禁止先在 shell 里 which/npm/跑 CLI。',
+  '3. 匹配：按名称/能力/描述选最合适的已雇佣社区智能体。',
+  '4. 派发：有匹配必须 tb_dispatch_agent（对方设备执行）；禁止自己做本可派发的专业活。',
+  '   子任务 prompt 要自洽：目标 + 输入/上下文 + 约束 + 期望产出（路径/格式）；勿丢用户关键细节。',
+  '5. 汇总：综合各子结果，用清晰结构回复用户（结论 → 关键产出/路径 → 未完成项）；去掉过程噪音。',
   '',
   '【决策优先级】',
-  'A. 专业智能体（assistant:*）＞ B. 通用 CLI（claude-code / codex）＞ C. 自己动手。',
-  'B/C 仅当 list 后确认无匹配专业智能体；选用 C 时须在回复中简述「无人可派」原因。',
+  'A. 已雇佣社区智能体（community:*）＞ B. 自己动手。',
+  'B 仅当 list 为空或无匹配；须简述「无人可派」原因；新雇佣请用户到 Token Bank 贡献页操作。',
   '',
   '【异常兜底】',
-  '- list 失败/为空：重试一次 list；仍空则走 B 或 C，并告知用户暂无专业智能体。',
-  '- 派发失败/超时/子任务 error：换相近专业智能体重试一次；仍失败再降级 B→C；向用户说明失败点与已采取的兜底，勿静默吞掉。',
-  '- 子结果残缺/跑偏：可带更明确约束再派发一次纠偏；仍不行则自己补全缺口或明确列出缺口请用户补充。',
+  '- list 失败/为空：重试一次 list；仍空则自行完成，并告知用户暂无已雇佣智能体。',
+  '- 派发失败/超时/子任务 error：换相近已雇智能体重试一次；仍失败再自行补全，并向用户说明。',
+  '- 子结果残缺/跑偏：可带更明确约束再派发一次纠偏；仍不行则自己补全或请用户补充。',
   '- 多步中某步失败：保留已成功步骤产出，仅重试/降级失败步，最后汇总「已完成 / 失败 / 待办」。',
-  '- 匹配模糊（多个都像）：选描述更贴切的一个；仍犹豫则选能力面更窄的专项，避免滥用通用 CLI。',
   '- 工具/MCP 不可用：跳过该路径，改用可用工具或降级执行，并在汇总中注明限制。',
   '',
   '【效率与表达】',
@@ -328,8 +327,8 @@ class MCPManager {
     const db = this._getDb();
     const row = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_RESOURCES_ID);
     const meta = JSON.stringify({
-      description: '内置资源发现：tb_capabilities / tb_list_resources / tb_get_resource / tb_list_catalog / tb_list_gateway',
-      tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_list_catalog', 'tb_list_gateway'],
+      description: '内置资源发现：能力总览 / 资源 / tb_get_prompt / 目录 / 网关',
+      tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_get_prompt', 'tb_list_prompts', 'tb_list_catalog', 'tb_list_gateway'],
     });
     if (!row) {
       db.prepare(`
@@ -840,7 +839,7 @@ class MCPManager {
 
   /**
    * 将 Agent 上扫描到的 MCP 纳管进 Token Bank（不改动该 Agent 原配置、不自动同步到其他 Agent）
-   * 纳管后可在「已纳管」页选择安装到其他 Agent
+   * 纳管后可在「已纳管」页选择投射到其他应用
    */
   importFromAgent({ clientId, clientKey, originAgents }) {
     this.init();
@@ -1033,7 +1032,8 @@ class MCPManager {
       ctx.resourcesLauncher = writeElectronAsNodeLauncher({
         name: `resources-orch-${taskId}`,
         scriptPath: RESOURCES_SCRIPT,
-        env: {},
+        // 与 prompts 一致：按主 Agent 过滤可点武将
+        env: { TB_CLIENT_ID: mainAgentId || '' },
       });
       cleanupFns.push(() => { try { fs.unlinkSync(ctx.resourcesLauncher); } catch {} });
     }
@@ -1204,7 +1204,7 @@ class MCPManager {
         command: writeElectronAsNodeLauncher({
           name: `resources-${mainAgentId || 'default'}`,
           scriptPath: RESOURCES_SCRIPT,
-          env: {},
+          env: { TB_CLIENT_ID: mainAgentId || '' },
         }),
         args: [],
         env: {},

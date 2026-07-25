@@ -21,6 +21,7 @@ import Circles    from './pages/Circles';
 import CircleBrowse from './pages/CircleBrowse';
 import CircleDetail from './pages/CircleDetail';
 import UpdateNotification from './components/UpdateNotification';
+import ResourceHitToast from './components/ResourceHitToast';
 import { UpdaterProvider } from './store/updater';
 import { useDeviceReporter } from './hooks/useDeviceReporter';
 
@@ -125,6 +126,7 @@ function Layout() {
         )}
       </main>
       <UpdateNotification />
+      <ResourceHitToast />
     </div>
   );
 }

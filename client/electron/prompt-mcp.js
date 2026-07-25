@@ -48,6 +48,7 @@ async function handleToolCall(name, args = {}) {
     if (!ref) return textResult('缺少 name', true);
     const r = resourceManager.resolvePromptForClient(ref, argStr, clientId());
     if (!r.found) return textResult(`未找到提示词: ${ref}(仅投射给当前 Agent 的提示词可用,可先 tb_list_prompts)`, true);
+    try { resourceManager.recordResourceHit?.(r.id, clientId()); } catch { /* ignore */ }
     return textResult(r.text);
   }
 

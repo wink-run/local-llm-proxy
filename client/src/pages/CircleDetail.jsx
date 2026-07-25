@@ -33,6 +33,25 @@ function AuthorAvatar({ author }) {
   return <UserAvatar user={author} />;
 }
 
+/** 圈子共享智能体卡片图标：首字着色 + 右下角智能体符号 */
+function CircleAgentIcon({ name }) {
+  const label = String(name || '?').trim() || '?';
+  const initial = label[0].toUpperCase();
+  return (
+    <div
+      className={`relative w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-white font-semibold text-base shadow-sm ring-1 ring-black/5 dark:ring-white/10 ${avatarColor(label)}`}
+      aria-hidden
+    >
+      <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-md bg-white dark:bg-gray-900 flex items-center justify-center shadow-sm">
+        <svg viewBox="0 0 16 16" className="w-2.5 h-2.5 text-gray-600 dark:text-gray-300" fill="currentColor">
+          <path d="M8 1.5a1 1 0 0 1 1 1V4h1.5a2 2 0 0 1 2 2v1H14a1 1 0 1 1 0 2h-1.5v1a2 2 0 0 1-2 2H9v1.5a1 1 0 1 1-2 0V12H5.5a2 2 0 0 1-2-2v-1H2a1 1 0 1 1 0-2h1.5V6a2 2 0 0 1 2-2H7V2.5a1 1 0 0 1 1-1zM5.5 6v4h5V6h-5z" />
+        </svg>
+      </span>
+      {initial}
+    </div>
+  );
+}
+
 /** 操作按钮：回复 / 编辑 / 删除 */
 function ActionBar({ onReply, onEdit, onDelete, replyCount, showReply = true }) {
   const { t } = useLang();
@@ -103,11 +122,13 @@ function CircleMembers({ members, expanded, onToggle }) {
   );
 }
 
-export default function CircleDetail() {
-  const { circleId } = useParams();
+export default function CircleDetail({ routeParams }) {
+  const params = useParams();
   const navigate = useNavigate();
   const { t } = useLang();
   const { user } = useAuth();
+  // KeepAlive 下 useParams 会随当前 URL 漂移；优先用缓存 key 解析出的稳定 id
+  const circleId = routeParams?.circleId ?? params.circleId;
   const id = Number(circleId);
   const myId = user?.id;
 
@@ -115,6 +136,7 @@ export default function CircleDetail() {
   const [error, setError] = useState('');
   const [circle, setCircle] = useState(null);
   const [models, setModels] = useState([]);
+  const [agents, setAgents] = useState([]);
   const [posts, setPosts] = useState([]);
   const [members, setMembers] = useState([]);
   const [membersExpanded, setMembersExpanded] = useState(false);
@@ -133,7 +155,12 @@ export default function CircleDetail() {
   const isAuthor = (item) => myId != null && item?.author_id === myId;
 
   const load = useCallback(async () => {
-    if (!id) return;
+    // 无效 id：必须结束 loading，否则会永远停在「加载中…」
+    if (!Number.isFinite(id) || id <= 0) {
+      setLoading(false);
+      setError(t('circles.detail.loadFailed'));
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -143,6 +170,7 @@ export default function CircleDetail() {
       ]);
       setCircle(r.data?.circle || null);
       setModels(r.data?.models || []);
+      setAgents(r.data?.agents || []);
       setPosts(r.data?.posts || []);
       setMembers(memRes.data?.members || []);
       if (r.data?.circle?.is_owner) {
@@ -427,6 +455,47 @@ export default function CircleDetail() {
                   )}
                 </span>
               ))}
+            </div>
+          )}
+      </section>
+
+      {/* 共享智能体：与贡献页社区智能体同款卡片（图标 + 标题 + runtime + 简介） */}
+      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-2.5">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('circles.detail.agents')}</h2>
+        {agents.length === 0
+          ? <p className="text-xs text-gray-400">{t('circles.detail.noAgents')}</p>
+          : (
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {agents.map((a) => {
+                  const title = a.display_name || a.name || a.id;
+                  const blurb = String(a.description || '').trim();
+                  return (
+                    <div
+                      key={`${a.worker_id}:${a.id}`}
+                      className="flex gap-3 p-3 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 shadow-sm"
+                    >
+                      <CircleAgentIcon name={title} />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm font-semibold leading-snug text-gray-900 dark:text-gray-100 truncate block">
+                          {title}
+                        </span>
+                        {a.runtime && (
+                          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 truncate">
+                            {a.runtime}
+                          </p>
+                        )}
+                        <p className={`text-[11px] mt-1.5 line-clamp-2 leading-relaxed ${
+                          blurb ? 'text-gray-500 dark:text-gray-400' : 'text-gray-400 italic'
+                        }`}>
+                          {blurb || '—'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-gray-400">{t('circles.detail.agentsHint')}</p>
             </div>
           )}
       </section>

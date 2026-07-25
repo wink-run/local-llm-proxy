@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pickWorkingDir: (opts) => ipcRenderer.invoke('agent:pickWorkingDir', opts),
     // 兼容旧调用
     list: (opts) => ipcRenderer.invoke('agent:list', opts || {}),
+    // 社区武将雇佣
+    listHiredCommunity: () => ipcRenderer.invoke('community:listHired'),
+    hireCommunity: (card) => ipcRenderer.invoke('community:hire', card),
+    unhireCommunity: (id) => ipcRenderer.invoke('community:unhire', id),
     onStep: (cb) => {
       const handler = (_e, data) => cb(data);
       ipcRenderer.on('agent:task:step', handler);
@@ -121,6 +125,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cleanupSkills: (params) => ipcRenderer.invoke('resource:cleanupSkills', params || {}),
     mineDemand: (options) => ipcRenderer.invoke('resource:mineDemand', options || {}),
     installSkillhub: (params) => ipcRenderer.invoke('resource:installSkillhub', params || {}),
+    // 点将/取用命中息票
+    onHit: (cb) => {
+      const h = (_e, data) => cb(data);
+      ipcRenderer.on('resource:hit', h);
+      return () => ipcRenderer.removeListener('resource:hit', h);
+    },
+    /** 轮询最近命中（IPC 丢事件时兜底） */
+    pollHit: () => ipcRenderer.invoke('resource:pollHit'),
   },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),
