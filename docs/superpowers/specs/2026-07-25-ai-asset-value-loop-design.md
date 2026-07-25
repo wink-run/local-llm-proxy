@@ -2,6 +2,7 @@
 
 日期:2026-07-25
 状态:产品方案（指导后续实现优先级）
+创意脑暴:[多角度创意头脑风暴](./2026-07-25-ai-asset-creative-brainstorm.md) · 视觉示意 `vault-passbook.html`
 
 ## 背景与目标
 
