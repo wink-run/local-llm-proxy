@@ -16,7 +16,7 @@
 | 武将=assistant，兵器=Skill/Prompt | 半 | 数据三分型已有；UI/文案仍是「资产管理仓库」 |
 | 自用：投射后主公可用 | 半 | Prompt MCP / Skill 落盘 / Assistant 进派发列表均有；缺「启用包=投射+口令」 |
 | 出租：闲将/兵器换积分 | 错位 | 仅有**算力**社区分享结息；资源目录以下发为主，无用户上架出租 |
-| 点将 MCP 同会话披甲 | **错位** | **无** `tb_activate_general`；assistant 摘要还 hint 去 `tb_dispatch_agent`（偏拉子进程） |
+| 点将 MCP 同会话披甲 | **半→错位** | **已有** `tb_list_resources` / `tb_get_resource`；缺投射门控；get(assistant) 只给 preview 且 **hint 去 dispatch**（应改为全文出战） |
 | 编排派发 | 已齐 | `tb_dispatch_agent(assistant:*)` + agent-executor 拉 runtime |
 | Prompt 单件取用 | 已齐 | `tb_get_prompt` 同构样板，点将应对齐它 |
 | 反裸收藏 | 错位 | CTA「纳管/已纳管」；允许 0 投射终态 |
@@ -45,21 +45,20 @@
 
 ### P0 — 先让「自用」打得穿
 
-1. **落地点将工具**（`resources-mcp.js` + `resource-assistant.resolveAssistantContext`）  
-   - `tb_list_generals` / `tb_activate_general`  
-   - 按 `TB_CLIENT_ID` 投射过滤（对齐 prompt）  
-   - 返回完整出战文本；**去掉「默认去 dispatch」hint**
+1. **增强现有 resources MCP（不新建 list）**（`resources-mcp.js`）  
+   - `tb_list_resources`：assistant 按 `TB_CLIENT_ID` 投射过滤；文案标明武将  
+   - `tb_get_resource(assistant)`：返回 `resolveAssistantContext` **全文**；**去掉「默认去 dispatch」hint**  
 
 2. **能力叙事纠偏**（`tb-capabilities.js`、编排提示）  
-   - 直连：点将 = 同会话披甲  
+   - 直连：`list(type=assistant)` → `get` → 同会话披甲  
    - 派发 = 仅游乐场/编排  
 
 3. **纳管 → 启用包**（`Resources.jsx` / `PersonalizedRecommend.jsx` / 文案）  
    - CTA「启用到 {Cursor/Claude Code/…}」= 入库 ∧ 默认投射 ∧ 可复制口令  
    - 禁止 0 投射「已收藏」终态  
 
-4. **assistant 列表门控**  
-   - `listAssistantsForClient`，与 `listPromptsForClient` 同级，防未投射可见  
+4. **`listAssistantsForClient`**（`resource-manager.js`）  
+   - 与 `listPromptsForClient` 同级，供 list/get 门控  
 
 ### P1 — 流通与反囤积
 
@@ -92,7 +91,7 @@
 
 | # | 改哪里 | 做什么 |
 |---|---|---|
-| 1 | `client/electron/resources-mcp.js` | generals 工具 + activate 展开上下文 |
+| 1 | `client/electron/resources-mcp.js` | 复用 list；get(assistant) 展开全文 + 改 hint |
 | 2 | `client/electron/resource-assistant.js` / `resource-manager.js` | ForClient 列表/解析；复用 resolveAssistantContext |
 | 3 | `client/electron/tb-capabilities.js` | 点将优先于派发的工作流文案 |
 | 4 | `client/src/pages/Resources.jsx` + `locales/pages-zh.js` | 启用包 CTA、口令、去图书馆文案 |
@@ -115,4 +114,4 @@
 
 ## 6. 一句话改进纲领
 
-> **把「纳管进库」改成「启用出战」；把「派发子进程」降成编排专线；把「只出租算力」补成「闲将闲兵也能出租」——库是武将库与兵器库，价值在流通，不在库存。**
+> **点将不必新 MCP：把已有 `tb_list_resources` / `tb_get_resource` 做成将帅榜与出战全文；纳管改启用；派发降编排；出租补上武将/兵器——价值在流通，不在库存。**

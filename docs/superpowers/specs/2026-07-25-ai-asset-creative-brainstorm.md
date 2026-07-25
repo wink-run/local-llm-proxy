@@ -44,9 +44,8 @@
 出战 **≠** 网关注入，**≠** 模型场景路由（路由只管算力）。
 
 - 武将不能自己冲上去；**主公（Claude Code / Cursor）点将才出战**  
-- 钥匙 = MCP（`tb_list_generals` / `tb_suggest_general` / `tb_activate_general`）  
-- 激活返回智能体 soul + 绑定 prompt/skill 文本；不改 tool schema  
-- 早期主路径 = 用户喊智能体名显式点将；编排派发仍走 `tb_dispatch_agent`  
+- 钥匙 = **已有** `tokenbank-resources`：`tb_list_resources(type=assistant)` → `tb_get_resource`（增强为出战全文）  
+- 不另造 list；编排派发仍走 `tb_dispatch_agent`  
 
 详见 [武将库 MCP 点将设计](./2026-07-25-general-roster-mcp-design.md)。
 
