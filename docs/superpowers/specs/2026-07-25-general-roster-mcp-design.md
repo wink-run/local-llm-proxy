@@ -109,9 +109,34 @@
 |---|---|---|
 | 谁打仗 | **主公自己打**，读武将兵书 | **武将下场打**，主公等结果 |
 | 典型 | Cursor 会话里「按代码审查智能体那套来」 | 游乐场编排：主 Agent 把子任务交给 `assistant:…` |
-| 载荷 | 上下文文本 | 子 Agent 执行 |
+| 载荷 | 上下文文本 | 子 Agent 执行（TB `agent-executor` 拉起 runtime CLI） |
 
 两条都是「主公下令」，都不是网关塞将。P0 先打通**点将**（直连会话最高频）；派发已有 bridge，对齐文案与举荐即可。
+
+### 4.2.1 Cursor 点将：是不是「拿 soul 再开子智能体」？
+
+**不是 Token Bank 替 Cursor 再开一个子智能体。**
+
+Cursor 直连会话里的默认路径是 **披甲自己打**：
+
+```
+Cursor 当前 Agent（主公）
+  → MCP: tb_activate_general("某智能体")
+  → 拿到一段文本：soul + 绑定 prompt 正文 + skill 指引
+  → 仍在同一个 Cursor 会话里，按这段文本继续推理 / 改代码 / 调自己的工具
+```
+
+| 误解 | 实际 |
+|---|---|
+| TB 收到点将后 spawn 一个新 Cursor/Claude 进程 | ✗ 点将只 **返回文本**，不拉进程 |
+| Cursor 必须再「创建子 Agent」才能用武将 | ✗ **不必须**；当前对话里消化兵书即可 |
+| 武将 = 独立运行的子智能体实例 | ✗ 点将视角下武将 = **可加载的人设+兵书包** |
+
+补充：
+
+1. **Cursor 自己**若用 Composer/Task 再开子 Agent，那是 Cursor 产品行为，TB 不保证、不依赖。  
+2. **只有派发路径**才会由 TB 拉起 runtime（含 `cursor-agent` CLI），把 soul 做成 `promptPrefix` 交给新进程——那是游乐场编排，不是 IDE 里点将 MCP 的默认语义。  
+3. Skill 若已投射进 `~/.cursor/skills`，Cursor 可按自家 Skill 机制用；与 `tb_activate_general` 返回的 skill **指引文本**可并存，但点将不等于「再 fork 一个挂了该 skill 的子 Agent」。
 
 ### 4.3 与现有 MCP
 
