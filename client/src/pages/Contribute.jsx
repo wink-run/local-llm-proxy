@@ -135,11 +135,19 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
         setSelectedCircleIds(new Set(uniqueCircleIds([cfg.contribute_circle_id])));
       }
       const assistants = asstRes?.success ? (asstRes.resources || []) : (asstRes?.resources || []);
-      setAvailableAssistants(Array.isArray(assistants) ? assistants : []);
+      // 内置智能体不出现在贡献列表
+      const contributable = (Array.isArray(assistants) ? assistants : []).filter((a) => {
+        if (!a) return false;
+        if (a.source === 'builtin' || a.metadata?.builtin) return false;
+        if (String(a.source_url || '').startsWith('builtin:')) return false;
+        return true;
+      });
+      setAvailableAssistants(contributable);
+      const allowedIds = new Set(contributable.map((a) => a.id));
       const prevAsst = new Set(
         (cfg.contribute_assistants || [])
           .map((x) => (typeof x === 'string' ? x : x?.id))
-          .filter(Boolean),
+          .filter((id) => id && allowedIds.has(id)),
       );
       setSelectedAssistantIds(prevAsst);
     });
@@ -162,6 +170,11 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
   }
 
   function assistantDisabledReason(r) {
+    // 内置智能体不可贡献（列表侧已过滤；此处兜底）
+    if (r?.source === 'builtin' || r?.metadata?.builtin
+      || String(r?.source_url || '').startsWith('builtin:')) {
+      return t('contribute.assistantBuiltinBlocked');
+    }
     const ENABLE = new Set(['claude-code', 'codex', 'cursor', 'kimi-code', 'workbuddy']);
     const ok = (r.projections || []).some((p) => ENABLE.has(p.agentId || p.agent_id));
     if (!ok) return t('contribute.assistantNeedProject');

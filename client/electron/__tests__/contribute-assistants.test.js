@@ -45,6 +45,21 @@ test('validateAssistantEligible: 未投射 / runtime 不可用', () => {
   assert.equal(validateAssistantEligible(poem, { isRuntimeAvailable: () => true }).ok, true);
 });
 
+test('validateAssistantEligible: 内置智能体不可贡献', () => {
+  const builtin = {
+    ...poem,
+    projections: [{ agentId: 'codex', createdAt: 1 }],
+    source: 'builtin',
+    metadata: { builtin: true },
+  };
+  assert.equal(validateAssistantEligible(builtin).ok, false);
+  assert.equal(validateAssistantEligible(builtin).reason, 'builtin');
+  assert.equal(
+    validateAssistantEligible({ ...builtin, source: 'catalog', metadata: { builtin: true } }).reason,
+    'builtin',
+  );
+});
+
 test('buildAgentCards 不含 soul / prompts 正文', () => {
   const cards = buildAgentCards(
     [{ id: poem.id, visibility: 'public' }],

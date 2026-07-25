@@ -11,6 +11,16 @@ const {
 
 const VISIBILITIES = new Set(['public', 'circle']);
 
+/** Token Bank 内置智能体：不可对外贡献，也不应出现在贡献列表 */
+function isBuiltinAssistantResource(resource) {
+  if (!resource || resource.type !== 'assistant') return false;
+  if (resource.source === 'builtin') return true;
+  if (resource.metadata && resource.metadata.builtin) return true;
+  const url = String(resource.source_url || '');
+  if (url.startsWith('builtin:')) return true;
+  return false;
+}
+
 /**
  * @param {object} cfg agent config
  * @returns {{ id: string, visibility: 'public'|'circle' }[]}
@@ -44,6 +54,10 @@ function normalizeContributeAssistants(cfg = {}) {
 function validateAssistantEligible(resource, opts = {}) {
   if (!resource || resource.type !== 'assistant') {
     return { ok: false, reason: 'not_assistant' };
+  }
+  // 内置（资产发现/安装等）仅供本机，不参与社区贡献
+  if (isBuiltinAssistantResource(resource)) {
+    return { ok: false, reason: 'builtin' };
   }
   if (!hasAssistantEnableProjection(resource.projections || [])) {
     return { ok: false, reason: 'not_projected' };
@@ -126,6 +140,7 @@ function assertAssistantContributed(cfg, assistantId) {
 
 module.exports = {
   VISIBILITIES,
+  isBuiltinAssistantResource,
   normalizeContributeAssistants,
   validateAssistantEligible,
   buildAgentCardDescription,
