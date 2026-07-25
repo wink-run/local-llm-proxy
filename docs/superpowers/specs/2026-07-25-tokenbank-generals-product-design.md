@@ -2,7 +2,8 @@
 
 日期:2026-07-25  
 状态:**产品主叙事草案**（整合资产库 + 客户端点将 + 反囤积 + 自用/出租）  
-分册:[反笔记陷阱](./2026-07-25-anti-notes-trap-design.md) · [MCP 点将技术](./2026-07-25-general-roster-mcp-design.md) · [产品审查](./2026-07-25-product-audit-generals-logic.md) · [价值闭环](./2026-07-25-ai-asset-value-loop-design.md)
+分册:[反笔记陷阱](./2026-07-25-anti-notes-trap-design.md) · [MCP 点将技术](./2026-07-25-general-roster-mcp-design.md) · [产品审查](./2026-07-25-product-audit-generals-logic.md) · [价值闭环](./2026-07-25-ai-asset-value-loop-design.md)  
+**实现方案:** [plans/2026-07-25-generals-roster-implementation.md](../plans/2026-07-25-generals-roster-implementation.md)
 
 ---
 
