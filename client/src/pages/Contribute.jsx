@@ -269,9 +269,9 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
   }
 
   return (
-    <div className="tb-soft-card rounded-2xl p-5 space-y-4">
-      {/* 标题、运行状态、转发地址 — 单行 */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4 border-b border-white/40 dark:border-white/[0.06]">
+    <div className="tb-soft-card rounded-2xl p-5 space-y-3">
+      {/* 标题、运行状态、转发地址 — 单行；底部分隔收紧，避免上架模型上方空一大块 */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 border-b border-white/40 dark:border-white/[0.06]">
         <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 shrink-0">{t('contribute.configTitle')}</span>
         <div className="flex items-center gap-2 shrink-0">
           <span className="relative flex h-2.5 w-2.5" aria-hidden>
@@ -299,7 +299,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
       )}
 
       {/* 贡献模型：默认只展示已选；点 + 从候选里添加，避免占满整页 */}
-      <div className="space-y-2">
+      <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.models')}</span>
           {selectedNames.size > 0 && (
@@ -316,17 +316,15 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                 const m = availableModels.find((x) => x.name === name) || { name, type: 'chat' };
                 const isImage = m.type === 'image';
                 return (
-                  // 仅 × 可移除，避免点 chip 本体误删
+                  // 仅 × 可移除；类型用 title，避免「对话」角标抢视觉
                   <span
                     key={name}
-                    className={`tb-tag pl-2.5 pr-0.5 py-0.5 text-xs font-mono ${
+                    title={isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
+                    className={`tb-tag pl-2.5 pr-0.5 py-1 text-xs font-mono ${
                       isImage ? 'tb-tag-purple' : 'tb-tag-blue'
                     }`}
                   >
                     <TruncTip as="span" title={name} className="max-w-[14rem]">{name}</TruncTip>
-                    <span className="tb-tag-badge font-medium">
-                      {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
-                    </span>
                     <button
                       type="button"
                       title={t('contribute.removeModel')}
@@ -342,8 +340,8 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
               <button
                 type="button"
                 onClick={() => setShowModelPicker((v) => !v)}
-                className={`tb-tag tb-tag-muted justify-center min-w-[2rem] h-7 px-2 text-sm font-medium cursor-pointer ${
-                  showModelPicker ? '!border-solid !bg-zinc-200/70 dark:!bg-zinc-700/70 !text-zinc-800 dark:!text-zinc-100' : ''
+                className={`tb-tag tb-tag-muted border-dashed justify-center min-w-[2rem] h-7 px-2 text-sm font-medium cursor-pointer ${
+                  showModelPicker ? '!border-solid !bg-white/75 dark:!bg-zinc-700/80 !text-zinc-900 dark:!text-zinc-100' : ''
                 }`}
                 title={t('contribute.addModel')}
                 aria-label={t('contribute.addModel')}
@@ -376,13 +374,11 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                         <button
                           key={m.name}
                           type="button"
+                          title={isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
                           onClick={() => toggleModel(m.name)}
-                          className="tb-tag tb-tag-muted px-2.5 py-1 text-xs font-mono !border-solid hover:!border-blue-400/50 hover:!text-blue-600 dark:hover:!text-blue-300"
+                          className="tb-tag tb-tag-muted px-2.5 py-1 text-xs font-mono cursor-pointer"
                         >
                           {m.name}
-                          <span className="tb-tag-badge text-zinc-500 dark:text-zinc-400">
-                            {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
-                          </span>
                         </button>
                       );
                     })}
@@ -397,7 +393,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
       </div>
 
       {/* 贡献智能体：默认只展示已选；点 + 添加（须已投射） */}
-      <div className="space-y-2">
+      <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.assistants')}</span>
           {selectedAssistantIds.size > 0 && (
@@ -406,7 +402,6 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
             </span>
           )}
         </div>
-        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('contribute.assistantsHint')}</p>
         {availableAssistants.length === 0 ? (
           <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.noAssistantsHint')}</p>
         ) : (
@@ -440,8 +435,8 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
               <button
                 type="button"
                 onClick={() => setShowAssistantPicker((v) => !v)}
-                className={`tb-tag tb-tag-muted justify-center min-w-[2rem] h-7 px-2 text-sm font-medium cursor-pointer ${
-                  showAssistantPicker ? '!border-solid !bg-zinc-200/70 dark:!bg-zinc-700/70 !text-zinc-800 dark:!text-zinc-100' : ''
+                className={`tb-tag tb-tag-muted border-dashed justify-center min-w-[2rem] h-7 px-2 text-sm font-medium cursor-pointer ${
+                  showAssistantPicker ? '!border-solid !bg-white/75 dark:!bg-zinc-700/80 !text-zinc-900 dark:!text-zinc-100' : ''
                 }`}
                 title={t('contribute.addAssistant')}
                 aria-label={t('contribute.addAssistant')}
@@ -474,7 +469,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                         type="button"
                         title={a.description || a.name}
                         onClick={() => toggleAssistant(a.id)}
-                        className="tb-tag tb-tag-muted px-2.5 py-1 text-xs !border-solid hover:!border-amber-400/50 hover:!text-amber-700 dark:hover:!text-amber-300"
+                        className="tb-tag tb-tag-muted px-2.5 py-1 text-xs cursor-pointer"
                       >
                         {a.display_name || a.name}
                       </button>

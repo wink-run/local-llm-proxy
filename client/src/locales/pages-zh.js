@@ -1765,7 +1765,7 @@ export default {
   'resources.skillInstall.done': '安装任务已完成。',
   'resources.skillInstall.failed': '安装失败',
   'resources.skillInstall.scanHint': '已刷新本机技能扫描结果，可在列表中查看并纳管。',
-  'resources.import': '纳管文件',
+  'resources.import': '从文件导入',
   'resources.importOk': '已纳管到 Token Bank',
   'resources.importFailed': '纳管失败',
   'resources.importPickTitle': '选择 Skill 目录或 Markdown 文件以纳管',

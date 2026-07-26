@@ -1793,9 +1793,9 @@ export default function Resources() {
                 key={opt.id || 'all'}
                 type="button"
                 onClick={() => changeAppFilter(opt.id)}
-                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full transition-colors ${
                   active
-                    ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/30 shadow-sm'
+                    ? 'tb-soft-bubble !rounded-full text-zinc-900 dark:text-zinc-100'
                     : 'tb-soft-tile !rounded-full'
                 }`}
               >
@@ -1834,22 +1834,23 @@ export default function Resources() {
     return v === key ? slug : v;
   }
 
+  /** 用途芯片：玻璃底 + 选中亮片，去掉蓝边网页感 */
+  function purposeChipClass(active, size = 'md') {
+    const pad = size === 'sm' ? 'text-[10px] px-2 py-0.5 rounded-md' : 'text-[11px] px-2.5 py-1 rounded-lg';
+    const round = size === 'sm' ? '!rounded-md' : '!rounded-lg';
+    return active
+      ? `tb-press tb-soft-bubble ${pad} text-zinc-900 dark:text-zinc-100 font-medium`
+      : `tb-press tb-soft-tile ${pad} ${round} text-zinc-600 dark:text-zinc-400`;
+  }
+
   function renderTagFilter() {
     if (availableTags.length === 0 && purposeOther <= 0) return null;
-    const chipClass = (active) => `tb-press text-[11px] px-2 py-1 rounded-md border transition-colors ${
-      active
-        ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-        : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-600'
-    }`;
     return (
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] text-zinc-400 shrink-0 mr-0.5" title={t('resources.tagFilterHint')}>
-          {t('resources.tagFilter')}
-        </span>
+      <div className="flex flex-wrap items-center gap-1.5" title={t('resources.tagFilterHint')}>
         <button
           type="button"
           onClick={() => setTagFilter('')}
-          className={chipClass(!tagFilter)}
+          className={purposeChipClass(!tagFilter)}
         >
           {t('resources.tagFilterAll')}
           <span className="ml-1 tabular-nums opacity-60">{purposeTotal}</span>
@@ -1862,7 +1863,7 @@ export default function Resources() {
               key={slug}
               type="button"
               onClick={() => setTagFilter(active ? '' : slug)}
-              className={chipClass(active)}
+              className={purposeChipClass(active)}
             >
               {purposeLabel(slug)}
               <span className="ml-1 tabular-nums opacity-60">{n}</span>
@@ -1873,7 +1874,7 @@ export default function Resources() {
           <button
             type="button"
             onClick={() => setTagFilter(tagFilter === PURPOSE_OTHER ? '' : PURPOSE_OTHER)}
-            className={chipClass(tagFilter === PURPOSE_OTHER)}
+            className={purposeChipClass(tagFilter === PURPOSE_OTHER)}
           >
             {purposeLabel(PURPOSE_OTHER)}
             <span className="ml-1 tabular-nums opacity-60">{purposeOther}</span>
@@ -1979,11 +1980,7 @@ export default function Resources() {
                     type="button"
                     title={t('resources.tagFilterHint')}
                     onClick={() => setTagFilter(tagFilter === slug ? '' : slug)}
-                    className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
-                      tagFilter === slug
-                        ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-                        : 'border-zinc-200/80 dark:border-zinc-700/80 bg-zinc-50/80 dark:bg-zinc-800/70 text-zinc-500 dark:text-zinc-400 hover:border-blue-300'
-                    }`}
+                    className={purposeChipClass(tagFilter === slug, 'sm')}
                   >
                     {purposeLabel(slug)}
                   </button>
@@ -2194,11 +2191,7 @@ export default function Resources() {
                     type="button"
                     title={t('resources.tagFilterHint')}
                     onClick={() => setTagFilter(tagFilter === slug ? '' : slug)}
-                    className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
-                      tagFilter === slug
-                        ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-                        : 'border-zinc-200/80 dark:border-zinc-700/80 bg-zinc-50/80 dark:bg-zinc-800/70 text-zinc-500 dark:text-zinc-400 hover:border-blue-300'
-                    }`}
+                    className={purposeChipClass(tagFilter === slug, 'sm')}
                   >
                     {purposeLabel(slug)}
                   </button>
@@ -2471,7 +2464,7 @@ export default function Resources() {
           </div>
           {/* 提示词：文本 / 图片 子分类 */}
           {typeFilter === 'prompt' && (
-            <div className="inline-flex rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80 gap-0.5">
+            <div className="tb-glass-chip inline-flex rounded-lg p-0.5 gap-0.5">
               {[
                 { id: '', labelKey: 'resources.promptKind.all' },
                 { id: 'text', labelKey: 'resources.promptKind.text' },
@@ -2481,10 +2474,10 @@ export default function Resources() {
                   key={opt.id || 'kind-all'}
                   type="button"
                   onClick={() => setPromptKindFilter(opt.id)}
-                  className={`tb-press text-xs px-2.5 py-1.5 rounded-lg transition-colors ${
+                  className={`tb-press text-xs px-2.5 py-1.5 rounded-md transition-colors ${
                     promptKindFilter === opt.id
-                      ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                      : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+                      ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 font-semibold'
+                      : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100'
                   }`}
                 >
                   {t(opt.labelKey)}
@@ -2499,7 +2492,7 @@ export default function Resources() {
         {/* 子 Tab + 搜索 + 操作 */}
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80">
+            <div className="tb-glass-chip inline-flex rounded-lg p-0.5">
               {[
                 { id: 'managed', label: t('resources.tab.managed'), count: localCount },
                 { id: 'recommend', label: t('resources.tab.recommend') },
@@ -2508,9 +2501,9 @@ export default function Resources() {
                   key={tab.id}
                   type="button"
                   onClick={() => changeViewTab(tab.id)}
-                  className={`tb-press text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                  className={`tb-press text-xs px-3 py-1.5 rounded-md transition-colors ${
                     viewTab === tab.id
-                      ? 'bg-white/80 dark:bg-white/10 shadow-sm text-zinc-900 dark:text-zinc-100'
+                      ? 'bg-white/80 dark:bg-white/10 font-semibold text-zinc-900 dark:text-zinc-100'
                       : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
                   }`}
                 >
@@ -2525,7 +2518,7 @@ export default function Resources() {
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder={t('resources.searchPlaceholder')}
-                className="w-full text-xs px-3 py-1.5 pr-14 rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 bg-zinc-100/90 dark:bg-zinc-800/90 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
+                className="tb-soft-field w-full text-xs px-3 py-1.5 pr-14 rounded-lg text-zinc-900 dark:text-zinc-100"
               />
               {searching && (
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 pointer-events-none">
@@ -2545,7 +2538,7 @@ export default function Resources() {
               type="button"
               disabled={busy === 'import' || busy === 'cleanup' || busy === 'editor'}
               onClick={handleImportFile}
-              className="tb-press text-xs px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50"
+              className="tb-press tb-soft-tile text-xs px-3 py-1.5 !rounded-lg text-zinc-700 dark:text-zinc-200 disabled:opacity-50"
             >
               {busy === 'import' ? t('resources.busy') : t('resources.import')}
             </button>

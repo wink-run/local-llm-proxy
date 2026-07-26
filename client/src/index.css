@@ -191,77 +191,90 @@
   }
 
   /*
-   * 彩色玻璃标签（模型/智能体 chip）：
-   * 半透明底 + blur + 顶缘高光，避免实色色块发闷。
+   * 彩色标签（模型/智能体 chip）：
+   * 平面半透明色底，无渐变/厚阴影胶囊感。
    */
   .tb-tag {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    border-radius: 0.65rem;
+    border-radius: 0.5rem;
     border-width: 1px;
     border-style: solid;
-    backdrop-filter: blur(14px) saturate(160%);
-    -webkit-backdrop-filter: blur(14px) saturate(160%);
-    box-shadow:
-      0 1px 0 rgb(255 255 255 / 0.45) inset,
-      0 4px 14px -8px rgb(15 23 42 / 0.14);
-    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    backdrop-filter: blur(12px) saturate(150%);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.4) inset;
+    transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
   }
   .dark .tb-tag {
-    box-shadow:
-      0 1px 0 rgb(255 255 255 / 0.06) inset,
-      0 6px 16px -10px rgb(0 0 0 / 0.45);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset;
   }
+  /* 已选：更浅的平面色底，字色略收淡 */
   .tb-tag-blue {
-    background: rgb(59 130 246 / 0.12);
-    border-color: rgb(59 130 246 / 0.35);
-    color: rgb(29 78 216);
+    background: rgb(239 246 255 / 0.9);
+    border-color: rgb(191 219 254 / 0.85);
+    color: rgb(37 99 235);
+    font-weight: 500;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.5) inset;
   }
   .dark .tb-tag-blue {
     background: rgb(59 130 246 / 0.18);
-    border-color: rgb(96 165 250 / 0.35);
-    color: rgb(147 197 253);
+    border-color: rgb(96 165 250 / 0.28);
+    color: rgb(191 219 254);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset;
   }
   .tb-tag-purple {
-    background: rgb(147 51 234 / 0.12);
-    border-color: rgb(147 51 234 / 0.35);
-    color: rgb(109 40 217);
+    background: rgb(250 245 255 / 0.92);
+    border-color: rgb(233 213 255 / 0.9);
+    color: rgb(124 58 237);
+    font-weight: 500;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.5) inset;
   }
   .dark .tb-tag-purple {
-    background: rgb(147 51 234 / 0.2);
-    border-color: rgb(196 181 253 / 0.35);
-    color: rgb(216 180 254);
+    background: rgb(147 51 234 / 0.18);
+    border-color: rgb(196 181 253 / 0.28);
+    color: rgb(221 214 254);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset;
   }
   .tb-tag-amber {
-    background: rgb(245 158 11 / 0.14);
-    border-color: rgb(245 158 11 / 0.38);
+    background: rgb(255 251 235 / 0.95);
+    border-color: rgb(253 230 138 / 0.85);
     color: rgb(180 83 9);
+    font-weight: 500;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.5) inset;
   }
   .dark .tb-tag-amber {
     background: rgb(245 158 11 / 0.16);
-    border-color: rgb(251 191 36 / 0.35);
+    border-color: rgb(251 191 36 / 0.28);
     color: rgb(253 224 71);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset;
   }
+  /* 候选：更淡、更沉，衬出上方已选 */
   .tb-tag-muted {
-    background: rgb(255 255 255 / 0.4);
-    border-color: rgb(161 161 170 / 0.45);
-    border-style: dashed;
+    background: rgb(244 244 245 / 0.7);
+    border-color: rgb(228 228 231 / 0.9);
+    border-style: solid;
     color: rgb(113 113 122);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.4) inset;
   }
   .dark .tb-tag-muted {
     background: rgb(39 39 42 / 0.45);
-    border-color: rgb(113 113 122 / 0.45);
+    border-color: rgb(255 255 255 / 0.08);
     color: rgb(161 161 170);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
   }
   .tb-tag-muted:hover {
-    border-color: rgb(59 130 246 / 0.45);
-    color: rgb(37 99 235);
-    background: rgb(59 130 246 / 0.08);
+    background: rgb(255 255 255 / 0.85);
+    border-color: rgb(212 212 216);
+    color: rgb(39 39 42);
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.7) inset,
+      0 2px 8px -4px rgb(15 23 42 / 0.12);
   }
   .dark .tb-tag-muted:hover {
-    border-color: rgb(96 165 250 / 0.45);
-    color: rgb(147 197 253);
+    background: rgb(63 63 70 / 0.7);
+    border-color: rgb(255 255 255 / 0.16);
+    color: rgb(244 244 245);
   }
   /* chip 内微型类型角标 */
   .tb-tag-badge {
@@ -269,11 +282,11 @@
     line-height: 1.2;
     padding: 0.1rem 0.3rem;
     border-radius: 0.35rem;
-    background: rgb(255 255 255 / 0.45);
-    box-shadow: 0 1px 0 rgb(255 255 255 / 0.35) inset;
+    background: rgb(255 255 255 / 0.55);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.4) inset;
   }
   .dark .tb-tag-badge {
-    background: rgb(0 0 0 / 0.22);
+    background: rgb(0 0 0 / 0.28);
     box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset;
   }
 

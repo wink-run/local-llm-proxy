@@ -1758,7 +1758,7 @@ export default {
   'resources.skillInstall.done': 'Install task finished.',
   'resources.skillInstall.failed': 'Install failed',
   'resources.skillInstall.scanHint': 'Local skill scan refreshed — check the list and manage into Token Bank.',
-  'resources.import': 'Manage file',
+  'resources.import': 'Import from file',
   'resources.importOk': 'Managed in Token Bank',
   'resources.importFailed': 'Couldn’t manage into Token Bank',
   'resources.importPickTitle': 'Select a skill folder or Markdown file to manage',
