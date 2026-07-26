@@ -12,11 +12,48 @@ import {
 } from '../api/agentControl';
 import RateChart from '../components/RateChart';
 import { useLang } from '../store/lang';
+import { useAuth } from '../store/index';
 import { fmtContribTokens, fmtCreditCny, creditsToCny } from '../lib/credit-pricing';
 import { avatarColor } from '../components/UserAvatar';
 function multiplierToStars(m) {
   const n = m >= 1.3 ? 5 : m >= 1.1 ? 4 : m >= 0.9 ? 3 : m >= 0.7 ? 2 : 1;
   return '★'.repeat(n) + '☆'.repeat(5 - n);
+}
+
+/** 兼容 API 返回 list 或 JSON 字符串 */
+function normalizeSettlementResources(raw) {
+  if (Array.isArray(raw)) return raw.map((x) => String(x || '').trim()).filter(Boolean);
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const data = JSON.parse(raw);
+      if (Array.isArray(data)) {
+        return data.map((x) => String(x || '').trim()).filter(Boolean);
+      }
+    } catch { /* ignore */ }
+  }
+  return [];
+}
+
+/** 结算时间：去掉 ISO 的 T，显示为 YYYY-MM-DD HH:mm（period_end 为墙钟时间，不按 UTC 偏移） */
+function formatSettlementTime(iso) {
+  if (!iso) return '—';
+  const m = String(iso).trim().match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/);
+  if (m) return `${m[1]} ${m[2]}:${m[3]}`;
+  return String(iso).slice(0, 16).replace('T', ' ');
+}
+
+/** 结算资源展示：模型名原样；agent:xxx → 智能体文案 */
+function formatSettlementResource(name, t) {
+  const s = String(name || '').trim();
+  if (!s) return '';
+  if (s.startsWith('agent:')) {
+    const rest = s.slice(6).trim();
+    const short = rest
+      .replace(/^res-assistant-/, '')
+      .replace(/-assistant$/, '');
+    return t('contribute.settlementAgent', { name: short || rest || s });
+  }
+  return s;
 }
 
 /** 按圈子 id 去重（统一为 number，避免 owned/joined 合并重复） */
@@ -531,15 +568,22 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
   );
 }
 
-/** 社区智能体标题：账号 + 智能体名（如 adam的写诗专家） */
+/** 社区智能体默认名（去掉「昵称的」历史前缀；所有者单独字段展示） */
 function communityAgentTitle(a) {
   const owner = String(a?.owner_nickname || '').trim();
   const raw = String(a?.display_name || a?.name || '').trim();
   if (!raw && !owner) return a?.id || '智能体';
-  if (!owner) return raw || a?.id || '智能体';
-  const prefix = `${owner}的`;
-  const base = raw.startsWith(prefix) ? raw.slice(prefix.length).trim() : raw;
-  return `${prefix}${base || a?.name || '智能体'}`;
+  let base = raw;
+  if (owner) {
+    const prefix = `${owner}的`;
+    if (base.startsWith(prefix)) base = base.slice(prefix.length).trim();
+  }
+  // 兼容无 owner 字段但名称已是「xxx的yyy」时，仍尽量取默认名
+  if (!owner) {
+    const m = base.match(/^(.+?)的(.+)$/);
+    if (m && m[2]) base = m[2].trim();
+  }
+  return base || String(a?.name || '').trim() || a?.id || '智能体';
 }
 
 /** 社区智能体卡片左侧图标：按名称着色 + 首字，辅以简易智能体符号 */
@@ -675,6 +719,7 @@ function CommunityAgentsCard() {
             const sel = selected && selected.id === a.id && selected.worker_id === a.worker_id;
             const hired = hiredIds.has(a.id);
             const title = communityAgentTitle(a);
+            const owner = String(a.owner_nickname || '').trim();
             const blurb = String(a.description || '').trim();
             return (
               <button
@@ -708,10 +753,20 @@ function CommunityAgentsCard() {
                       </span>
                     )}
                   </div>
-                  {a.runtime && (
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5 truncate">
-                      {t('contribute.agentRuntime', { runtime: a.runtime })}
-                    </p>
+                  {/* 所有者 / 运行时：同款次级行 */}
+                  {(owner || a.runtime) && (
+                    <div className="mt-0.5 space-y-0.5">
+                      {owner ? (
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                          {t('contribute.agentOwner', { owner })}
+                        </p>
+                      ) : null}
+                      {a.runtime ? (
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate">
+                          {t('contribute.agentRuntime', { runtime: a.runtime })}
+                        </p>
+                      ) : null}
+                    </div>
                   )}
                   <p className={`text-[11px] mt-1.5 line-clamp-2 leading-relaxed ${
                     blurb
@@ -734,6 +789,20 @@ function CommunityAgentsCard() {
               <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
                 {t('contribute.hireTarget', { name: selected.display_name || selected.id })}
               </p>
+              {(selected.owner_nickname || selected.runtime) && (
+                <div className="space-y-0.5">
+                  {selected.owner_nickname ? (
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                      {t('contribute.agentOwner', { owner: selected.owner_nickname })}
+                    </p>
+                  ) : null}
+                  {selected.runtime ? (
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                      {t('contribute.agentRuntime', { runtime: selected.runtime })}
+                    </p>
+                  ) : null}
+                </div>
+              )}
               {/* 选中后完整展示简介，便于判断用途 */}
               <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed whitespace-pre-wrap">
                 {String(selected.description || '').trim() || t('contribute.noAgentDesc')}
@@ -779,6 +848,7 @@ function CommunityAgentsCard() {
 
 export default function Contribute() {
   const { t, lang } = useLang();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [running,     setRunning]     = useState(false);
   const [stats,       setStats]       = useState(null);
@@ -847,9 +917,27 @@ export default function Contribute() {
     return () => clearInterval(id);
   }, []);
 
+  // KeepAlive 下只挂载一次：登录就绪后拉取，并定时刷新，避免首次失败后一直「暂无」
   useEffect(() => {
-    getSettlements().then(r => setSettlements((r.data.settlements || []).slice(0, 10))).catch(() => {});
-  }, []);
+    if (!user?.id) return undefined;
+    let cancelled = false;
+    function loadSettlements() {
+      getSettlements()
+        .then((r) => {
+          if (cancelled) return;
+          setSettlements((r.data?.settlements || []).slice(0, 10));
+        })
+        .catch((e) => {
+          console.warn('[contribute] settlements load failed', e?.message || e);
+        });
+    }
+    loadSettlements();
+    const id = setInterval(loadSettlements, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [user?.id]);
 
   async function handleStart() {
     setAgentError('');
@@ -973,20 +1061,32 @@ export default function Contribute() {
         {settlements.length === 0 ? (
           <p className="text-zinc-400 dark:text-zinc-500 text-sm">{t('contribute.noSettlements')}</p>
         ) : (
-          <div className="space-y-2">
-            {settlements.map(s => (
+          <div className="space-y-1.5">
+            {settlements.map(s => {
+              const resources = normalizeSettlementResources(s.resources);
+              // 模型/智能体并入得分括号内，单行展示以压缩高度
+              const resHint = resources.length
+                ? resources.map((r) => formatSettlementResource(r, t)).join('、')
+                : '';
+              return (
               <div key={s.id ?? s.period_end}
-                className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 grid grid-cols-6 gap-2 text-sm items-center">
-                <span className="text-zinc-400 dark:text-zinc-500 text-xs col-span-2 sm:col-span-1">{s.period_end?.slice(0, 16)}</span>
-                <span className="text-zinc-700 dark:text-zinc-300">{fmtContribTokens(s.output_tokens ?? 0)} tok</span>
-                <span className="text-yellow-500 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>
-                <span className="text-zinc-700 dark:text-zinc-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
-                <span className="text-green-600 dark:text-green-400 font-medium">+{(s.credits_awarded ?? 0).toFixed(1)}</span>
-                <span className="text-zinc-400 dark:text-zinc-500 text-xs">
-                  ≈{fmtCreditCny(creditsToCny(s.credits_awarded))}
-                </span>
+                className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2 grid grid-cols-[8.5rem_4.5rem_4.5rem_3rem_minmax(0,1fr)_4.5rem] gap-x-2 text-sm items-center">
+                  <span className="text-zinc-400 dark:text-zinc-500 text-xs tabular-nums">{formatSettlementTime(s.period_end)}</span>
+                  <span className="text-zinc-700 dark:text-zinc-300 tabular-nums">{fmtContribTokens(s.output_tokens ?? 0)} tok</span>
+                  <span className="text-yellow-500 text-xs tracking-tight">{multiplierToStars(s.multiplier ?? 1)}</span>
+                  <span className="text-zinc-700 dark:text-zinc-300 tabular-nums">{(s.multiplier ?? 1).toFixed(2)}×</span>
+                  <span className="text-green-600 dark:text-green-400 font-medium min-w-0">
+                    +{(s.credits_awarded ?? 0).toFixed(1)}
+                    {resHint ? (
+                      <span className="text-zinc-400 dark:text-zinc-500 font-normal text-xs"> ({resHint})</span>
+                    ) : null}
+                  </span>
+                  <span className="text-zinc-400 dark:text-zinc-500 text-xs text-right tabular-nums">
+                    ≈{fmtCreditCny(creditsToCny(s.credits_awarded))}
+                  </span>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

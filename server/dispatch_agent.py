@@ -7,6 +7,7 @@ import logging
 import os
 import time
 import uuid
+from datetime import datetime
 from typing import Optional
 
 import database as db
@@ -174,6 +175,29 @@ async def handle_agent_task(
             multiplier=1.0,
             note=f"agent_task kind=agent task_id={task_id} worker={worker.worker_id}",
         )
+        # 写入结算列表，便于贡献页展示具体智能体
+        now = datetime.now().isoformat(timespec="seconds")
+        label = aid
+        for card in getattr(worker, "agents", None) or []:
+            if isinstance(card, dict) and card.get("id") == aid:
+                label = card.get("display_name") or card.get("name") or aid
+                break
+        try:
+            await db.log_settlement(
+                worker_id=worker.worker_id,
+                user_id=worker.user_id,
+                period_start=now,
+                period_end=now,
+                online_mins=0,
+                output_tokens=0,
+                avg_latency=0,
+                success_rate=1.0,
+                multiplier=1.0,
+                credits_awarded=AGENT_TASK_CREDITS,
+                resources=[f"agent:{label}"],
+            )
+        except Exception:
+            logger.exception("[agent_task] log_settlement failed task_id=%s", task_id)
 
     return {
         "ok": True,

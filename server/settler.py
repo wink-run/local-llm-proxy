@@ -58,6 +58,7 @@ async def settle_once() -> None:
         )
 
         total_credits = 0.0
+        resource_names: list[str] = []
         period_start = datetime.fromtimestamp(
             time.time() - online_mins * 60
         ).isoformat(timespec="seconds")
@@ -72,6 +73,7 @@ async def settle_once() -> None:
                     continue
                 credits = image_count * rate * multiplier
                 total_credits += credits
+                resource_names.append(model_name)
                 await db.award_credits(
                     user_id=worker.user_id,
                     delta=credits,
@@ -88,6 +90,7 @@ async def settle_once() -> None:
                     continue
                 credits = (output_tokens / 1000) * rate * multiplier
                 total_credits += credits
+                resource_names.append(model_name)
                 await db.award_credits(
                     user_id=worker.user_id,
                     delta=credits,
@@ -100,6 +103,14 @@ async def settle_once() -> None:
                 )
 
         if total_credits > 0:
+            # 去重保序
+            seen = set()
+            uniq_resources = []
+            for name in resource_names:
+                if name in seen:
+                    continue
+                seen.add(name)
+                uniq_resources.append(name)
             await db.log_settlement(
                 worker_id=worker.worker_id,
                 user_id=worker.user_id,
@@ -111,10 +122,12 @@ async def settle_once() -> None:
                 success_rate=success_rate,
                 multiplier=multiplier,
                 credits_awarded=total_credits,
+                resources=uniq_resources,
             )
             logger.info(
                 f"[settle] worker={worker.worker_id} user={worker.user_id} "
-                f"tokens={total_tokens} multiplier={multiplier} credits=+{total_credits:.2f}"
+                f"tokens={total_tokens} multiplier={multiplier} credits=+{total_credits:.2f} "
+                f"resources={uniq_resources}"
             )
 
 

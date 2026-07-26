@@ -78,7 +78,9 @@ export function getTransactions() {
 }
 
 export function getSettlements() {
-  return http.get('/user/settlements');
+  // 与 profile 一致走 authRequest，Electron 下绕过代理/CORS，避免列表加载失败
+  const token = localStorage.getItem('token');
+  return authRequest('GET', '/user/settlements', { token });
 }
 
 /** 贡献页汇总：累计 token、积分、P2P 节省金额 */

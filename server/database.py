@@ -101,9 +101,17 @@ async def init_db() -> None:
                 success_rate    REAL DEFAULT 0,
                 multiplier      REAL DEFAULT 1.0,
                 credits_awarded REAL DEFAULT 0,
+                resources       TEXT DEFAULT '[]',
                 created_at      TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        try:
+            await db.execute(
+                "ALTER TABLE settlement_logs ADD COLUMN resources TEXT DEFAULT '[]'"
+            )
+            await db.commit()
+        except Exception:
+            pass
 
         # purchase_orders
         await db.execute("""
@@ -763,29 +771,56 @@ async def get_image_tokens_weight() -> int:
 
 # ── settlement_logs ───────────────────────────────────────────────────────────
 
+def _parse_settlement_resources(raw) -> list[str]:
+    import json
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(data, list):
+            return [str(x).strip() for x in data if str(x).strip()]
+    except Exception:
+        pass
+    return []
+
+
 async def log_settlement(worker_id: str, user_id: int, period_start: str, period_end: str,
                          online_mins: float, output_tokens: int, avg_latency: float,
-                         success_rate: float, multiplier: float, credits_awarded: float) -> None:
-    """avg_latency 写入 avg_latency_ms 列：语义为首 Token 平均延迟（ms）。"""
+                         success_rate: float, multiplier: float, credits_awarded: float,
+                         resources: Optional[list] = None) -> None:
+    """avg_latency 写入 avg_latency_ms 列：语义为首 Token 平均延迟（ms）。
+    resources：本周期贡献的模型名或 agent:{id} 列表。"""
+    import json
+    res_json = json.dumps(
+        [str(x).strip() for x in (resources or []) if str(x).strip()],
+        ensure_ascii=False,
+    )
     async with connect() as db:
         await db.execute(
             """INSERT INTO settlement_logs
                (worker_id,user_id,period_start,period_end,online_mins,output_tokens,
-                avg_latency_ms,success_rate,multiplier,credits_awarded)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                avg_latency_ms,success_rate,multiplier,credits_awarded,resources)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (worker_id, user_id, period_start, period_end, online_mins, output_tokens,
-             avg_latency, success_rate, multiplier, credits_awarded),
+             avg_latency, success_rate, multiplier, credits_awarded, res_json),
         )
         await db.commit()
 
 
 async def get_settlements(user_id: int, limit: int = 30) -> list[dict]:
+    """返回最近结算；resources 仅读库内已存值（写入时由 settler / agent_task 填充）。
+    不在读路径做历史回填，避免拖垮 /user/settlements。"""
     async with connect() as db:
         async with db.execute(
             "SELECT * FROM settlement_logs WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
             (user_id, limit),
         ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+            rows = [dict(r) for r in await cur.fetchall()]
+    for r in rows:
+        r["resources"] = _parse_settlement_resources(r.get("resources"))
+    return rows
 
 
 async def get_contribute_summary(user_id: int) -> dict:
