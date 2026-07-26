@@ -23,6 +23,7 @@
     "@lobehub/icons-static-svg": "^1.91.0",
     "axios": "^1.7.2",
     "better-sqlite3": "^12.10.0",
+    "builder-util-runtime": "^9.7.0",
     "electron-store": "^9.0.0",
     "electron-updater": "^6.8.3",
     "https-proxy-agent": "^7.0.6",
