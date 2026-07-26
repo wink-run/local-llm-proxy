@@ -468,9 +468,9 @@ function createWindow() {
   // 屏蔽默认应用菜单栏（File / Edit / View / Window / Help）
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
-    width: 860,
+    width: 960,
     height: 600,
-    minWidth: 860,
+    minWidth: 900,
     minHeight: 600,
     autoHideMenuBar: true,
     webPreferences: {

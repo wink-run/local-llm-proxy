@@ -379,7 +379,7 @@ export default function CircleDetail({ routeParams }) {
 
       {/* 圈主：待审批入圈申请 */}
       {circle?.is_owner && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
+        <section className="tb-soft-card rounded-xl px-4 py-4 space-y-3">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
             {t('circles.browse.requestsTitle')}
             {joinRequests.length > 0 && (
@@ -430,7 +430,7 @@ export default function CircleDetail({ routeParams }) {
       )}
 
       {/* 圈友 */}
-      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-2">
+      <section className="tb-soft-card rounded-xl px-4 py-4 space-y-2">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('circles.detail.friends')}</h2>
         <CircleMembers
           members={members}
@@ -440,7 +440,7 @@ export default function CircleDetail({ routeParams }) {
       </section>
 
       {/* 共享模型 */}
-      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-2">
+      <section className="tb-soft-card rounded-xl px-4 py-4 space-y-2">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('circles.detail.models')}</h2>
         {models.length === 0
           ? <p className="text-xs text-gray-400">{t('circles.detail.noModels')}</p>
@@ -460,7 +460,7 @@ export default function CircleDetail({ routeParams }) {
       </section>
 
       {/* 共享智能体：与贡献页社区智能体同款卡片（图标 + 标题 + runtime + 简介） */}
-      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-2.5">
+      <section className="tb-soft-card rounded-xl px-4 py-4 space-y-2.5">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('circles.detail.agents')}</h2>
         {agents.length === 0
           ? <p className="text-xs text-gray-400">{t('circles.detail.noAgents')}</p>
@@ -473,7 +473,7 @@ export default function CircleDetail({ routeParams }) {
                   return (
                     <div
                       key={`${a.worker_id}:${a.id}`}
-                      className="flex gap-3 p-3 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 shadow-sm"
+                      className="tb-soft-card flex gap-3 p-3 rounded-2xl"
                     >
                       <CircleAgentIcon name={title} />
                       <div className="min-w-0 flex-1">
@@ -513,7 +513,7 @@ export default function CircleDetail({ routeParams }) {
         </div>
 
         {showComposer && (
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-2">
+          <div className="tb-soft-card rounded-xl px-4 py-4 space-y-2">
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{t('circles.detail.composePost')}</p>
             <form onSubmit={handlePost} className="space-y-2">
               <RichMediaInput
@@ -541,14 +541,14 @@ export default function CircleDetail({ routeParams }) {
         )}
 
         {posts.length === 0 && !showComposer && (
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-8 text-center">
+          <div className="tb-soft-card rounded-xl px-4 py-8 text-center">
             <p className="text-xs text-gray-400">{t('circles.detail.noAnnouncements')}</p>
           </div>
         )}
 
         {posts.map(post => (
           <article key={post.id}
-            className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3.5 space-y-2">
+            className="tb-soft-card rounded-xl px-4 py-3.5 space-y-2">
             <div className="flex items-center gap-2.5">
               <AuthorAvatar author={post} />
               <div className="flex-1 min-w-0 flex items-center justify-between gap-2">

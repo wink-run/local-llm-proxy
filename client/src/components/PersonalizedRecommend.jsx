@@ -1364,7 +1364,7 @@ export default function PersonalizedRecommend({
 
       {/* 审阅:依据 → 分析结论 → 补充发现 */}
       {phase === 'review' && (
-        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-3 bg-white dark:bg-zinc-900">
+        <div className="tb-soft-card rounded-lg p-3 space-y-3">
           {/* 1) 依据：分析了谁、看到了什么 */}
           {digest && <EvidencePanel digest={digest} t={t} />}
 

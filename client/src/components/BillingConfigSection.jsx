@@ -150,7 +150,7 @@ export default function BillingConfigSection() {
         <p className="text-sm text-gray-400">加载中…</p>
       ) : (
         <>
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
+          <div className="tb-soft-card rounded-2xl overflow-hidden">
             <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-200">订阅套餐</h3>
               <p className="text-xs text-gray-400 mt-0.5">供给源页选择「订阅」时使用的套餐列表；月费仅供展示与等效价参考。</p>
@@ -207,7 +207,7 @@ export default function BillingConfigSection() {
             </div>
           </div>
 
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
+          <div className="tb-soft-card rounded-2xl overflow-hidden">
             <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-200">按 provider 模型刊例价</h3>

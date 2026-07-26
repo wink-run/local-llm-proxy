@@ -23,7 +23,7 @@ const ORDER_STATUS = {
 
 function StatCard({ label, value }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
+    <div className="tb-soft-card rounded-xl p-4">
       <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{label}</p>
       <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{value}</p>
     </div>
@@ -56,7 +56,7 @@ function ReferralSection({ referralCode }) {
       <p className="text-sm text-gray-500 dark:text-gray-400">
         分享推荐码给好友，好友注册后你们双方均可获得奖励积分。
       </p>
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3 space-y-3">
+      <div className="tb-soft-card rounded-xl px-4 py-3 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">我的推荐码</p>
@@ -89,7 +89,7 @@ function ContributeSection() {
   }, []);
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-5 space-y-4">
+    <div className="tb-soft-card rounded-2xl px-5 py-5 space-y-4">
       <div className="flex items-center gap-2">
         <span className="text-2xl select-none">💡</span>
         <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200">贡献得积分</h2>
@@ -188,7 +188,7 @@ function PurchaseSection() {
         提交申请后，并填写联系方式，管理员将与你联系确定积分额度。
       </p>
 
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 space-y-3">
+      <div className="tb-soft-card rounded-xl p-4 space-y-3">
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
             <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
@@ -259,7 +259,7 @@ function PurchaseSection() {
             {orders.map((o) => (
               <div
                 key={o.id}
-                className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3 text-sm"
+                className="tb-soft-card rounded-xl px-4 py-3 text-sm"
               >
                 <div className="flex flex-wrap justify-between gap-2">
                   <span className="text-gray-500 dark:text-gray-400 text-xs">{formatServerTime(o.created_at)}</span>
@@ -346,7 +346,7 @@ function CheckinCard({ onSuccess }) {
   const done = status?.checked_in_today;
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-4 py-4 flex flex-col gap-3">
+    <div className="tb-soft-card rounded-2xl px-4 py-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="text-2xl select-none">📅</span>
         <p className="text-sm font-medium text-gray-700 dark:text-gray-200">每日签到</p>
@@ -432,7 +432,7 @@ function SpinCard({ onSuccess }) {
   const exhausted = status?.spins_left === 0;
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-4 py-4 flex flex-col gap-3">
+    <div className="tb-soft-card rounded-2xl px-4 py-4 flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-2xl select-none">🎡</span>
@@ -605,7 +605,7 @@ function DevicesSection() {
 
             return (
               <div key={`${d.device_id ?? ''}-${i}`}
-                className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 space-y-3">
+                className="tb-soft-card rounded-xl p-4 space-y-3">
 
                 {/* Header row */}
                 <div className="flex items-start justify-between gap-2">
@@ -713,7 +713,7 @@ export default function Profile() {
   if (!user) return null;
 
   return (
-    <div className="px-5 py-5 space-y-5">
+    <div className="px-4 py-4 space-y-4">
       <div className="flex items-center gap-4">
         <div className="w-14 h-14 rounded-full bg-blue-700 flex items-center justify-center text-2xl font-bold text-white shrink-0">
           {(user.nickname || user.email || '?')[0].toUpperCase()}
@@ -739,14 +739,14 @@ export default function Profile() {
 
       {gwCalls > 0 && (
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 flex items-center gap-3">
+          <div className="tb-soft-card rounded-xl p-4 flex items-center gap-3">
             <span className="w-2 h-2 rounded-full bg-green-500 shrink-0"/>
             <div>
               <p className="text-xs text-gray-400 dark:text-gray-500">今日网关调用</p>
               <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{gwCalls} 次</p>
             </div>
           </div>
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 flex items-center gap-3">
+          <div className="tb-soft-card rounded-xl p-4 flex items-center gap-3">
             <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0"/>
             <div>
               <p className="text-xs text-gray-400 dark:text-gray-500">今日网关 Token</p>
@@ -783,7 +783,7 @@ export default function Profile() {
           <div className="space-y-2">
             {txs.map((tx) => (
               <div key={tx.id}
-                className="flex items-center justify-between bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3">
+                className="flex items-center justify-between tb-soft-card rounded-xl px-4 py-3">
                 <div>
                   <p className="text-sm text-gray-700 dark:text-gray-300">
                     {TX_LABEL[tx.type] || tx.type}

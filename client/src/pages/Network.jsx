@@ -201,7 +201,7 @@ export default function Network() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="px-5 py-5 space-y-5">
+    <div className="px-4 py-4 space-y-4">
 
       {/* Header */}
       <div className="flex items-start justify-between">
@@ -228,29 +228,29 @@ export default function Network() {
 
       {/* Stats row */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="tb-soft-card rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.globalNodes')}</div>
           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">{loading ? '—' : totalNodes}</div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.onlineWorkers')}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="tb-soft-card rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.availableModels')}</div>
           <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{loading ? '—' : totalModels}</div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.dedupModels')}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="tb-soft-card rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.availableAgents')}</div>
           <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{loading ? '—' : totalAgents}</div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.availableAgentsHint')}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="tb-soft-card rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.contribTokens')}</div>
           <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">
             {loading ? '—' : fmtContribTokens(totalTokens)}
           </div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.thisPeriod')}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="tb-soft-card rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.activeUsers')}</div>
           <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">
             {loading ? '—' : network?.summary?.active_users ?? 0}
@@ -261,7 +261,7 @@ export default function Network() {
 
       {/* 全球节点地图 */}
       {!loading && network && (
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 overflow-hidden">
+        <div className="tb-soft-card rounded-2xl p-4 overflow-hidden">
           <div className="flex items-center justify-between mb-3 px-1">
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.mapTitle')}</h2>
             <span className="text-xs text-zinc-400">{t('network.mapHint')}</span>
@@ -290,7 +290,7 @@ export default function Network() {
           {/* Left: Model list + Agents list */}
           <div className="space-y-5">
           <div className="tb-table-shell rounded-2xl">
-            <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
+            <div className="tb-table-head px-3 py-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.modelsTitle')}</h2>
               <span className="tb-table-cell-meta">{t('network.sortByNodes')}</span>
             </div>
@@ -355,7 +355,7 @@ export default function Network() {
 
           {/* 可用智能体：公开在线名片 */}
           <div className="tb-table-shell rounded-2xl">
-            <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
+            <div className="tb-table-head px-3 py-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.agentsTitle')}</h2>
               <span className="tb-table-cell-meta">{t('network.agentsCount', { n: totalAgents })}</span>
             </div>
@@ -410,7 +410,7 @@ export default function Network() {
 
             {/* Contributor ranking */}
             <div className="tb-table-shell rounded-2xl">
-              <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
+              <div className="tb-table-head px-3 py-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.leaderboard')}</h2>
                 <span className="tb-table-cell-meta">{t('network.leaderboardHint')}</span>
               </div>
@@ -453,7 +453,7 @@ export default function Network() {
             </div>
 
             {/* My node status */}
-            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 space-y-3">
+            <div className="tb-soft-card rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.myNode')}</h2>
                 {myStats && myStats.active_workers > 0 ? (
@@ -469,15 +469,15 @@ export default function Network() {
               {myStats ? (
                 <>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg p-3">
+                    <div className="tb-soft-card rounded-lg p-3">
                       <div className="text-xs text-zinc-400">{t('network.activeNodes')}</div>
                       <div className="text-lg font-bold mt-0.5 text-zinc-900 dark:text-zinc-100">{myStats.active_workers ?? 0}</div>
                     </div>
-                    <div className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg p-3">
+                    <div className="tb-soft-card rounded-lg p-3">
                       <div className="text-xs text-zinc-400">{t('network.activeRequests')}</div>
                       <div className="text-lg font-bold mt-0.5 text-zinc-900 dark:text-zinc-100">{myStats.active_requests ?? 0}</div>
                     </div>
-                    <div className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg p-3 col-span-2">
+                    <div className="tb-soft-card rounded-lg p-3 col-span-2">
                       <div className="text-xs text-zinc-400">{t('network.contribRate')}</div>
                       <div className="text-lg font-bold mt-0.5 text-blue-600 dark:text-blue-400">
                         {myStats.contribute_req_per_min ?? 0}
@@ -498,7 +498,7 @@ export default function Network() {
             {/* All workers list */}
             {(network?.workers?.length ?? 0) > 0 && (
               <div className="tb-table-shell rounded-2xl">
-                <div className="tb-table-head px-5 py-3.5 flex items-center justify-between">
+                <div className="tb-table-head px-3 py-3 flex items-center justify-between">
                   <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.workersTitle')}</h2>
                   <span className="tb-table-cell-meta">{t('network.workersCount', { n: network.workers.length })}</span>
                 </div>

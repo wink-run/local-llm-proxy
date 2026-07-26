@@ -79,31 +79,31 @@ function Layout() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400">
+      <div className="tb-app-shell flex h-screen items-center justify-center text-zinc-500 dark:text-zinc-400">
         {t('common.loading')}
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen text-zinc-700 dark:text-zinc-200">
+    <div className="tb-app-shell flex h-screen text-zinc-700 dark:text-zinc-200">
       {isElectron() && !authed && (
         <div className="electron-drag fixed inset-x-0 top-0 h-11 z-50" aria-hidden />
       )}
-      {isElectron() && authed && (
-        <div className="electron-drag fixed top-0 left-44 right-0 h-9 z-40" aria-hidden />
+      {isElectron() && authed && !sidebarCollapsed && (
+        <div className="electron-drag fixed top-0 left-[11rem] right-2.5 h-9 z-40" aria-hidden />
       )}
       {authed && !sidebarCollapsed && (
         <Sidebar onToggleCollapse={cliMode ? toggleSidebar : undefined} />
       )}
-      <main className="relative flex-1 min-h-0 overflow-y-auto min-w-0 bg-zinc-100 dark:bg-zinc-900">
+      <main className="tb-app-main relative flex-1 min-h-0 overflow-y-auto min-w-0">
         {authed && cliMode && sidebarCollapsed && (
           <button
             type="button"
             onClick={toggleSidebar}
             title={t('sidebar.expand')}
             aria-label={t('sidebar.expand')}
-            className="tb-press tb-material fixed top-3 left-3 z-50 flex items-center justify-center w-9 h-9 rounded-lg border border-zinc-900/10 dark:border-white/10 text-zinc-600 dark:text-zinc-300 shadow-sm hover:bg-white dark:hover:bg-zinc-800"
+            className="tb-press tb-material fixed top-4 left-4 z-50 flex items-center justify-center w-10 h-10 rounded-2xl border border-zinc-900/10 dark:border-white/10 text-zinc-600 dark:text-zinc-300 shadow-sm hover:bg-white dark:hover:bg-zinc-800"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
               <path d="M4 6h16M4 12h16M4 18h16" />
@@ -117,7 +117,7 @@ function Layout() {
           <Navigate to={authed ? '/gateway' : '/login'} replace />
         )}
         {location.pathname === '/login' && (
-          <div className="relative z-10 min-h-full bg-zinc-100 dark:bg-zinc-900">
+          <div className="relative z-10 min-h-full">
             <Login />
           </div>
         )}

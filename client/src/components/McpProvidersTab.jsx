@@ -746,7 +746,7 @@ export default function McpProvidersTab() {
     return (
       <div
         key={item.catalogId}
-        className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-4 flex flex-col gap-2"
+        className="tb-soft-card rounded-2xl p-4 flex flex-col gap-2"
       >
         <div className="flex items-start gap-2">
           <span className="text-xl">{item.metadata?.icon || '🔧'}</span>
@@ -870,7 +870,7 @@ export default function McpProvidersTab() {
               className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
                 active
                   ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/30 shadow-sm'
-                  : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-600'
+                  : 'tb-soft-card hover:border-zinc-300 dark:hover:border-zinc-600'
               }`}
             >
               {opt.id ? (
@@ -1131,7 +1131,7 @@ export default function McpProvidersTab() {
               </label>
             )}
           </p>
-          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl divide-y divide-zinc-100 dark:divide-zinc-700">
+          <div className="tb-soft-card rounded-2xl divide-y divide-zinc-100 dark:divide-zinc-700">
             {filteredManagedServers.length === 0 ? (
               <div className="p-5 text-center space-y-2">
                 <p className="text-xs text-zinc-400">

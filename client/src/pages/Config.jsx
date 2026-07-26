@@ -253,7 +253,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   ];
 
   return (
-    <div className="px-5 py-5 space-y-5 w-full max-w-4xl mx-auto">
+    <div className="px-4 py-4 space-y-4 w-full max-w-4xl mx-auto">
 
       {/* Header */}
       <div>
@@ -262,11 +262,11 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Gateway section */}
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="tb-soft-card rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-white/40 dark:border-white/[0.06]">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.gateway')}</h2>
         </div>
-        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
+        <div className="divide-y divide-white/40 dark:divide-white/[0.06]">
           <Row label={t('settings.port')} hint={t('settings.portHint')}>
             <div className="flex items-center gap-2">
               <input
@@ -307,11 +307,11 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Routing section */}
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="tb-soft-card rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-white/40 dark:border-white/[0.06]">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.routing')}</h2>
         </div>
-        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
+        <div className="divide-y divide-white/40 dark:divide-white/[0.06]">
           <SelectRow label={t('settings.retryCount')} hint={t('settings.retryCountHint')}
             value={retryCount} onChange={setRetryCount}
             options={[
@@ -337,11 +337,11 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Compression section */}
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="tb-soft-card rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-white/40 dark:border-white/[0.06]">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.compression')}</h2>
         </div>
-        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
+        <div className="divide-y divide-white/40 dark:divide-white/[0.06]">
           <Row label={t('settings.compressEnabled')} hint={t('settings.compressEnabledHint')}>
             <Toggle enabled={compressEnabled} onChange={() => setCompressEnabled(v => !v)} />
           </Row>
@@ -349,11 +349,11 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Appearance section */}
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="tb-soft-card rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-white/40 dark:border-white/[0.06]">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.appearance')}</h2>
         </div>
-        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
+        <div className="divide-y divide-white/40 dark:divide-white/[0.06]">
           <Row label={t('config.theme')} hint={t('settings.themeHint')}>
             <div className="flex rounded-lg overflow-hidden border border-zinc-300 dark:border-zinc-700 text-xs">
               {THEME_OPTIONS.map(o => (
@@ -411,12 +411,12 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
 
       {/* 应用更新（仅桌面端） */}
       {isDesktop && (
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+        <div className="tb-soft-card rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/40 dark:border-white/[0.06]">
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.update')}</h2>
             <p className="text-xs text-gray-500 mt-0.5">{t('settings.updateHint')}</p>
           </div>
-          <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
+          <div className="divide-y divide-white/40 dark:divide-white/[0.06]">
             <Row label={t('settings.updateAllowBeta')} hint={t('settings.updateAllowBetaHint')}>
               <Toggle
                 enabled={allowPrerelease}
@@ -455,8 +455,8 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       )}
 
       {/* Server URL */}
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="tb-soft-card rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-white/40 dark:border-white/[0.06]">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.server')}</h2>
         </div>
         <div className="px-5 py-4">
@@ -477,11 +477,11 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Account section */}
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="tb-soft-card rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-white/40 dark:border-white/[0.06]">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.account')}</h2>
         </div>
-        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
+        <div className="divide-y divide-white/40 dark:divide-white/[0.06]">
           {user ? (
             <>
               <Row label={t('config.email')} hint={user.email}>

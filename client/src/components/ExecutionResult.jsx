@@ -41,7 +41,7 @@ export default function ExecutionResult({ result, task }) {
 
       {/* 修改的文件 */}
       {result.files && result.files.length > 0 && (
-        <div className="p-4 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+        <div className="tb-soft-card p-4 rounded-lg">
           <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
             {t('debug.result.files', { n: result.files.length })}
           </div>
@@ -74,7 +74,7 @@ export default function ExecutionResult({ result, task }) {
       )}
 
       {/* 执行统计 */}
-      <div className="p-4 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+      <div className="tb-soft-card p-4 rounded-lg">
         <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
           {t('debug.result.stats')}
         </div>

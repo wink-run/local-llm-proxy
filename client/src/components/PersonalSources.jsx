@@ -548,7 +548,7 @@ export function DirectSourceCard({
   })();
 
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+    <div className="tb-soft-card rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-3.5">
         <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
           <ServiceIcon id={instance.source_id} name={instance.label} icon={instance.icon} />
@@ -621,7 +621,7 @@ export function DirectSourceCard({
 export function UnenrolledInstanceCard({ instance, onRemove, t }) {
   const i = instance;
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/40">
+    <div className="tb-soft-card flex items-center gap-2 px-3 py-2 rounded-xl">
       <ServiceIcon id={i.source_id} name={i.label} icon={i.icon} />
       <div className="min-w-0 flex-1">
         <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300 truncate">{i.name}</div>

@@ -74,10 +74,10 @@ const RANGE_KEYS = ['today', '7d', '30d'];
 const RANGE_DAYS = { today: 1, '7d': 7, '30d': 30 };
 
 /** 个人页统一卡片与分段控件（与 Dashboard zinc 体系一致） */
-const PROFILE_CARD = 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl';
-const RANGE_PILL_WRAP = 'flex gap-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-0.5 shrink-0';
+const PROFILE_CARD = 'tb-soft-card rounded-2xl';
+const RANGE_PILL_WRAP = 'tb-glass-chip flex gap-0.5 rounded-lg p-0.5 shrink-0';
 const rangePillClass = (active) => active
-  ? 'px-2.5 py-1 text-xs rounded-md bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 font-semibold shadow-sm transition-colors'
+  ? 'px-2.5 py-1 text-xs rounded-md bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 font-semibold shadow-sm transition-colors'
   : 'px-2.5 py-1 text-xs rounded-md text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors';
 
 /** 工具来源展示名 */
@@ -188,7 +188,7 @@ function CheckinCard({ onSuccess }) {
 
   const done = status?.checked_in_today;
   return (
-    <div className="bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-4 flex flex-col gap-3">
+    <div className="tb-soft-card rounded-xl px-4 py-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="text-xl select-none">📅</span>
         <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{t('profile.checkin.title')}</p>
@@ -227,7 +227,7 @@ function SpinCard({ onSuccess }) {
 
   const exhausted = status?.spins_left === 0;
   return (
-    <div className="bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-4 flex flex-col gap-3">
+    <div className="tb-soft-card rounded-xl px-4 py-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="text-xl select-none">🎡</span>
         <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{t('profile.spin.title')}</p>
@@ -535,7 +535,7 @@ function DevicesSection() {
       <div className="space-y-2">
         {devices.map((d, i) => (
           <div key={`${d.device_id ?? ''}-${i}`}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800/80">
+            className="tb-soft-card flex items-center gap-3 px-3 py-2.5 rounded-xl">
             <span className="text-base select-none shrink-0">{DEVICE_ICON[effectiveDeviceType(d)] || '🖥'}</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
@@ -682,7 +682,7 @@ export default function TokenDashboard() {
     : ' —';
 
   return (
-    <div className="px-5 py-5 space-y-5">
+    <div className="px-4 py-4 space-y-4">
 
       {/* Hero */}
       {user ? (

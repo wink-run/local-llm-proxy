@@ -223,7 +223,7 @@ export default function AgentTabBar({
                 className={`
                   w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] rounded-lg ${pressCls}
                   ${active
-                    ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium shadow-sm'
+                    ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 font-medium shadow-sm'
                     : 'text-zinc-600 dark:text-zinc-400 font-medium hover:bg-black/[0.05] dark:hover:bg-white/[0.06] hover:text-zinc-900 dark:hover:text-zinc-200'
                   }
                 `}

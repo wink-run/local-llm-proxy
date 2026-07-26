@@ -132,7 +132,7 @@ function PolicyManager() {
   function moveUp(idx) { if (idx === 0) return; const a = [...formProviders]; [a[idx-1], a[idx]] = [a[idx], a[idx-1]]; setFormProviders(a); }
 
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-4 mb-4">
+    <div className="tb-soft-card rounded-xl p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px] shrink-0 text-zinc-400 dark:text-zinc-500">
           <path d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
@@ -149,7 +149,7 @@ function PolicyManager() {
       <div className="flex flex-col gap-1.5 mb-2">
         {policies.length === 0 && <div className="text-xs text-zinc-400 py-1">{t('gateway.policy.empty')}</div>}
         {policies.map(p => (
-          <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40 text-sm">
+          <div key={p.id} className="tb-soft-card flex items-center gap-2 px-3 py-2 rounded-lg text-sm">
             <span className="font-medium text-zinc-800 dark:text-zinc-100 truncate flex-1">{p.name}</span>
             <span className="text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
               {STRATEGY_OPTIONS.find(s => s.value === p.strategy)?.label || p.strategy}
@@ -614,7 +614,7 @@ function tildify(p) {
 // 应用列表统一栅格：固定短列 + minmax(0,fr) 弹性列，避免内容撑开导致各行列宽不一致
 // 应用列保留 modest 最小宽；不设表格 min-width，避免常态出现横向滚动条
 // 应用列加大最小宽；固定短列与路由 min 适当压缩，空间让给应用名
-const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(8rem,2fr)_3.75rem_1.75rem_3.75rem_3.5rem_3.75rem_minmax(4.5rem,1.6fr)_minmax(7.75rem,auto)] gap-x-3 items-center px-4 [&>*]:min-w-0';
+const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(8rem,2fr)_3.75rem_1.75rem_3.75rem_3.5rem_3.75rem_minmax(4.5rem,1.6fr)_minmax(7.75rem,auto)] gap-x-2 items-center px-2.5 [&>*]:min-w-0';
 
 /** 应用行测试状态：成功/进行中行内短提示；失败用浮层展示完整错误（避免窄列截断） */
 function AppTestResultHint({ ts, t }) {
@@ -1173,8 +1173,8 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
   }
 
   return (
-    <div className="mb-3 bg-white dark:bg-zinc-800 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800">
+    <div className="mb-3 tb-soft-card rounded-2xl border-blue-200/80 dark:border-blue-800/50">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-white/40 dark:border-white/[0.06]">
         {isAppIcon(icon) ? appIconSvg(icon, 'w-6 h-6') : <span className="text-xl">{icon}</span>}
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.app.newTitle')}</h3>
         <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-lg">✕</button>
@@ -3051,11 +3051,11 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
           </div>
         </div>
       )}
-      <div className="p-4">
+      <div className="px-2.5 py-3">
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <button onClick={() => manualDraft ? cancelManualDraft() : addCustom()}
-                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white transition-colors font-medium">
+                className="text-xs px-3 py-1.5 rounded-xl bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white transition-colors font-medium shadow-sm shadow-blue-500/20">
                 {t('gateway.apps.new')}
               </button>
               <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('gateway.apps.newHint')}</span>
@@ -3088,9 +3088,9 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                 {t('gateway.apps.empty')}
               </div>
             ) : (
-              <div className={`tb-table-shell ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
+              // 嵌套在 soft-card 内：由 CSS 去掉第二层铺底，避免叠成实色
+              <div className={`tb-table-shell rounded-xl ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
                 <div className="overflow-x-auto">
-                {/* 表头：毛玻璃吸顶，避免灰底板廉价感 */}
                 <div className={`${APPS_TABLE_GRID} tb-table-head py-2.5 sticky top-0 z-10`}>
                   <span className="text-base text-center shrink-0 invisible">🔧</span>
                   <div className="min-w-0">{t('gateway.apps.colApp')}</div>
@@ -3417,7 +3417,7 @@ function AgentLinker() {
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-4 mb-4">
+    <div className="tb-soft-card rounded-xl p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px] shrink-0 text-zinc-400 dark:text-zinc-500">
           <path d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z" />
@@ -3437,10 +3437,9 @@ function AgentLinker() {
         <div className="flex flex-col gap-2">
           {agents.map(a => (
             <div key={a.id}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm transition-colors
-                ${!a.installed ? 'opacity-40 border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/30' :
-                  a.linked ? 'border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30' :
-                             'border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40'}`}
+              className={`tb-soft-card flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
+                ${!a.installed ? 'opacity-40' :
+                  a.linked ? 'border-green-300/70 dark:border-green-800/60 bg-green-50/50 dark:bg-green-950/25' : ''}`}
             >
               {/* 状态点 */}
               <span className={`w-2 h-2 rounded-full shrink-0 ${
@@ -4670,7 +4669,7 @@ export default function Gateway() {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="px-5 py-5 space-y-4">
+    <div className="px-4 py-4 space-y-3.5">
 
       {/* Header */}
       <div className="flex items-center gap-3">
@@ -4716,7 +4715,7 @@ export default function Gateway() {
           { label: t('gateway.stat.gatewayRatio'), value: gatewayRatio !== null ? `${gatewayRatio}%` : '—', color: 'text-violet-600 dark:text-violet-400' },
           { label: t('gateway.stat.avgLatency'), value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-zinc-500 dark:text-zinc-400' },
         ].map(({ label, value, color }) => (
-          <div key={label} className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-3.5 shadow-sm">
+          <div key={label} className="tb-soft-card rounded-xl px-4 py-3.5">
             <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-1.5">{label}</div>
             <div className={`text-[22px] font-bold leading-none tabular-nums tracking-tight ${color}`}>{value}</div>
           </div>
@@ -4724,10 +4723,10 @@ export default function Gateway() {
       </div>
 
       {/* 应用列表 / 场景路由 Tab */}
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
+      <div className="tb-soft-card rounded-2xl overflow-hidden">
         {/* Tab bar（macOS 分段控件）+ Endpoint 合并一行 */}
-        <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-900/[0.06] dark:border-white/[0.08]">
-          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-[10px] bg-zinc-100 dark:bg-zinc-800/70">
+        <div className="flex items-center gap-3 px-2.5 py-2 border-b border-white/40 dark:border-white/[0.06]">
+          <div className="tb-glass-chip inline-flex items-center gap-0.5 p-0.5 rounded-[10px]">
           {[
             { label: t('gateway.tab.apps'), icon: (
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[15px] h-[15px] shrink-0">
@@ -4750,7 +4749,7 @@ export default function Gateway() {
               if (i === 2) setSessionsMounted(true);
             }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-medium transition-[background-color,color,box-shadow] duration-150 ease-out ${mainTab === i
-                ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm'
+                ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-white shadow-sm'
                 : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}`}>
               {icon}
               {label}
@@ -4772,7 +4771,7 @@ export default function Gateway() {
         {mainTab === 1 && (
         <div>
         {/* 操作栏：新建（蓝色，最左）｜说明｜在线同步（最右）——布局与应用列表一致 */}
-        <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex-wrap">
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-white/40 dark:border-white/[0.06] flex-wrap">
           <button
             onClick={() => { if (newRoute) { setNewRoute(null); } else { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: 'icon:shuffle', steps: [] }); } }}
             className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white transition-colors"
@@ -4782,7 +4781,7 @@ export default function Gateway() {
             <ImportConfigButton onImported={() => { refresh(); loadSceneData(); loadAvailableModels(); }} endpoint="/api/config/scenes" />
           </div>
         </div>
-        <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+        <div className="divide-y divide-white/40 dark:divide-white/[0.06]">
           {/* 新建路由编辑器：放在列表最上面 */}
           {newRoute && (
             <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} network={network} sources={sources} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
@@ -4885,7 +4884,7 @@ export default function Gateway() {
 
       {/* 路由明细 — 仅在「场景路由」Tab 显示，应用列表 Tab 不显示 */}
       {mainTab === 1 && (
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+      <div className="tb-soft-card rounded-2xl p-5">
         <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-3">{t('gateway.log.title')}</h2>
         {logEntries.length === 0 ? (
           <p className="text-sm text-zinc-500">

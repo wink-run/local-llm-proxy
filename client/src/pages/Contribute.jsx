@@ -269,9 +269,9 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
   }
 
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
+    <div className="tb-soft-card rounded-2xl p-5 space-y-4">
       {/* 标题、运行状态、转发地址 — 单行 */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4 border-b border-zinc-100 dark:border-zinc-700/80">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4 border-b border-white/40 dark:border-white/[0.06]">
         <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 shrink-0">{t('contribute.configTitle')}</span>
         <div className="flex items-center gap-2 shrink-0">
           <span className="relative flex h-2.5 w-2.5" aria-hidden>
@@ -319,18 +319,12 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                   // 仅 × 可移除，避免点 chip 本体误删
                   <span
                     key={name}
-                    className={`inline-flex items-center gap-1 pl-2.5 pr-0.5 py-0.5 rounded-lg border text-xs font-mono ${
-                      isImage
-                        ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-700 text-purple-700 dark:text-purple-300'
-                        : 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+                    className={`tb-tag pl-2.5 pr-0.5 py-0.5 text-xs font-mono ${
+                      isImage ? 'tb-tag-purple' : 'tb-tag-blue'
                     }`}
                   >
                     <TruncTip as="span" title={name} className="max-w-[14rem]">{name}</TruncTip>
-                    <span className={`text-[10px] px-1 py-0.5 rounded font-medium ${
-                      isImage
-                        ? 'bg-purple-200 dark:bg-purple-800 text-purple-700 dark:text-purple-300'
-                        : 'bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
-                    }`}>
+                    <span className="tb-tag-badge font-medium">
                       {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
                     </span>
                     <button
@@ -338,7 +332,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                       title={t('contribute.removeModel')}
                       aria-label={t('contribute.removeModel')}
                       onClick={() => toggleModel(name)}
-                      className="ml-0.5 w-5 h-5 inline-flex items-center justify-center rounded text-zinc-500 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer transition-colors duration-200"
+                      className="ml-0.5 w-5 h-5 inline-flex items-center justify-center rounded-md text-current/55 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer transition-colors duration-200"
                     >
                       ×
                     </button>
@@ -348,10 +342,8 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
               <button
                 type="button"
                 onClick={() => setShowModelPicker((v) => !v)}
-                className={`inline-flex items-center justify-center gap-1 min-w-[2rem] h-7 px-2 rounded-lg border text-sm font-medium transition-colors duration-200 cursor-pointer ${
-                  showModelPicker
-                    ? 'bg-zinc-200 dark:bg-zinc-700 border-zinc-400 dark:border-zinc-500 text-zinc-800 dark:text-zinc-100'
-                    : 'bg-zinc-50 dark:bg-zinc-900 border-dashed border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-600'
+                className={`tb-tag tb-tag-muted justify-center min-w-[2rem] h-7 px-2 text-sm font-medium cursor-pointer ${
+                  showModelPicker ? '!border-solid !bg-zinc-200/70 dark:!bg-zinc-700/70 !text-zinc-800 dark:!text-zinc-100' : ''
                 }`}
                 title={t('contribute.addModel')}
                 aria-label={t('contribute.addModel')}
@@ -364,7 +356,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
               <p className="text-[11px] text-zinc-400">{t('contribute.addModelHint')}</p>
             )}
             {showModelPicker && (
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/60 p-3 space-y-2 max-h-48 overflow-y-auto">
+              <div className="tb-soft-card rounded-xl p-3 space-y-2 max-h-48 overflow-y-auto">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[11px] text-zinc-500">{t('contribute.pickModelHint')}</p>
                   <button
@@ -385,10 +377,10 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                           key={m.name}
                           type="button"
                           onClick={() => toggleModel(m.name)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-colors bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:border-blue-400 dark:hover:border-blue-500"
+                          className="tb-tag tb-tag-muted px-2.5 py-1 text-xs font-mono !border-solid hover:!border-blue-400/50 hover:!text-blue-600 dark:hover:!text-blue-300"
                         >
                           {m.name}
-                          <span className="text-[10px] px-1 py-0.5 rounded font-medium bg-zinc-100 dark:bg-zinc-700 text-zinc-500">
+                          <span className="tb-tag-badge text-zinc-500 dark:text-zinc-400">
                             {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
                           </span>
                         </button>
@@ -429,11 +421,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                   <span
                     key={id}
                     title={reason || a?.description || undefined}
-                    className={`inline-flex items-center gap-1 pl-2.5 pr-0.5 py-0.5 rounded-lg border text-xs ${
-                      reason
-                        ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300'
-                        : 'bg-amber-100 dark:bg-amber-900/40 border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-200'
-                    }`}
+                    className="tb-tag tb-tag-amber pl-2.5 pr-0.5 py-0.5 text-xs"
                   >
                     <TruncTip as="span" title={label} className="max-w-[14rem]">{label}</TruncTip>
                     {reason && <span className="text-[10px] opacity-80">· {reason}</span>}
@@ -442,7 +430,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                       title={t('contribute.removeAssistant')}
                       aria-label={t('contribute.removeAssistant')}
                       onClick={() => toggleAssistant(id)}
-                      className="ml-0.5 w-5 h-5 inline-flex items-center justify-center rounded text-zinc-500 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer transition-colors duration-200"
+                      className="ml-0.5 w-5 h-5 inline-flex items-center justify-center rounded-md text-current/55 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer transition-colors duration-200"
                     >
                       ×
                     </button>
@@ -452,10 +440,8 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
               <button
                 type="button"
                 onClick={() => setShowAssistantPicker((v) => !v)}
-                className={`inline-flex items-center justify-center gap-1 min-w-[2rem] h-7 px-2 rounded-lg border text-sm font-medium transition-colors duration-200 cursor-pointer ${
-                  showAssistantPicker
-                    ? 'bg-zinc-200 dark:bg-zinc-700 border-zinc-400 dark:border-zinc-500 text-zinc-800 dark:text-zinc-100'
-                    : 'bg-zinc-50 dark:bg-zinc-900 border-dashed border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-amber-400 hover:text-amber-700'
+                className={`tb-tag tb-tag-muted justify-center min-w-[2rem] h-7 px-2 text-sm font-medium cursor-pointer ${
+                  showAssistantPicker ? '!border-solid !bg-zinc-200/70 dark:!bg-zinc-700/70 !text-zinc-800 dark:!text-zinc-100' : ''
                 }`}
                 title={t('contribute.addAssistant')}
                 aria-label={t('contribute.addAssistant')}
@@ -468,7 +454,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
               <p className="text-[11px] text-zinc-400">{t('contribute.addAssistantHint')}</p>
             )}
             {showAssistantPicker && (
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/60 p-3 space-y-2 max-h-48 overflow-y-auto">
+              <div className="tb-soft-card rounded-xl p-3 space-y-2 max-h-48 overflow-y-auto">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[11px] text-zinc-500">{t('contribute.pickAssistantHint')}</p>
                   <button
@@ -488,7 +474,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                         type="button"
                         title={a.description || a.name}
                         onClick={() => toggleAssistant(a.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs transition-colors bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:border-amber-400 dark:hover:border-amber-600"
+                        className="tb-tag tb-tag-muted px-2.5 py-1 text-xs !border-solid hover:!border-amber-400/50 hover:!text-amber-700 dark:hover:!text-amber-300"
                       >
                         {a.display_name || a.name}
                       </button>
@@ -559,10 +545,8 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                       const sel = selectedCircleIds.has(c.id);
                       return (
                         <button key={c.id} type="button" onClick={() => toggleCircle(c.id)}
-                          className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${
-                            sel
-                              ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                              : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400'
+                          className={`tb-tag px-2.5 py-1 text-xs cursor-pointer ${
+                            sel ? 'tb-tag-blue' : 'tb-tag-muted !border-solid'
                           }`}>
                           {c.name}
                         </button>
@@ -787,7 +771,7 @@ function CommunityAgentsCard({ refreshKey = 0 }) {
   }, [hireMsg]);
 
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-3">
+    <div className="tb-soft-card rounded-2xl p-5 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('contribute.communityAgents')}</h2>
@@ -864,7 +848,7 @@ function CommunityAgentsCard({ refreshKey = 0 }) {
                 className={`flex gap-3 text-left p-3 min-h-[72px] rounded-2xl border transition-all duration-200 cursor-pointer ${
                   sel
                     ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-400 dark:border-amber-600 shadow-md shadow-amber-500/10'
-                    : 'bg-white dark:bg-zinc-900/60 border-zinc-200 dark:border-zinc-700 shadow-sm hover:shadow-md hover:border-zinc-300 dark:hover:border-zinc-500'
+                    : 'tb-soft-card border-zinc-200/60 dark:border-white/10 hover:border-zinc-300/80 dark:hover:border-white/20'
                 }`}
               >
                 <CommunityAgentIcon name={title} selected={sel} />
@@ -1110,7 +1094,7 @@ export default function Contribute() {
   }
 
   return (
-    <div className="px-5 py-5 space-y-5">
+    <div className="px-4 py-4 space-y-4">
       <div>
         <div>
           <h1 className="text-[17px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('contribute.title')}</h1>
@@ -1128,7 +1112,7 @@ export default function Contribute() {
       {/* 累计贡献 / 赚取积分 / P2P 节省 */}
       {summary && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
+          <div className="tb-soft-card rounded-2xl p-4">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">
               {t('contribute.totalTokens')}
             </p>
@@ -1141,7 +1125,7 @@ export default function Contribute() {
                 : t('contribute.totalTokensHint')}
             </p>
           </div>
-          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
+          <div className="tb-soft-card rounded-2xl p-4">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">
               {t('contribute.earnedCredits')}
             </p>
@@ -1152,7 +1136,7 @@ export default function Contribute() {
               {t('contribute.approxCny', { amount: fmtCreditCny(summary.contrib_cny) })}
             </p>
           </div>
-          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
+          <div className="tb-soft-card rounded-2xl p-4">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">
               {t('contribute.savedMoney')}
             </p>
@@ -1195,23 +1179,23 @@ export default function Contribute() {
 
       {stats && (
         <div className="grid grid-cols-3 gap-3">
-          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div className="tb-soft-card rounded-xl p-3">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.rate')}</p>
             <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">req/min</p>
           </div>
-          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div className="tb-soft-card rounded-xl p-3">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.activeReqs')}</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_requests ?? 0}</p>
           </div>
-          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div className="tb-soft-card rounded-xl p-3">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.onlineNodes')}</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_workers ?? 0}</p>
           </div>
         </div>
       )}
 
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
+      <div className="tb-soft-card rounded-2xl p-4">
         <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-3">{t('contribute.chartTitle')}</p>
         <RateChart data={chartData} />
       </div>
@@ -1233,7 +1217,7 @@ export default function Contribute() {
               return (
               <div
                 key={s.id ?? s.period_end}
-                className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-2.5 text-sm
+                className="tb-soft-card rounded-xl px-4 py-2.5 text-sm
                   flex flex-col gap-1.5
                   sm:grid sm:grid-cols-[8.5rem_4.5rem_minmax(0,1fr)_4.5rem] sm:gap-x-2 sm:items-center sm:gap-y-0"
               >

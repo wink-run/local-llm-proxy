@@ -1796,7 +1796,7 @@ export default function Resources() {
                 className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
                   active
                     ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/30 shadow-sm'
-                    : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-600'
+                    : 'tb-soft-card hover:border-zinc-300 dark:hover:border-zinc-600'
                 }`}
               >
                 {opt.id ? (
@@ -2058,17 +2058,15 @@ export default function Resources() {
             <span
               key={p.id}
               title={hoverTitle}
-              className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full cursor-default ${
-                canUnproject
-                  ? 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
+              className={`tb-tag text-[10px] px-2 py-0.5 cursor-default ${
+                canUnproject ? 'tb-tag-blue' : 'tb-tag-muted !border-solid'
               }`}
             >
               {p.label || p.agentId}
               {canUnproject && (
                 <button
                   type="button"
-                  className="opacity-60 hover:opacity-100"
+                  className="opacity-60 hover:opacity-100 rounded-md"
                   title={t('resources.unproject')}
                   disabled={busy === `${resource.id}-${p.agentId}`}
                   onClick={() => handleUnproject(resource, p.agentId)}
@@ -2384,7 +2382,7 @@ export default function Resources() {
     return createPortal(
       <div
         ref={projectMenuRef}
-        className="fixed z-[9999] w-56 flex flex-col rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg overflow-hidden"
+        className="fixed z-[9999] w-56 flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg overflow-hidden"
         style={{
           left: projectMenu.x,
           top: projectMenu.y,
@@ -2442,16 +2440,16 @@ export default function Resources() {
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-white dark:bg-zinc-900">
-      <header className="shrink-0 px-5 pt-5 pb-3 border-b border-zinc-200/50 dark:border-zinc-800/50 bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150">
+    <div className="flex flex-col h-full min-h-0 bg-transparent">
+      <header className="shrink-0 px-4 pt-4 pb-3 border-b border-white/40 dark:border-white/[0.06] bg-white/35 dark:bg-zinc-900/40 backdrop-blur-xl backdrop-saturate-150">
         <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{t('resources.title')}</h1>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{t('resources.subtitle')}</p>
       </header>
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3.5 space-y-3.5">
         {/* 类型筛选：与 Playground 分段同系 */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex flex-wrap rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80 gap-0.5">
+          <div className="tb-glass-chip inline-flex flex-wrap rounded-2xl p-1 gap-0.5">
             {TYPE_OPTIONS.map(opt => (
               <button
                 key={opt.id || 'all'}
@@ -2460,9 +2458,9 @@ export default function Resources() {
                   changeTypeFilter(opt.id);
                   if (opt.id !== 'prompt') setPromptKindFilter('');
                 }}
-                className={`tb-press text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                className={`tb-press text-xs px-3 py-1.5 rounded-xl transition-colors ${
                   typeFilter === opt.id
-                    ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                    ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 shadow-sm'
                     : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
                 }`}
               >
@@ -2484,7 +2482,7 @@ export default function Resources() {
                   onClick={() => setPromptKindFilter(opt.id)}
                   className={`tb-press text-xs px-2.5 py-1.5 rounded-lg transition-colors ${
                     promptKindFilter === opt.id
-                      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                      ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 shadow-sm'
                       : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
                   }`}
                 >
@@ -2511,7 +2509,7 @@ export default function Resources() {
                   onClick={() => changeViewTab(tab.id)}
                   className={`tb-press text-xs px-3 py-1.5 rounded-lg transition-colors ${
                     viewTab === tab.id
-                      ? 'bg-white dark:bg-zinc-800 shadow-sm text-zinc-900 dark:text-zinc-100'
+                      ? 'bg-white/80 dark:bg-white/10 shadow-sm text-zinc-900 dark:text-zinc-100'
                       : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
                   }`}
                 >
@@ -2602,7 +2600,7 @@ export default function Resources() {
                       onClick={() => changeLayerFilter(opt.id)}
                       className={`tb-press text-[11px] px-2.5 py-1 rounded-lg transition-colors tabular-nums ${
                         layerFilter === opt.id
-                          ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                          ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 shadow-sm'
                           : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
                       }`}
                     >

@@ -158,7 +158,7 @@ export default function Circles() {
   }
 
   return (
-    <div className="px-5 py-5 space-y-5">
+    <div className="px-4 py-4 space-y-4">
       {/* 页头：右侧与标题区垂直居中对齐，electron-no-drag 保证可点击 */}
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
@@ -187,7 +187,7 @@ export default function Circles() {
 
       {/* 创建表单 */}
       {showCreate && (
-        <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
+        <div className="tb-soft-card rounded-xl px-4 py-4 space-y-3">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('circles.createTitle')}</h2>
           <form onSubmit={handleCreate} className="space-y-3">
             <input
@@ -230,13 +230,13 @@ export default function Circles() {
         </div>
         {listLoading
           ? (
-            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
+            <div className="tb-soft-card rounded-xl px-4 py-6 text-center">
               <p className="text-sm text-gray-400 dark:text-gray-500">{t('common.loading')}</p>
             </div>
           )
           : owned.length === 0
           ? (
-            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
+            <div className="tb-soft-card rounded-xl px-4 py-6 text-center">
               <p className="text-sm text-gray-400 dark:text-gray-500">{t('circles.noOwned')}</p>
             </div>
           )
@@ -273,13 +273,13 @@ export default function Circles() {
 
         {listLoading
           ? (
-            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
+            <div className="tb-soft-card rounded-xl px-4 py-6 text-center">
               <p className="text-sm text-gray-400 dark:text-gray-500">{t('common.loading')}</p>
             </div>
           )
           : joined.length === 0
           ? (
-            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center space-y-2">
+            <div className="tb-soft-card rounded-xl px-4 py-6 text-center space-y-2">
               <p className="text-sm text-gray-400 dark:text-gray-500">{t('circles.noJoined')}</p>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 {t('circles.noJoinedHint')}
@@ -411,7 +411,7 @@ function CircleCard({ circle, isOwner, onOpen, onInvite, onAction, actionLabel, 
           onOpen();
         }
       }}
-      className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
+      className="tb-soft-card rounded-xl px-4 py-4 space-y-3 cursor-pointer hover:bg-white/55 dark:hover:bg-white/[0.06] transition-colors"
     >
       <div className="flex items-center gap-4">
         <div

@@ -21,12 +21,27 @@
     --tb-line-soft: rgb(24 24 27 / 0.05);
     --tb-line: rgb(24 24 27 / 0.08);
     --tb-line-strong: rgb(24 24 27 / 0.12);
+    /* 圆角 + 玻璃：外大内小；底色留给 blur 透出层次 */
+    --tb-radius-shell: 1.25rem;
+    --tb-radius-card: 1rem;
+    --tb-radius-ctrl: 0.75rem;
+    --tb-glass-blur: 36px;
+    --tb-glass-sat: 175%;
+    --tb-glass-fill: rgb(255 255 255 / 0.52);
+    /* 主区略实一点，仍保持可透的玻璃感 */
+    --tb-glass-fill-strong: rgb(255 255 255 / 0.62);
+    --tb-glass-edge: rgb(255 255 255 / 0.58);
+    --tb-glass-highlight: rgb(255 255 255 / 0.62);
   }
 
   html.dark {
     --tb-line-soft: rgb(255 255 255 / 0.05);
     --tb-line: rgb(255 255 255 / 0.08);
     --tb-line-strong: rgb(255 255 255 / 0.13);
+    --tb-glass-fill: rgb(24 24 27 / 0.48);
+    --tb-glass-fill-strong: rgb(24 24 27 / 0.58);
+    --tb-glass-edge: rgb(255 255 255 / 0.1);
+    --tb-glass-highlight: rgb(255 255 255 / 0.08);
   }
 
   body {
@@ -87,10 +102,10 @@
   }
 
   /* Compact scrollbars */
-  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.3); border-radius: 2px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.5); }
+  ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.28); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
 
   /* Input resets */
   input[type=number]::-webkit-inner-spin-button,
@@ -98,6 +113,171 @@
 }
 
 @layer components {
+  /*
+   * 壳层：只借鉴玻璃质感（半透明 + blur + 顶缘高光），
+   * 不照搬参考图的奶油侧栏 / 胶囊布局。
+   */
+  .tb-app-shell {
+    /* 淡冷灰底 + 轻微光斑，让毛玻璃有东西可透 */
+    background:
+      radial-gradient(900px 480px at 8% -8%, rgb(186 230 253 / 0.38), transparent 55%),
+      radial-gradient(720px 420px at 96% 108%, rgb(212 212 216 / 0.55), transparent 50%),
+      #ececee;
+    padding: 0.55rem;
+    gap: 0.55rem;
+    min-width: 900px;
+  }
+  .dark .tb-app-shell {
+    background:
+      radial-gradient(900px 480px at 10% -10%, rgb(56 189 248 / 0.12), transparent 55%),
+      radial-gradient(700px 400px at 100% 100%, rgb(63 63 70 / 0.45), transparent 50%),
+      #09090b;
+  }
+  .tb-app-sidebar,
+  .tb-app-main {
+    position: relative;
+    isolation: isolate;
+    border-radius: var(--tb-radius-shell);
+    background: var(--tb-glass-fill);
+    backdrop-filter: blur(var(--tb-glass-blur)) saturate(var(--tb-glass-sat));
+    -webkit-backdrop-filter: blur(var(--tb-glass-blur)) saturate(var(--tb-glass-sat));
+    border: 1px solid var(--tb-glass-edge);
+    box-shadow:
+      0 1px 0 var(--tb-glass-highlight) inset,
+      0 10px 32px -20px rgb(15 23 42 / 0.16);
+  }
+  .tb-app-main {
+    background: var(--tb-glass-fill-strong);
+  }
+  /* 主区顶缘高光 + 淡色晕：强化玻璃层，页面内容叠在上面 */
+  .tb-app-main::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.42), transparent 32%),
+      radial-gradient(720px 360px at 85% -5%, rgb(186 230 253 / 0.22), transparent 55%);
+  }
+  .dark .tb-app-main::before {
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.06), transparent 30%),
+      radial-gradient(720px 360px at 85% -5%, rgb(56 189 248 / 0.1), transparent 55%);
+  }
+  .tb-app-main > * {
+    position: relative;
+    z-index: 1;
+  }
+  .dark .tb-app-sidebar,
+  .dark .tb-app-main {
+    box-shadow:
+      0 1px 0 var(--tb-glass-highlight) inset,
+      0 14px 36px -22px rgb(0 0 0 / 0.55);
+  }
+
+  /* 玻璃控件条：分段切换等 */
+  .tb-glass-chip {
+    background: rgb(255 255 255 / 0.45);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    border: 1px solid rgb(255 255 255 / 0.5);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.4) inset;
+  }
+  .dark .tb-glass-chip {
+    background: rgb(39 39 42 / 0.55);
+    border-color: rgb(255 255 255 / 0.08);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset;
+  }
+
+  /*
+   * 彩色玻璃标签（模型/智能体 chip）：
+   * 半透明底 + blur + 顶缘高光，避免实色色块发闷。
+   */
+  .tb-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 0.65rem;
+    border-width: 1px;
+    border-style: solid;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.45) inset,
+      0 4px 14px -8px rgb(15 23 42 / 0.14);
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  }
+  .dark .tb-tag {
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.06) inset,
+      0 6px 16px -10px rgb(0 0 0 / 0.45);
+  }
+  .tb-tag-blue {
+    background: rgb(59 130 246 / 0.12);
+    border-color: rgb(59 130 246 / 0.35);
+    color: rgb(29 78 216);
+  }
+  .dark .tb-tag-blue {
+    background: rgb(59 130 246 / 0.18);
+    border-color: rgb(96 165 250 / 0.35);
+    color: rgb(147 197 253);
+  }
+  .tb-tag-purple {
+    background: rgb(147 51 234 / 0.12);
+    border-color: rgb(147 51 234 / 0.35);
+    color: rgb(109 40 217);
+  }
+  .dark .tb-tag-purple {
+    background: rgb(147 51 234 / 0.2);
+    border-color: rgb(196 181 253 / 0.35);
+    color: rgb(216 180 254);
+  }
+  .tb-tag-amber {
+    background: rgb(245 158 11 / 0.14);
+    border-color: rgb(245 158 11 / 0.38);
+    color: rgb(180 83 9);
+  }
+  .dark .tb-tag-amber {
+    background: rgb(245 158 11 / 0.16);
+    border-color: rgb(251 191 36 / 0.35);
+    color: rgb(253 224 71);
+  }
+  .tb-tag-muted {
+    background: rgb(255 255 255 / 0.4);
+    border-color: rgb(161 161 170 / 0.45);
+    border-style: dashed;
+    color: rgb(113 113 122);
+  }
+  .dark .tb-tag-muted {
+    background: rgb(39 39 42 / 0.45);
+    border-color: rgb(113 113 122 / 0.45);
+    color: rgb(161 161 170);
+  }
+  .tb-tag-muted:hover {
+    border-color: rgb(59 130 246 / 0.45);
+    color: rgb(37 99 235);
+    background: rgb(59 130 246 / 0.08);
+  }
+  .dark .tb-tag-muted:hover {
+    border-color: rgb(96 165 250 / 0.45);
+    color: rgb(147 197 253);
+  }
+  /* chip 内微型类型角标 */
+  .tb-tag-badge {
+    font-size: 10px;
+    line-height: 1.2;
+    padding: 0.1rem 0.3rem;
+    border-radius: 0.35rem;
+    background: rgb(255 255 255 / 0.45);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.35) inset;
+  }
+  .dark .tb-tag-badge {
+    background: rgb(0 0 0 / 0.22);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset;
+  }
+
   /* 按压反馈：pointer-down 即时缩放（Apple Response） */
   .tb-press {
     transition: transform 100ms var(--ease-out, ease-out), background-color 150ms ease, color 150ms ease, border-color 150ms ease, opacity 150ms ease, box-shadow 150ms ease;
@@ -130,6 +310,7 @@
 
   /* 浮动面板材料（toast / sheet）：更厚、带顶缘高光 */
   .tb-sheet {
+    border-radius: var(--tb-radius-card);
     background: rgba(255, 255, 255, 0.82);
     backdrop-filter: blur(28px) saturate(180%);
     -webkit-backdrop-filter: blur(28px) saturate(180%);
@@ -151,55 +332,104 @@
     animation: tb-materialize 0.32s var(--ease-out) both;
   }
 
-  /* 数据表外壳：轻阴影 + 发丝线，替代灰底卡片感 */
+  /* 数据表外壳：玻璃面板 + 顶缘高光 */
   .tb-table-shell {
-    border: 1px solid var(--tb-line);
-    border-radius: 12px;
+    border: 1px solid var(--tb-glass-edge);
+    border-radius: var(--tb-radius-card);
     overflow: hidden;
-    background: rgb(255 255 255 / 0.92);
+    background: rgb(255 255 255 / 0.48);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
     box-shadow:
-      0 1px 0 rgb(255 255 255 / 0.65) inset,
+      0 1px 0 var(--tb-glass-highlight) inset,
       0 1px 2px rgb(15 23 42 / 0.03),
-      0 10px 28px -18px rgb(15 23 42 / 0.14);
+      0 12px 32px -18px rgb(15 23 42 / 0.14);
   }
   .dark .tb-table-shell {
-    background: rgb(24 24 27 / 0.55);
+    background: rgb(24 24 27 / 0.42);
     box-shadow:
-      0 1px 0 rgb(255 255 255 / 0.04) inset,
+      0 1px 0 var(--tb-glass-highlight) inset,
       0 12px 32px -20px rgb(0 0 0 / 0.55);
   }
 
-  /* 表头：毛玻璃吸顶，不用 zinc-50 实色板 */
+  /*
+   * 嵌套在 soft-card 内的表格 / 子卡片：
+   * 去掉第二层半透明白底，避免 0.52+0.48 叠成近似实色。
+   */
+  .tb-soft-card .tb-table-shell,
+  .tb-soft-card .tb-soft-card {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: 0 1px 0 var(--tb-glass-highlight) inset;
+    border-color: var(--tb-line);
+  }
+  .tb-soft-card .tb-table-head {
+    background: rgb(255 255 255 / 0.28);
+  }
+  .dark .tb-soft-card .tb-table-head {
+    background: rgb(255 255 255 / 0.04);
+  }
+  /* 嵌套子卡 hover：轻抬一层，仍保持通透 */
+  .tb-soft-card .tb-soft-card:hover {
+    background: rgb(255 255 255 / 0.28);
+  }
+  .dark .tb-soft-card .tb-soft-card:hover {
+    background: rgb(255 255 255 / 0.05);
+  }
+
+  /* 通用玻璃卡片：半透明 + 顶缘高光 */
+  .tb-soft-card {
+    border-radius: var(--tb-radius-card);
+    border: 1px solid var(--tb-glass-edge);
+    background: var(--tb-glass-fill);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    box-shadow:
+      0 1px 0 var(--tb-glass-highlight) inset,
+      0 8px 24px -16px rgb(15 23 42 / 0.12);
+  }
+  .dark .tb-soft-card {
+    box-shadow:
+      0 1px 0 var(--tb-glass-highlight) inset,
+      0 10px 28px -18px rgb(0 0 0 / 0.5);
+  }
+
+  /* 表头：更通透的毛玻璃吸顶 */
   .tb-table-head {
     font-size: 11px;
     font-weight: 500;
     letter-spacing: 0.03em;
     color: rgb(82 82 91);
-    background: rgb(255 255 255 / 0.78);
-    backdrop-filter: blur(14px) saturate(160%);
-    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: rgb(255 255 255 / 0.55);
+    backdrop-filter: blur(18px) saturate(170%);
+    -webkit-backdrop-filter: blur(18px) saturate(170%);
     border-bottom: 1px solid var(--tb-line);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.35) inset;
     font-variant-numeric: tabular-nums;
   }
   .dark .tb-table-head {
     color: rgb(161 161 170);
-    background: rgb(24 24 27 / 0.78);
+    background: rgb(24 24 27 / 0.55);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
   }
 
-  /* 表行：发丝分隔 + 轻 hover（紧跟表头的首行不再叠双线） */
+  /* 表行：发丝分隔 + 轻玻璃 hover */
   .tb-table-row {
     border-top: 1px solid var(--tb-line-soft);
     font-variant-numeric: tabular-nums;
-    transition: background-color 150ms ease;
+    transition: background-color 150ms ease, box-shadow 150ms ease;
   }
   .tb-table-head + .tb-table-row {
     border-top: none;
   }
   .tb-table-row:hover {
-    background: rgb(24 24 27 / 0.025);
+    background: rgb(255 255 255 / 0.42);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.35) inset;
   }
   .dark .tb-table-row:hover {
-    background: rgb(255 255 255 / 0.03);
+    background: rgb(255 255 255 / 0.05);
+    box-shadow: none;
   }
 
   /* 表内主文案：略提对比，避免整表发灰 */
@@ -733,6 +963,49 @@
 
 /* 无障碍：降低透明度 → 实心底，去掉 blur */
 @media (prefers-reduced-transparency: reduce) {
+  .tb-app-shell {
+    background: #f4f4f5;
+  }
+  .dark .tb-app-shell {
+    background: #09090b;
+  }
+  .tb-app-sidebar,
+  .tb-app-main,
+  .tb-glass-chip,
+  .tb-soft-card,
+  .tb-table-shell,
+  .tb-table-head,
+  .tb-tag {
+    background: #fff;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .dark .tb-app-sidebar,
+  .dark .tb-app-main,
+  .dark .tb-glass-chip,
+  .dark .tb-soft-card,
+  .dark .tb-table-shell,
+  .dark .tb-table-head,
+  .dark .tb-tag {
+    background: #18181b;
+  }
+  /* 嵌套层保持透明，避免实色叠实色 */
+  .tb-soft-card .tb-table-shell,
+  .tb-soft-card .tb-soft-card {
+    background: transparent;
+  }
+  .tb-soft-card .tb-table-head {
+    background: #f4f4f5;
+  }
+  .dark .tb-soft-card .tb-table-head {
+    background: #27272a;
+  }
+  .tb-tag-blue { background: #dbeafe; }
+  .tb-tag-purple { background: #f3e8ff; }
+  .tb-tag-amber { background: #fef3c7; }
+  .dark .tb-tag-blue { background: #1e3a5f; }
+  .dark .tb-tag-purple { background: #3b0764; }
+  .dark .tb-tag-amber { background: #78350f; }
   .tb-material {
     background: #fff;
     backdrop-filter: none;

@@ -962,7 +962,7 @@ function PersonalFilterBar({ value, onChange, t }) {
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border transition-colors ${
             value === item.id
               ? 'bg-blue-600 text-white border-blue-600 font-medium'
-              : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600'
+              : 'tb-soft-card text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
           }`}
         >
           {item.id !== 'all' && <PersonalTypeIcon tag={item.id} />}
@@ -1406,7 +1406,7 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
   }
 
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+    <div className="tb-soft-card rounded-2xl overflow-hidden">
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
         <div className="w-9 h-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🌐</div>
@@ -2538,7 +2538,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   }
 
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+    <div className="tb-soft-card rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-4">
         <div className="w-9 h-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🔗</div>
         <div className="flex-1 min-w-0">
@@ -2890,7 +2890,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
   }
 
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+    <div className="tb-soft-card rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-3.5">
         {/* Icon（命中品牌用 lobehub logo，否则回退预设 emoji）*/}
         <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
@@ -4124,7 +4124,7 @@ export default function Providers() {
         </button>
 
         {pickerOpen && (
-          <div className="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-zinc-200 dark:border-zinc-700 space-y-3">
+          <div className="tb-soft-card p-4 rounded-2xl space-y-3">
             {!paidAccountsLoaded && (
               <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
             )}
@@ -4138,7 +4138,7 @@ export default function Providers() {
                   <button key={item.key} type="button" title={m.hint || ''} onClick={() => {
                     updateProvider(pr.id, { enabled: true });
                   }}
-                    className="w-full flex items-center gap-2.5 px-3 py-3 rounded-xl border text-left text-sm font-medium transition-colors border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600">
+                    className="tb-soft-card w-full flex items-center gap-2.5 px-3 py-3 rounded-xl text-left text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600">
                     <span className="text-lg shrink-0">{m.icon || '🔌'}</span>
                     <span className="min-w-0 flex-1 truncate">{m.label || pr.id}</span>
                     {(m.keyless || pr.type === 'free') && (
@@ -4185,7 +4185,7 @@ export default function Providers() {
       : 'Key';
     return (
       <button key={entry.pickerKey} type="button" onClick={() => selectPickerEntry(entry)}
-        className={`w-full flex items-center gap-2.5 px-3 py-3 rounded-xl border text-left transition-colors bg-white dark:bg-zinc-800 hover:border-blue-300 dark:hover:border-blue-700 ${
+        className={`tb-soft-card w-full flex items-center gap-2.5 px-3 py-3 rounded-xl text-left transition-colors hover:border-blue-300 dark:hover:border-blue-700 ${
           isFree
             ? 'border-teal-300/80 dark:border-teal-700/70 ring-1 ring-teal-200/70 dark:ring-teal-800/40'
             : 'border-zinc-200 dark:border-zinc-700'
@@ -4260,7 +4260,7 @@ export default function Providers() {
   }
 
   return (
-    <div className="px-5 py-5 space-y-6">
+    <div className="px-4 py-4 space-y-5">
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -4291,7 +4291,7 @@ export default function Providers() {
           hint={tierConfig.local.hint}
         />
 
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
+        <div className="tb-soft-card rounded-2xl p-5 space-y-4">
         {sourcesView !== 'model' && (
           <div className="flex items-center justify-between gap-x-3 gap-y-2 min-w-0 flex-wrap">
             <PersonalFilterBar value={personalFilter} onChange={setPersonalFilter} t={t} />

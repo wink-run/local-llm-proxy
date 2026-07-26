@@ -732,7 +732,7 @@ export default function UserAccountsPanel({
       ];
 
   return (
-    <section className={billingOnly ? '' : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden'}>
+    <section className={billingOnly ? '' : 'tb-soft-card rounded-2xl overflow-hidden'}>
       {/* 账户类型切换（只剩一个 tab 时隐藏标题栏，直接展示内容）*/}
       {tabs.length > 1 && (
         <div className="flex border-b border-zinc-100 dark:border-zinc-800">
@@ -858,7 +858,7 @@ export default function UserAccountsPanel({
                 ) : (
                   <div className="space-y-2">
                     {profileAppSubs.map(s => (
-                      <div key={s.config_fp || s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                      <div key={s.config_fp || s.id} className="flex items-center gap-3 px-4 py-3 tb-soft-card rounded-xl">
                         <ServiceIcon id={s.source_id} name={s.name || s.app_name} icon={s.app_icon} />
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{s.name || s.app_name}</div>
@@ -872,7 +872,7 @@ export default function UserAccountsPanel({
                       </div>
                     ))}
                     {profileDirectSubs.map(d => (
-                      <div key={d.config_fp || d.agent_id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                      <div key={d.config_fp || d.agent_id} className="flex items-center gap-3 px-4 py-3 tb-soft-card rounded-xl">
                         <ServiceIcon id={d.source_id || d.agent_id} name={d.name} />
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{d.name || d.agent_id}</div>
@@ -892,7 +892,7 @@ export default function UserAccountsPanel({
                 ) : (
                   <div className="space-y-2">
                     {profileApiSubs.map(s => (
-                      <div key={s.config_fp || s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                      <div key={s.config_fp || s.id} className="flex items-center gap-3 px-4 py-3 tb-soft-card rounded-xl">
                         <ServiceIcon id={s.source_id} name={s.name || s.app_name} icon={s.app_icon} />
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{s.name || s.app_name}</div>
@@ -924,7 +924,7 @@ export default function UserAccountsPanel({
               ) : (
                 <div className="space-y-2">
                   {deviceAccounts.payg.map(p => (
-                    <div key={p.config_fp || `${p.provider_id}-${p.id}`} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                    <div key={p.config_fp || `${p.provider_id}-${p.id}`} className="flex items-center gap-3 px-4 py-3 tb-soft-card rounded-xl">
                       <ServiceIcon id={p.provider_id} name={p.label || p.name} icon={p.icon} />
                       <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">{p.label || p.name}</span>
                       <span className="text-xs text-zinc-400 shrink-0 tabular-nums">{t('accounts.modelsCount', { n: p.models_count ?? 0 })}</span>

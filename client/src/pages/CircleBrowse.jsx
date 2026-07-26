@@ -118,7 +118,7 @@ export default function CircleBrowse() {
       {loading ? (
         <p className="text-sm text-gray-400">{t('circles.browse.loading')}</p>
       ) : circles.length === 0 ? (
-        <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-8 text-center">
+        <div className="tb-soft-card rounded-xl px-4 py-8 text-center">
           <p className="text-sm text-gray-400">{t('circles.browse.empty')}</p>
         </div>
       ) : (
@@ -178,7 +178,7 @@ function BrowseCard({ circle, applying, onApply, onOpen, t }) {
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4">
+    <div className="tb-soft-card rounded-xl px-4 py-4">
       <div className="flex items-center gap-4">
         <div className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0`}>
           {initial}

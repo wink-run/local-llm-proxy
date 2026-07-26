@@ -45,10 +45,10 @@ function SourceMixBar({ proxy, session, total, className = 'h-2', t }) {
   const pPct = Math.round((proxy / tot) * 100);
   const sPct = Math.max(0, 100 - pPct);
   if (!proxy && !session) {
-    return <div className={`flex-1 bg-zinc-100 dark:bg-zinc-800 rounded-full ${className}`} />;
+    return <div className={`flex-1 rounded-full bg-black/[0.06] dark:bg-white/[0.08] ${className}`} />;
   }
   return (
-    <div className={`flex-1 flex rounded-full overflow-hidden ${className}`} title={t('dashboard.sourceMixTitle', { proxy, session })}>
+    <div className={`flex-1 flex rounded-full overflow-hidden bg-black/[0.04] dark:bg-white/[0.05] ${className}`} title={t('dashboard.sourceMixTitle', { proxy, session })}>
       {pPct > 0 && <div className="bg-blue-500 h-full" style={{ width: `${pPct}%` }} />}
       {sPct > 0 && <div className="bg-violet-400/80 h-full" style={{ width: `${sPct}%` }} />}
     </div>
@@ -61,7 +61,7 @@ function AppShareStrip({ rows, metric = 'tokens' }) {
   const total = rows.reduce((s, r) => s + (r[metric] || 0), 0) || 1;
   return (
     <div className="space-y-2">
-      <div className="flex h-3 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800">
+      <div className="flex h-3 rounded-full overflow-hidden bg-black/[0.06] dark:bg-white/[0.08] ring-1 ring-inset ring-black/[0.04] dark:ring-white/[0.06]">
         {rows.map((r, i) => {
           const v = r[metric] || 0;
           if (!v) return null;
@@ -137,7 +137,7 @@ function SkillToolUsageSection({ skillUsage, toolUsage, mcpUsage, rangeLabel, lo
                 </span>
                 <span className="shrink-0 tabular-nums text-zinc-500">{row.calls}</span>
               </div>
-              <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+              <div className="h-1.5 rounded-full overflow-hidden bg-black/[0.06] dark:bg-white/[0.08]">
                 <div className={`h-full rounded-full ${accent}`} style={{ width: `${Math.max(pct, 2)}%` }} />
               </div>
             </div>
@@ -171,7 +171,7 @@ function SkillToolUsageSection({ skillUsage, toolUsage, mcpUsage, rangeLabel, lo
                 </span>
                 <span className="shrink-0 tabular-nums text-zinc-500">{srv.calls}</span>
               </div>
-              <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+              <div className="h-1.5 rounded-full overflow-hidden bg-black/[0.06] dark:bg-white/[0.08]">
                 <div className="h-full rounded-full bg-violet-500" style={{ width: `${Math.max(pct, 2)}%` }} />
               </div>
             </div>
@@ -183,8 +183,8 @@ function SkillToolUsageSection({ skillUsage, toolUsage, mcpUsage, rangeLabel, lo
 
   // 始终三栏：窄窗口靠压缩内边距/间距撑住，避免堆叠换行
   const Card = ({ title, hint, totalClass, total, children }) => (
-    <div className="min-w-0 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
-      <div className="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 flex items-start justify-between gap-1.5">
+    <div className="tb-soft-card min-w-0 rounded-xl overflow-hidden">
+      <div className="px-3.5 py-2.5 border-b border-white/40 dark:border-white/[0.06] flex items-start justify-between gap-1.5">
         <div className="min-w-0">
           <h2 className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">{title}</h2>
           <p className="text-[10px] leading-snug text-zinc-500 mt-0.5 line-clamp-2" title={hint}>{hint}</p>
@@ -196,7 +196,7 @@ function SkillToolUsageSection({ skillUsage, toolUsage, mcpUsage, rangeLabel, lo
           </div>
         </div>
       </div>
-      <div className="px-3 py-3">{children}</div>
+      <div className="px-3.5 py-3">{children}</div>
     </div>
   );
 
@@ -238,8 +238,8 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
     sortBy === 'tokens' ? (b.tokens - a.tokens) : (b.calls - a.calls));
 
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 space-y-3">
+    <div className="tb-soft-card rounded-2xl overflow-hidden">
+      <div className="px-4 py-3.5 border-b border-white/40 dark:border-white/[0.06] space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.appUsage')}</h2>
@@ -247,11 +247,13 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-zinc-500">{rangeLabel}</span>
-            <div className="flex gap-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-0.5">
+            <div className="tb-glass-chip flex gap-0.5 rounded-lg p-0.5">
               {[['calls', t('common.sortCalls')], ['tokens', t('common.sortTokens')]].map(([k, label]) => (
                 <button key={k} type="button" onClick={() => onSortBy(k)}
                   className={`px-2 py-0.5 text-xs rounded-md transition-colors ${
-                    sortBy === k ? 'bg-white dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200 shadow-sm' : 'text-zinc-500'
+                    sortBy === k
+                      ? 'bg-white/80 dark:bg-white/10 text-zinc-800 dark:text-zinc-100 font-semibold shadow-sm'
+                      : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
                   }`}>{label}</button>
               ))}
             </div>
@@ -264,30 +266,31 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
         </div>
       </div>
       {loading ? (
-        <div className="px-5 py-8 text-xs text-zinc-600 text-center">{t('common.loading')}</div>
+        <div className="px-4 py-8 text-xs text-zinc-600 text-center">{t('common.loading')}</div>
       ) : sorted.length === 0 ? (
-        <div className="px-5 py-8 text-xs text-zinc-600 text-center">
+        <div className="px-4 py-8 text-xs text-zinc-600 text-center">
           {t('dashboard.appUsageEmpty')}
         </div>
       ) : (
-        <>
-          <div className="tb-table-head hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-5 py-2">
-            <span>{t('dashboard.colApp')}</span>
-            <span className="text-right">{t('dashboard.colRequests')}</span>
-            <span className="text-right">{t('dashboard.colTokens')}</span>
-            <span className="text-right">{t('dashboard.colCost')}</span>
-            <span>{t('dashboard.colSourceMix')}</span>
-          </div>
-          <div className="divide-y divide-zinc-200/50 dark:divide-zinc-800/50">
+        /* 内嵌表格：保留 glass 边/阴影，避免 !border-0 叠成实色白块 */
+        <div className="px-3 pb-3 pt-1">
+          <div className="tb-table-shell rounded-xl">
+            <div className="tb-table-head hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-3.5 py-2">
+              <span>{t('dashboard.colApp')}</span>
+              <span className="text-right">{t('dashboard.colRequests')}</span>
+              <span className="text-right">{t('dashboard.colTokens')}</span>
+              <span className="text-right">{t('dashboard.colCost')}</span>
+              <span>{t('dashboard.colSourceMix')}</span>
+            </div>
             {sorted.map((r, i) => (
-              <div key={r.id} className="px-5 py-3.5 hover:bg-zinc-50/50 dark:hover:bg-zinc-800/20">
+              <div key={r.id} className="tb-table-row px-3.5 py-3">
                 <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 items-center">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className={`w-1 h-8 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
                     <AppIconDisplay app={r} />
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{r.name}</div>
-                      <div className="text-xs text-zinc-500 truncate">
+                      <div className="tb-table-cell-primary truncate">{r.name}</div>
+                      <div className="tb-table-cell-meta truncate">
                         {linkMethodLabel(r.link_method, t)}
                         {appSourceLabel(r, t)}
                       </div>
@@ -295,14 +298,14 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
                   </div>
                   <div className="sm:text-right">
                     <div className="text-sm font-semibold tabular-nums">{r.calls.toLocaleString()}</div>
-                    <div className="mt-1 h-1 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden hidden sm:block">
+                    <div className="mt-1 h-1 rounded-full overflow-hidden hidden sm:block bg-black/[0.06] dark:bg-white/[0.08]">
                       <div className={`h-full rounded-full ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`}
                         style={{ width: `${Math.round(r.calls / maxCalls * 100)}%` }} />
                     </div>
                   </div>
                   <div className="sm:text-right">
                     <div className="text-sm font-semibold tabular-nums text-purple-600 dark:text-purple-400">{fmtN(r.tokens)}</div>
-                    <div className="mt-1 h-1 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden hidden sm:block">
+                    <div className="mt-1 h-1 rounded-full overflow-hidden hidden sm:block bg-black/[0.06] dark:bg-white/[0.08]">
                       <div className="h-full rounded-full bg-purple-500"
                         style={{ width: `${Math.round((r.tokens || 0) / maxTokens * 100)}%` }} />
                     </div>
@@ -318,7 +321,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
               </div>
             ))}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -712,24 +715,26 @@ export default function Dashboard() {
   const rangeLabel = t(`profile.range.${range}`);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 min-h-screen">
+    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-transparent text-zinc-900 dark:text-zinc-100 min-h-full">
 
       {/* Header：标题行放 Desktop 标签与日期选择，副标题单独一行 */}
       <div>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <h1 className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight shrink-0">{t('dashboard.title')}</h1>
-            <span className="flex items-center gap-1 text-xs text-zinc-400 border border-zinc-200 dark:border-zinc-700 rounded-full px-2 py-0.5 shrink-0">
+            <span className="tb-tag tb-tag-muted !border-solid inline-flex items-center gap-1 text-xs rounded-full px-2 py-0.5 shrink-0">
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${gwStatus?.running !== false ? 'bg-green-500' : 'bg-zinc-400'}`}/>
               {window.electronAPI ? t('common.desktop') : t('common.cli')}
               {gwStatus?.port ? ` · :${gwStatus.port}` : ''}
             </span>
           </div>
-          <div className="flex gap-0.5 bg-zinc-100 dark:bg-zinc-800/60 rounded-lg p-0.5 shrink-0">
+          <div className="tb-glass-chip flex gap-0.5 rounded-xl p-0.5 shrink-0">
             {RANGE_KEYS.map(r => (
               <button key={r} onClick={() => setRange(r)}
-                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                  range === r ? 'bg-white dark:bg-zinc-700 text-zinc-800 dark:text-zinc-100 font-semibold shadow-sm' : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
+                className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                  range === r
+                    ? 'bg-white/80 dark:bg-white/10 text-zinc-800 dark:text-zinc-100 font-semibold shadow-sm'
+                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
                 }`}>{t(`profile.range.${r}`)}</button>
             ))}
           </div>
@@ -738,47 +743,56 @@ export default function Dashboard() {
       </div>
 
       {/* Summary cards — 5列 */}
-      <div className="grid grid-cols-5 gap-3">
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.totalRequests')}</div>
-          <div className="text-2xl font-bold mt-1">{totalCalls}</div>
-          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.totalRequestsHint', { range: rangeLabel })}</div>
-        </div>
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.freeHitRate')}</div>
-          <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">{freeRatio}%</div>
-          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.freeHitHint', { free: freeCalls, p2p: p2pCalls, paid: paidCalls })}</div>
-        </div>
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.tokenUsage')}</div>
-          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">{fmtN(totalTokens)}</div>
-          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.tokenHint', { range: rangeLabel })}</div>
-        </div>
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.paidCalls')}</div>
-          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{paidCalls + p2pCalls}</div>
-          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.paidCallsHint', { paid: paidCalls, p2p: p2pCalls })}</div>
-        </div>
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.estCost')}</div>
-          <div className={`text-2xl font-bold mt-1 ${totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'}`}>
-            {fmtCost(totalCost)}
-          </div>
-          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
-            {totalCost > 0
+      <div className="grid grid-cols-5 gap-2.5">
+        {[
+          {
+            label: t('dashboard.totalRequests'),
+            value: totalCalls,
+            valueCls: 'text-zinc-900 dark:text-zinc-50',
+            hint: t('dashboard.totalRequestsHint', { range: rangeLabel }),
+          },
+          {
+            label: t('dashboard.freeHitRate'),
+            value: `${freeRatio}%`,
+            valueCls: 'text-green-600 dark:text-green-400',
+            hint: t('dashboard.freeHitHint', { free: freeCalls, p2p: p2pCalls, paid: paidCalls }),
+          },
+          {
+            label: t('dashboard.tokenUsage'),
+            value: fmtN(totalTokens),
+            valueCls: 'text-purple-600 dark:text-purple-400',
+            hint: t('dashboard.tokenHint', { range: rangeLabel }),
+          },
+          {
+            label: t('dashboard.paidCalls'),
+            value: paidCalls + p2pCalls,
+            valueCls: 'text-amber-600 dark:text-amber-400',
+            hint: t('dashboard.paidCallsHint', { paid: paidCalls, p2p: p2pCalls }),
+          },
+          {
+            label: t('dashboard.estCost'),
+            value: fmtCost(totalCost),
+            valueCls: totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400',
+            hint: totalCost > 0
               ? t('profile.costSub', { sub: subCost > 0 ? fmtCost(subCost) : '—', payg: paygCost > 0 ? fmtCost(paygCost) : '—' })
-              : t('dashboard.estCostHint')}
+              : t('dashboard.estCostHint'),
+          },
+        ].map((c) => (
+          <div key={c.label} className="tb-soft-card rounded-2xl px-3.5 py-3.5">
+            <div className="text-[11px] text-zinc-400 dark:text-zinc-500">{c.label}</div>
+            <div className={`text-[1.65rem] font-bold leading-none tabular-nums tracking-tight mt-2 ${c.valueCls}`}>{c.value}</div>
+            <div className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-2 leading-snug">{c.hint}</div>
           </div>
-        </div>
+        ))}
       </div>
 
       {/* Row: tier donut + trend bars */}
       <div className="grid grid-cols-5 gap-4">
-        <div className="col-span-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 flex flex-col gap-4">
+        <div className="col-span-2 tb-soft-card rounded-2xl p-5 flex flex-col gap-4">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.tierDist')}</div>
           <TierDonut byProvider={byProvider} t={t} />
         </div>
-        <div className="col-span-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="col-span-3 tb-soft-card rounded-2xl p-5">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{trendTitle}</div>
           <TrendBars mode={trendMode} data={trendData} t={t} fmtCost={fmtCost} fmtN={fmtN} />
         </div>
@@ -804,7 +818,7 @@ export default function Dashboard() {
 
       {/* 压缩节省（无损 JSON 压缩，本机实测） */}
       {compStats && (
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="tb-soft-card rounded-2xl p-5">
           <div className="mb-3">
             <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.compression.title')}</div>
           </div>
@@ -836,7 +850,7 @@ export default function Dashboard() {
       {/* Model rankings — 3 columns */}
       <div className="grid grid-cols-3 gap-4">
         {/* Call count */}
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="tb-soft-card rounded-2xl p-5">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelRank')}</div>
           {modelStats.length === 0 ? (
             <p className="text-xs text-zinc-600">{t('common.noData')}</p>
@@ -848,7 +862,7 @@ export default function Dashboard() {
                     <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
                     <span className="text-xs text-zinc-600 dark:text-zinc-400 shrink-0 ml-2">{m.calls} {t('common.times')}</span>
                   </div>
-                  <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 rounded-full overflow-hidden bg-black/[0.06] dark:bg-white/[0.08]">
                     <div className="h-full rounded-full transition-[width] duration-200 ease-out bg-green-500"
                       style={{ width: `${Math.round(m.calls / maxModel * 100)}%` }} />
                   </div>
@@ -859,7 +873,7 @@ export default function Dashboard() {
         </div>
 
         {/* Token consumption */}
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="tb-soft-card rounded-2xl p-5">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelTokenRank')}</div>
           {modelByTokens.length === 0 ? (
             <p className="text-xs text-zinc-600">{t('common.noData')}</p>
@@ -871,7 +885,7 @@ export default function Dashboard() {
                     <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
                     <span className="text-xs text-purple-600 dark:text-purple-400 shrink-0 ml-2">{fmtN(m.tokens)} tok</span>
                   </div>
-                  <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 rounded-full overflow-hidden bg-black/[0.06] dark:bg-white/[0.08]">
                     <div className="h-full rounded-full transition-[width] duration-200 ease-out bg-purple-500"
                       style={{ width: `${Math.round((m.tokens||0) / maxModelTokens * 100)}%` }} />
                   </div>
@@ -882,7 +896,7 @@ export default function Dashboard() {
         </div>
 
         {/* Cost ranking */}
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="tb-soft-card rounded-2xl p-5">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelCostRank')}</div>
           {modelByCost.length === 0 ? (
             <p className="text-xs text-zinc-600 dark:text-zinc-500">{t('dashboard.modelCostEmpty')}</p>
@@ -894,7 +908,7 @@ export default function Dashboard() {
                     <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
                     <span className="text-xs text-emerald-600 dark:text-emerald-400 shrink-0 ml-2">{fmtCost(m.cost_usd)}</span>
                   </div>
-                  <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 rounded-full overflow-hidden bg-black/[0.06] dark:bg-white/[0.08]">
                     <div className="h-full rounded-full transition-[width] duration-200 ease-out bg-emerald-500"
                       style={{ width: `${Math.round((m.cost_usd||0) / maxModelCost * 100)}%` }} />
                   </div>

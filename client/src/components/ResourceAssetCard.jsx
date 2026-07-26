@@ -216,24 +216,25 @@ export function AssetLogo({ type, icon, name }) {
 }
 
 export const ASSET_CARD_CLASS =
-  'group rounded-xl border border-zinc-200/80 dark:border-zinc-700/70 bg-white dark:bg-zinc-900/85 p-4 '
-  + 'shadow-[0_1px_2px_rgba(15,23,42,0.04)] '
-  + 'hover:border-zinc-300/90 dark:hover:border-zinc-600 '
-  + 'hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.14)] '
-  + 'transition-[box-shadow,border-color,transform] duration-150 ease-out '
+  'group rounded-[1.05rem] border border-white/50 dark:border-white/[0.08] '
+  + 'bg-white/65 dark:bg-zinc-900/55 backdrop-blur-xl backdrop-saturate-150 p-4 '
+  + 'shadow-[0_1px_0_rgba(255,255,255,0.45)_inset,0_8px_24px_-16px_rgba(15,23,42,0.12)] '
+  + 'hover:bg-white/78 dark:hover:bg-zinc-900/70 '
+  + 'hover:shadow-[0_1px_0_rgba(255,255,255,0.55)_inset,0_14px_32px_-16px_rgba(15,23,42,0.16)] '
+  + 'transition-[box-shadow,background-color,transform] duration-150 ease-out '
   + 'active:scale-[0.995]';
 
 export const ASSET_BTN_PRIMARY =
-  'tb-press text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white shadow-sm shadow-blue-600/20 '
+  'tb-press text-xs px-3.5 py-1.5 rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-600/20 '
   + 'hover:bg-blue-500 disabled:opacity-45 disabled:shadow-none transition-colors';
 
 export const ASSET_BTN_MANAGED =
-  'text-xs px-3 py-1.5 rounded-lg border border-blue-200/90 dark:border-blue-800/80 '
+  'text-xs px-3.5 py-1.5 rounded-xl border border-blue-200/90 dark:border-blue-800/80 '
   + 'bg-blue-50/90 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 '
   + 'disabled:opacity-70 cursor-default';
 
 export const ASSET_BTN_GHOST =
-  'tb-press text-xs px-3 py-1.5 rounded-lg border border-zinc-200/90 dark:border-zinc-700 '
+  'tb-press text-xs px-3.5 py-1.5 rounded-xl border border-zinc-200/90 dark:border-zinc-700 '
   + 'text-zinc-600 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/60 '
   + 'hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-600 '
   + 'disabled:opacity-45 transition-colors';

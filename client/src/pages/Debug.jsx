@@ -2197,18 +2197,18 @@ export default function Debug() {
   const segItem = (on) => `
     px-3 py-1 text-sm font-medium rounded-lg transition-colors active:scale-[0.97]
     ${on
-      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+      ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 shadow-sm'
       : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
     }`;
   const segItemXs = (on) => `
     px-3 py-1.5 text-xs font-medium rounded-lg transition-colors active:scale-[0.97]
     ${on
-      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+      ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 shadow-sm'
       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800'
     }`;
   const primaryBtn = 'shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg flex items-center justify-center gap-2 transition-[transform,colors,opacity] duration-100 active:scale-[0.97]';
-  const chromeTop = 'shrink-0 border-b border-zinc-200/50 dark:border-zinc-800/50 bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150 relative z-40';
-  const chromeBottom = 'shrink-0 border-t border-zinc-200/50 dark:border-zinc-800/50 bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150 electron-no-drag relative z-40';
+  const chromeTop = 'shrink-0 border-b border-white/40 dark:border-white/[0.06] bg-white/40 dark:bg-zinc-900/45 backdrop-blur-xl backdrop-saturate-150 relative z-40';
+  const chromeBottom = 'shrink-0 border-t border-white/40 dark:border-white/[0.06] bg-white/40 dark:bg-zinc-900/45 backdrop-blur-xl backdrop-saturate-150 electron-no-drag relative z-40';
   const fieldCls = 'bg-zinc-100/90 dark:bg-zinc-800/90 border border-zinc-200/80 dark:border-zinc-700/80 rounded-lg text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500';
 
   const modeSwitcher = (
@@ -2224,7 +2224,7 @@ export default function Debug() {
 
   return (
     /* 顶栏拉通；智能体列表仅在 Agent 模式内容区内 */
-    <div className="relative h-full min-h-0 flex flex-col bg-white dark:bg-zinc-900">
+    <div className="relative h-full min-h-0 flex flex-col bg-transparent">
       {/* ── 顶栏两层：模式+连接 / 模型（对话选项下沉到输入区上方）── */}
       <div className={`${chromeTop} px-4 pt-3 pb-2 electron-drag ${mode === 'llm' ? 'space-y-2' : ''}`}>
 

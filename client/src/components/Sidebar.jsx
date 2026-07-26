@@ -63,10 +63,10 @@ export default function Sidebar({ onToggleCollapse }) {
     <button
       onClick={() => navigate('/config')}
       title={pendingVersion ? t('updater.pendingTitle', { version: pendingVersion }) : t('nav.settings')}
-      className={`tb-press relative shrink-0 flex items-center justify-center w-10 rounded-lg ${
+      className={`tb-press relative shrink-0 flex items-center justify-center w-10 rounded-xl ${
         settingsActive
-          ? 'bg-zinc-200/80 dark:bg-white/10 text-zinc-900 dark:text-white'
-          : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-white/5'
+          ? 'bg-white/55 dark:bg-white/[0.12] text-zinc-900 dark:text-white ring-1 ring-white/40 dark:ring-white/10'
+          : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-white/35 dark:hover:bg-white/5'
       }`}
     >
       {pendingVersion && (
@@ -97,7 +97,7 @@ export default function Sidebar({ onToggleCollapse }) {
   const LOGIN_PATHS = new Set(['/circles', '/contribute']);
 
   return (
-    <aside className="tb-material relative w-[148px] flex flex-col pb-5 border-r border-zinc-900/[0.06] dark:border-white/[0.06] shrink-0">
+    <aside className="tb-app-sidebar relative w-[160px] flex flex-col pb-4 shrink-0">
       {/* CLI：收起侧边栏 */}
       {onToggleCollapse && (
         <button
@@ -105,7 +105,7 @@ export default function Sidebar({ onToggleCollapse }) {
           onClick={onToggleCollapse}
           title={t('sidebar.collapse')}
           aria-label={t('sidebar.collapse')}
-          className="tb-press absolute top-3 right-2 z-10 flex items-center justify-center w-7 h-7 rounded-md text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-white/10"
+          className="tb-press absolute top-3 right-2 z-10 flex items-center justify-center w-8 h-8 rounded-xl text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-white/70 dark:hover:bg-white/10"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
             <path d="M15 18 9 12l6-6" />
@@ -113,22 +113,22 @@ export default function Sidebar({ onToggleCollapse }) {
         </button>
       )}
       {/* Logo — pt-9 避开 macOS 交通灯；electron-drag 允许拖动窗口 */}
-      <div className="electron-drag flex items-center gap-2.5 pt-14 pb-5 px-4 select-none mb-3">
-        <img src={logoSvg} alt="Token Bank" className="w-10 h-10 shrink-0" />
+      <div className="electron-drag flex items-center gap-2.5 pt-14 pb-4 px-3.5 select-none mb-2">
+        <img src={logoSvg} alt="Token Bank" className="w-10 h-10 shrink-0 rounded-2xl" />
         <div className="min-w-0">
           <p className="text-[13px] font-bold text-gray-900 dark:text-gray-100 leading-tight tracking-tight">Token Bank</p>
           <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-tight mt-0.5">{t('sidebar.tagline')}</p>
         </div>
       </div>
 
-      {/* Nav items */}
-      <nav className="electron-no-drag flex-1 flex flex-col gap-0.5 px-2">
+      {/* Nav items：大圆角胶囊选中态 */}
+      <nav className="electron-no-drag flex-1 flex flex-col gap-1 px-2.5">
         {NAV.map(({ to, icon, labelKey }) => {
           const navCls = (active) =>
-            'tb-press flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm w-full text-left ' +
+            'tb-press flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm w-full text-left ' +
             (active
-              ? 'bg-zinc-200/80 dark:bg-white/10 text-zinc-900 dark:text-white font-semibold'
-              : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-white/5 hover:text-zinc-900 dark:hover:text-zinc-100');
+              ? 'bg-white/55 dark:bg-white/[0.12] text-zinc-900 dark:text-white font-semibold shadow-[0_1px_0_rgba(255,255,255,0.45)_inset] ring-1 ring-white/40 dark:ring-white/10'
+              : 'text-zinc-600 dark:text-zinc-300 hover:bg-white/35 dark:hover:bg-white/5 hover:text-zinc-900 dark:hover:text-zinc-100');
 
           if (!user && LOGIN_PATHS.has(to)) {
             return (
@@ -155,17 +155,17 @@ export default function Sidebar({ onToggleCollapse }) {
 
       {/* 用户 / 未登录 + 设置：底部同一行（布局一致） */}
       {showUserBar && (
-        <div className="electron-no-drag px-3">
+        <div className="electron-no-drag px-2.5">
           <div className="flex items-stretch gap-1">
             <button
               onClick={() => {
                 if (user) navigate('/account');
                 else navigate('/login');
               }}
-              className={`tb-press flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg text-left ${
+              className={`tb-press flex-1 min-w-0 flex items-center gap-2 px-2.5 py-2 rounded-xl text-left ${
                 profileActive
-                  ? 'bg-zinc-200/80 dark:bg-white/10'
-                  : 'hover:bg-zinc-200/60 dark:hover:bg-white/5'
+                  ? 'bg-white/55 dark:bg-white/[0.12] shadow-[0_1px_0_rgba(255,255,255,0.45)_inset] ring-1 ring-white/40 dark:ring-white/10'
+                  : 'hover:bg-white/35 dark:hover:bg-white/5'
               }`}
             >
               {user ? (
