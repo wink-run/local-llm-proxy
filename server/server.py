@@ -294,6 +294,12 @@ def _worker_row(w) -> dict:
     total_ttft = sum(s.get("ttft_sum", 0) for s in stats.values())
     total_ttft_count = sum(s.get("ttft_count", 0) for s in stats.values())
     total_tokens = sum(s["output_tokens"] for s in stats.values())
+    # 智能体接单次数（period_stats 里 __agent__:id 条目）
+    period_agent_jobs = sum(
+        int(s.get("agent_count") or 0)
+        for k, s in stats.items()
+        if str(k).startswith("__agent__")
+    )
     success_rate = total_success / total_req if total_req > 0 else 1.0
     online_mins = w.period_online_mins()
     # 每模型延迟：有实测用实测，否则服务端生成稳定默认 TTFT
@@ -316,12 +322,24 @@ def _worker_row(w) -> dict:
     # star 系数：抽到 WorkerConnection.reward_multiplier()，与 auto 策略选优同源
     multiplier = w.reward_multiplier()
     status = "busy" if (w.active_requests or 0) > 0 else "idle"
+    # 上架智能体裸名（去「昵称的」前缀），供排行/在线节点与模型并列展示
+    owner_nick = (getattr(w, "owner_nickname", None) or "").strip()
+    agent_labels = []
+    for c in getattr(w, "agents", None) or []:
+        if not isinstance(c, dict):
+            continue
+        raw = c.get("display_name") or c.get("name") or c.get("id") or ""
+        label = bare_agent_name(raw, owner_nick) or str(c.get("id") or "").strip()
+        if label and label not in agent_labels:
+            agent_labels.append(label)
     row = {
         "worker_id": w.worker_id,
         "name": _mask_name(w.name),
         "models": w.models,
+        "agents": agent_labels,
         "active_requests": w.active_requests,
         "period_tokens": total_tokens,
+        "period_agent_jobs": period_agent_jobs,
         "avg_latency_ms": round(avg_ttft_ms),
         "multiplier": multiplier,
         "stars": _stars(multiplier),
@@ -331,8 +349,8 @@ def _worker_row(w) -> dict:
         "status": status,
         "model_latency": model_latency,
         # 地图黄点：有智能体名片的节点
-        "has_agents": bool(getattr(w, "agents", None)),
-        "agent_count": len(getattr(w, "agents", None) or []),
+        "has_agents": bool(agent_labels),
+        "agent_count": len(agent_labels),
     }
     lat = getattr(w, "latitude", None)
     lng = getattr(w, "longitude", None)

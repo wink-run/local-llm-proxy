@@ -399,7 +399,7 @@ export default function McpProvidersTab() {
                   className="rounded border-zinc-300 dark:border-zinc-600"
                 />
                 <ServiceIcon id={agent.id} name={agent.label} boxClass="w-6 h-6" imgClass="w-3.5 h-3.5" />
-                <span className="text-zinc-700 dark:text-zinc-200 flex-1 truncate">{agent.label}</span>
+                <span className="text-zinc-700 dark:text-zinc-200 flex-1 truncate" title={agent.label}>{agent.label}</span>
               </label>
             );
           })}
@@ -751,10 +751,12 @@ export default function McpProvidersTab() {
         <div className="flex items-start gap-2">
           <span className="text-xl">{item.metadata?.icon || '🔧'}</span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate">
+            <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate" title={item.display_name}>
               {item.display_name}
             </p>
-            <p className="text-[11px] text-zinc-400 font-mono truncate">{item.metadata?.package || item.name}</p>
+            <p className="text-[11px] text-zinc-400 font-mono truncate" title={item.metadata?.package || item.name}>
+              {item.metadata?.package || item.name}
+            </p>
           </div>
           {item.installed ? (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 shrink-0">
@@ -764,9 +766,12 @@ export default function McpProvidersTab() {
         </div>
         <p className="text-xs text-zinc-500 flex-1">{localizeCatalogDesc(item, t)}</p>
         {item.metadata?.tools?.length > 0 && (
-          <p className="text-[10px] text-zinc-400 truncate">
+          <p
+            className="text-[10px] text-zinc-400 font-mono break-words line-clamp-2"
+            title={item.metadata.tools.join(', ')}
+          >
             {t('providers.mcp.toolsLabel', {
-              tools: `${item.metadata.tools.slice(0, 4).join(', ')}${item.metadata.tools.length > 4 ? '…' : ''}`,
+              tools: item.metadata.tools.join(', '),
             })}
           </p>
         )}
@@ -931,7 +936,7 @@ export default function McpProvidersTab() {
                 type="button"
                 disabled={!!s.builtin}
                 onClick={() => openEditServer(s)}
-                title={s.builtin ? undefined : t('providers.mcp.clickToEdit')}
+                title={s.display_name || s.name || (s.builtin ? undefined : t('providers.mcp.clickToEdit'))}
                 className={`text-sm font-medium text-left truncate max-w-full ${
                   s.builtin
                     ? 'text-zinc-800 dark:text-zinc-200'
@@ -970,7 +975,12 @@ export default function McpProvidersTab() {
               }, t)}
             </p>
             {s.metadata?.tools?.length > 0 && (
-              <p className="text-[11px] text-zinc-400 mt-1 font-mono truncate">{s.metadata.tools.join(', ')}</p>
+              <p
+                className="text-[11px] text-zinc-400 mt-1 font-mono break-words line-clamp-2"
+                title={s.metadata.tools.join(', ')}
+              >
+                {s.metadata.tools.join(', ')}
+              </p>
             )}
           </div>
         </div>

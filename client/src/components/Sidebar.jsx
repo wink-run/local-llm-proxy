@@ -39,8 +39,9 @@ export default function Sidebar({ onToggleCollapse }) {
       </svg>
     )},
     { to: '/contribute', labelKey: 'nav.contribute', icon: (
+      // 美元符号 $
       <svg {...svgProps} className={iconCls}>
-        <path d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.25v19.5M16.5 5.25H10.125a3.375 3.375 0 0 0 0 6.75h3.75a3.375 3.375 0 0 1 0 6.75H6.75" />
       </svg>
     )},
     { to: '/dashboard', labelKey: 'nav.dashboard', icon: (
