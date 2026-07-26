@@ -204,6 +204,18 @@ function joinFsPath(base, ...segments) {
   return parts.filter(Boolean).join(sep);
 }
 
+/** 从智能体 content JSON 解析声明绑定的 skill / prompt 名列表 */
+function depsFromAssistantContent(content) {
+  try {
+    const raw = typeof content === 'string' ? content : JSON.stringify(content || '');
+    const obj = JSON.parse(raw || '{}');
+    const names = (arr) => (Array.isArray(arr) ? arr.map(String).filter(Boolean) : []);
+    return { skills: names(obj.skills), prompts: names(obj.prompts) };
+  } catch {
+    return { skills: [], prompts: [] };
+  }
+}
+
 /** Skill 权威目录（用户安装位置） */
 function getSkillLocation(resource) {
   if (!resource) return null;
@@ -305,6 +317,8 @@ export default function Resources() {
   const [discovered, setDiscovered] = useState([]);
   const [scanStats, setScanStats] = useState(null);
   const [resources, setResources] = useState([]);
+  /** 全部智能体（不受 typeFilter 限制），用于标记被绑定为依赖的 Skill */
+  const [assistantsForBind, setAssistantsForBind] = useState([]);
   const [agentInstallations, setAgentInstallations] = useState([]);
   const [agents, setAgents] = useState([]);
   const [promptAgents, setPromptAgents] = useState([]);
@@ -382,14 +396,17 @@ export default function Resources() {
     setError('');
     try {
       const filters = { type: typeFilter || undefined, query: debouncedQuery || undefined };
-      const [catRes, resRes, agentRes] = await Promise.all([
+      const [catRes, resRes, agentRes, asstBindRes] = await Promise.all([
         window.electronAPI.resource.listCatalog(filters),
         window.electronAPI.resource.listResources(filters),
         window.electronAPI.resource.listAgentTargets(),
+        // Skill 卡片「智能体依赖」标记：始终拉全量智能体（不受当前类型筛选）
+        window.electronAPI.resource.listResources({ type: 'assistant' }),
       ]);
       if (catRes.success) setCatalog(catRes.items || []);
       else setError(catRes.error || t('resources.loadFailed'));
       if (resRes.success) setResources(resRes.resources || []);
+      if (asstBindRes?.success) setAssistantsForBind(asstBindRes.resources || []);
       if (agentRes.success) {
         setAgents(agentRes.agents || []);
         setPromptAgents(agentRes.promptAgents || []);
@@ -1588,6 +1605,33 @@ export default function Resources() {
     [resources],
   );
 
+  /** `${type}:${name}` → 声明绑定它的智能体列表（skill / prompt） */
+  const resourceBoundByAssistants = useMemo(() => {
+    const map = new Map();
+    const add = (type, name, binder) => {
+      const n = String(name || '').trim();
+      if (!n) return;
+      const key = `${type}:${n}`;
+      if (!map.has(key)) map.set(key, []);
+      const list = map.get(key);
+      if (!list.some((x) => x.id === binder.id || x.name === binder.name)) {
+        list.push(binder);
+      }
+    };
+    for (const a of assistantsForBind) {
+      const { skills, prompts } = depsFromAssistantContent(a.content);
+      if (!skills.length && !prompts.length) continue;
+      const binder = {
+        id: a.id,
+        name: a.name,
+        label: a.display_name || a.name || a.id,
+      };
+      for (const sk of skills) add('skill', sk, binder);
+      for (const pr of prompts) add('prompt', pr, binder);
+    }
+    return map;
+  }, [assistantsForBind]);
+
   /** 各 Agent / 自添目录的本机技能数（来自 listAgentInstallations） */
   const skillCountByAgentId = useMemo(() => {
     const m = new Map();
@@ -1854,6 +1898,26 @@ export default function Resources() {
     );
   }
 
+  /** Skill/Prompt 被智能体 content.skills / prompts 声明绑定 → 卡片标记 */
+  function renderAssistantBoundBadge(type, name) {
+    if (type !== 'skill' && type !== 'prompt') return null;
+    const binders = resourceBoundByAssistants.get(`${type}:${String(name || '').trim()}`);
+    if (!binders?.length) return null;
+    const sep = lang === 'en' ? ', ' : '、';
+    const list = binders.map((b) => b.label).join(sep);
+    const label = binders.length === 1
+      ? t('resources.assistantBoundOne', { name: binders[0].label })
+      : t('resources.assistantBoundMany', { n: binders.length });
+    return (
+      <span
+        className="text-[10px] px-1.5 py-0.5 rounded-md bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 whitespace-nowrap"
+        title={t('resources.assistantBoundHint', { list })}
+      >
+        {label}
+      </span>
+    );
+  }
+
   function renderDiscoveredRow(item) {
     // 同名 Skill 可能共用 scanKey（frontmatter name 相同），用 name+hash 保证 key 唯一
     const rowKey = `${item.name}::${item.hash}`;
@@ -1876,6 +1940,7 @@ export default function Resources() {
         badges={(
           <>
             {renderUseCountBadge(item)}
+            {renderAssistantBoundBadge('skill', item.name)}
             {item.version && (
               <span
                 className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 font-mono"
@@ -2048,6 +2113,8 @@ export default function Resources() {
             )}
             {/* 用量次数：与排序一致，有命中才标 */}
             {!catalogMode && renderUseCountBadge(resource)}
+            {/* 被智能体声明为 skill / prompt 依赖 */}
+            {!catalogMode && renderAssistantBoundBadge(resource.type, resource.name)}
             {/* Hit-or-Exit 状态徽标（内置智能体不评估、不标） */}
             {!catalogMode && (() => {
               const life = classifyLifecycle(resource);
