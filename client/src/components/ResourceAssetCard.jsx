@@ -216,13 +216,7 @@ export function AssetLogo({ type, icon, name }) {
 }
 
 export const ASSET_CARD_CLASS =
-  'group rounded-[1.05rem] border border-white/50 dark:border-white/[0.08] '
-  + 'bg-white/65 dark:bg-zinc-900/55 backdrop-blur-xl backdrop-saturate-150 p-4 '
-  + 'shadow-[0_1px_0_rgba(255,255,255,0.45)_inset,0_8px_24px_-16px_rgba(15,23,42,0.12)] '
-  + 'hover:bg-white/78 dark:hover:bg-zinc-900/70 '
-  + 'hover:shadow-[0_1px_0_rgba(255,255,255,0.55)_inset,0_14px_32px_-16px_rgba(15,23,42,0.16)] '
-  + 'transition-[box-shadow,background-color,transform] duration-150 ease-out '
-  + 'active:scale-[0.995]';
+  'tb-soft-tile group rounded-2xl p-4';
 
 export const ASSET_BTN_PRIMARY =
   'tb-press text-xs px-3.5 py-1.5 rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-600/20 '

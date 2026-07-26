@@ -411,7 +411,7 @@ function CooldownDetail({ cooldown, t, onRetry }) {
 export function CollapsibleBillingPanel({ hint, summary, t, children, cooldown = null, onRetryCooldown = null }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border-t border-zinc-100 dark:border-zinc-800 px-4 py-3">
+    <div className="px-4 py-3">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">{t('providers.billing.section')}</span>
@@ -421,7 +421,7 @@ export function CollapsibleBillingPanel({ hint, summary, t, children, cooldown =
           {!open && <CooldownInline cooldown={cooldown} t={t} onRetry={onRetryCooldown} />}
         </div>
         <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
-          className="text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0">
+          className="tb-press text-xs px-2.5 py-1 rounded-lg border border-zinc-300/80 dark:border-zinc-700 bg-white/50 dark:bg-zinc-800/60 backdrop-blur-sm text-zinc-600 dark:text-zinc-400 hover:bg-white/80 dark:hover:bg-zinc-700/80 transition-colors shrink-0">
           {open ? t('providers.models.collapse') : t('providers.models.expand')}
         </button>
       </div>
@@ -548,9 +548,9 @@ export function DirectSourceCard({
   })();
 
   return (
-    <div className="tb-soft-card rounded-2xl overflow-hidden">
+    <div className="tb-soft-tile rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-3.5">
-        <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
+        <div className="w-8 h-8 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/70 backdrop-blur-sm flex items-center justify-center text-[15px] shrink-0 mt-0.5">
           <ServiceIcon id={instance.source_id} name={instance.label} icon={instance.icon} />
         </div>
         <div className="flex-1 min-w-0">
@@ -621,7 +621,7 @@ export function DirectSourceCard({
 export function UnenrolledInstanceCard({ instance, onRemove, t }) {
   const i = instance;
   return (
-    <div className="tb-soft-card flex items-center gap-2 px-3 py-2 rounded-xl">
+    <div className="tb-soft-tile flex items-center gap-2 px-3 py-2 rounded-xl">
       <ServiceIcon id={i.source_id} name={i.label} icon={i.icon} />
       <div className="min-w-0 flex-1">
         <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300 truncate">{i.name}</div>
@@ -936,22 +936,17 @@ export function SourceTemplateGrid({
           return (
             <button key={tpl.key} type="button" onClick={() => onEdit(tpl)}
               title={`${tpl.label} · ${templateKindLabel(tpl, t)}${tpl._override ? ' · ' + t('psrc.tpl.edited') : ''}`}
-              className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition
-                ${added
-                  ? (isFree
-                    ? 'border-teal-300/80 dark:border-teal-700/70 bg-white dark:bg-zinc-800/60 ring-1 ring-teal-200/60 dark:ring-teal-800/40'
-                    : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/60')
-                  : (isFree
-                    ? 'border-dashed border-teal-300/70 dark:border-teal-800/50 bg-teal-50/40 dark:bg-teal-950/10'
-                    : 'border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-800/20')}`}>
-              <span className={added ? '' : 'grayscale opacity-50'}>
+              className={`tb-soft-tile flex items-center gap-2 px-3 py-2 rounded-xl text-left ${
+                added ? '' : 'opacity-70'
+              }`}>
+              <span className={added ? '' : 'grayscale opacity-60'}>
                 <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className={`block text-xs font-medium truncate ${added ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-400'}`}>{tpl.label}</span>
+                <span className={`block text-xs font-medium truncate ${added ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-500'}`}>{tpl.label}</span>
                 <span className="flex flex-wrap items-center gap-1 mt-0.5">
                   {isFree && (
-                    <span className="text-[10px] px-1 py-0.5 rounded font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200">
+                    <span className="text-[10px] px-1 py-0.5 rounded font-semibold bg-emerald-100/90 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">
                       {t('providers.add.freeTag')}
                     </span>
                   )}
@@ -987,20 +982,17 @@ export function SourcePickerModal({ templates, onPick, onClose, t }) {
             return (
               <button key={tpl.key} type="button" onClick={() => onPick(tpl)}
                 title={ready ? '' : t('psrc.tpl.needConfig')}
-                className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition
-                  ${ready
-                    ? (isFree
-                      ? 'border-teal-300/80 dark:border-teal-700/70 bg-white dark:bg-zinc-800/60 hover:border-blue-300 dark:hover:border-blue-700 ring-1 ring-teal-200/60'
-                      : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/60 hover:border-blue-300 dark:hover:border-blue-700')
-                    : 'border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-800/20'}`}>
-                <span className={ready ? '' : 'grayscale opacity-50'}>
+                className={`tb-soft-tile flex items-center gap-2 px-3 py-2 rounded-xl text-left ${
+                  ready ? '' : 'opacity-60'
+                }`}>
+                <span className={ready ? '' : 'grayscale opacity-60'}>
                   <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className={`block text-xs font-medium truncate ${ready ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-400'}`}>{tpl.label}</span>
+                  <span className={`block text-xs font-medium truncate ${ready ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-500'}`}>{tpl.label}</span>
                   <span className="flex flex-wrap items-center gap-1 mt-0.5">
                     {isFree && (
-                      <span className="text-[10px] px-1 py-0.5 rounded font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200">
+                      <span className="text-[10px] px-1 py-0.5 rounded font-semibold bg-emerald-100/90 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">
                         {t('providers.add.freeTag')}
                       </span>
                     )}

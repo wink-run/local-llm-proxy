@@ -12,6 +12,21 @@ const PREVIEW_FILE_EXTS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico',
 ]);
 
+/**
+ * 路径边界识别用扩展名（含不可预览的媒体/文档）。
+ * 用于把 `.mp4Duration` 这类粘连后缀从路径上剥开。
+ */
+const KNOWN_PATH_EXTS = new Set([
+  ...PREVIEW_FILE_EXTS,
+  '.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v', '.flv', '.wmv',
+  '.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg', '.wma',
+  '.pdf', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.rtf', '.pages', '.numbers', '.key',
+  '.zip', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.rar', '.7z',
+  '.dmg', '.pkg', '.iso', '.wasm', '.bin', '.exe', '.dll', '.so', '.dylib',
+  '.ttf', '.otf', '.woff', '.woff2', '.icns',
+  '.sqlite', '.db', '.psd', '.ai', '.sketch', '.fig',
+]);
+
 let _openPreview = null;
 
 /** Host 挂载后注册打开函数 */
@@ -27,6 +42,18 @@ export function looksLikeAbsoluteLocalPath(filePath) {
   return /^(\/|~\/|[A-Za-z]:[\\/])/.test(s);
 }
 
+/** 取父目录（文件 → 所在文件夹；已是根则原样） */
+export function dirnameLocalPath(filePath) {
+  const s = String(filePath || '').trim().replace(/^file:\/\//i, '').replace(/[/\\]+$/, '');
+  if (!s) return '';
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+  if (i <= 0) return s.startsWith('/') ? '/' : s;
+  // Windows 盘符根：C:\foo → C:\
+  const parent = s.slice(0, i);
+  if (/^[A-Za-z]:$/.test(parent)) return `${parent}\\`;
+  return parent || '/';
+}
+
 /** 已知可预览的文件扩展名（目录不在此列，由 open 时 IPC 判断） */
 export function isInAppPreviewablePath(filePath) {
   const s = String(filePath || '').trim().replace(/^file:\/\//i, '');
@@ -34,6 +61,7 @@ export function isInAppPreviewablePath(filePath) {
   if (/[/\\]$/.test(s)) return true;
   const m = /\.([A-Za-z0-9]{1,12})$/.exec(s);
   if (m) return PREVIEW_FILE_EXTS.has(`.${m[1].toLowerCase()}`);
+  // 无扩展名：按目录/未知入口交给预览 Host
   return true;
 }
 
@@ -48,14 +76,18 @@ export async function openLocalFilePreview(filePath) {
   return _openPreview(p);
 }
 
-/** 聊天内可点击的本地绝对路径（含扩展名或目录分隔符） */
+/** 聊天内可点击的本地绝对路径（扩展名须已知，或像目录） */
 export function looksLikeLocalPath(s) {
   const t = String(s || '').trim();
   if (t.length < 4 || t.length > 600) return false;
   if (/[\n\r\s]/.test(t)) return false;
   if (/^(https?:|mailto:|file:)/i.test(t)) return false;
   if (!/^(\/|~\/|[A-Za-z]:[\\/])/.test(t)) return false;
-  return /\.[A-Za-z0-9]{1,12}$/.test(t) || /[/\\]/.test(t.slice(1));
+  if (/[/\\]$/.test(t)) return true;
+  const m = /\.([A-Za-z0-9]{1,12})$/.exec(t);
+  if (m) return KNOWN_PATH_EXTS.has(`.${m[1].toLowerCase()}`);
+  // 无扩展名但有路径分隔 → 视为目录路径
+  return /[/\\]/.test(t.slice(1));
 }
 
 /**
@@ -76,13 +108,61 @@ export function trimPathEdgePunct(raw) {
   return p;
 }
 
-/** 优先应用内预览；其它类型回退系统默认应用 */
+/**
+ * 剥开粘在扩展名后的单词（如 `.mp4Duration` → path + `Duration`）。
+ * 在文件名段内匹配已知扩展名，且其后紧跟字母/汉字时切开。
+ * （不用贪婪正则：`.mp4Duration` 会被吃成 `.mp4Duratio`+`n`）
+ */
+export function splitGluedLocalPath(raw) {
+  const cleaned = trimPathEdgePunct(raw);
+  if (!cleaned) return { path: '', rest: '' };
+
+  const slash = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'));
+  const dir = slash >= 0 ? cleaned.slice(0, slash + 1) : '';
+  const name = slash >= 0 ? cleaned.slice(slash + 1) : cleaned;
+  // 长扩展名优先（.markdown 先于 .md）
+  const exts = [...KNOWN_PATH_EXTS].sort((a, b) => b.length - a.length);
+
+  for (let i = 0; i < name.length; i += 1) {
+    if (name[i] !== '.') continue;
+    for (const ext of exts) {
+      if (name.slice(i, i + ext.length).toLowerCase() !== ext) continue;
+      const after = name[i + ext.length];
+      if (!after || !/[A-Za-z\u4e00-\u9fff]/.test(after)) continue;
+      const path = dir + name.slice(0, i + ext.length);
+      if (looksLikeLocalPath(path)) {
+        return { path, rest: cleaned.slice(path.length) };
+      }
+    }
+  }
+
+  return { path: cleaned, rest: '' };
+}
+
+/**
+ * 优先应用内预览：
+ * - 目录 / 可预览文件 → 直接打开
+ * - 其它文件（如 mp4）→ 右侧打开所在文件夹
+ */
 export async function openLocalPath(filePath) {
   const target = String(filePath || '').trim().replace(/^file:\/\//i, '');
   if (!target) return;
+
+  let previewTarget = target;
+  if (looksLikeAbsoluteLocalPath(target) && !/[/\\]$/.test(target)) {
+    const m = /\.([A-Za-z0-9]{1,12})$/.exec(target);
+    if (m) {
+      const ext = `.${m[1].toLowerCase()}`;
+      // 有扩展名且不可预览 → 打开父目录
+      if (!PREVIEW_FILE_EXTS.has(ext)) {
+        previewTarget = dirnameLocalPath(target) || target;
+      }
+    }
+  }
+
   try {
-    if (looksLikeAbsoluteLocalPath(target)) {
-      const handled = await openLocalFilePreview(target);
+    if (looksLikeAbsoluteLocalPath(previewTarget)) {
+      const handled = await openLocalFilePreview(previewTarget);
       if (handled) return;
     }
   } catch (err) {

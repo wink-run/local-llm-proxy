@@ -746,7 +746,7 @@ export default function McpProvidersTab() {
     return (
       <div
         key={item.catalogId}
-        className="tb-soft-card rounded-2xl p-4 flex flex-col gap-2"
+        className="tb-soft-tile rounded-2xl p-4 flex flex-col gap-2"
       >
         <div className="flex items-start gap-2">
           <span className="text-xl">{item.metadata?.icon || '🔧'}</span>
@@ -867,10 +867,10 @@ export default function McpProvidersTab() {
               key={opt.id || 'all'}
               type="button"
               onClick={() => selectAgentTab(opt.id)}
-              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
+              className={`tb-press inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
                 active
-                  ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/30 shadow-sm'
-                  : 'tb-soft-card hover:border-zinc-300 dark:hover:border-zinc-600'
+                  ? 'border-sky-500 bg-sky-50/90 dark:bg-sky-900/30 shadow-sm'
+                  : 'tb-soft-tile !rounded-full'
               }`}
             >
               {opt.id ? (
@@ -916,7 +916,12 @@ export default function McpProvidersTab() {
     const canSelect = s.status === 'active' && s.id !== 'tokenbank-agent-bridge';
     const checked = selectedServerIds.includes(s.id);
     return (
-      <div key={s.id} className={`p-4 flex flex-wrap items-start justify-between gap-3 ${checked ? 'bg-violet-50/50 dark:bg-violet-900/10' : ''}`}>
+      <div
+        key={s.id}
+        className={`tb-soft-tile rounded-2xl p-4 flex flex-wrap items-start justify-between gap-3 ${
+          checked ? '!border-violet-300/70 dark:!border-violet-600/50 ring-1 ring-violet-200/50 dark:ring-violet-800/40' : ''
+        }`}
+      >
         <div className="min-w-0 flex-1 flex gap-3">
           {canSelect ? (
             <input
@@ -992,18 +997,18 @@ export default function McpProvidersTab() {
                 data-row-install-btn
                 disabled={!!busy || syncWritableAgents.length === 0}
                 onClick={(e) => openRowInstallMenu(s, e)}
-                className="text-xs px-2.5 py-1 rounded-lg border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 disabled:opacity-40"
+                className="tb-press text-xs px-2.5 py-1 rounded-lg border border-violet-200/80 dark:border-violet-700/60 bg-violet-50/60 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 disabled:opacity-40"
               >
                 {busy === s.id ? t('providers.mcp.installing') : t('providers.mcp.installToAgent')}
               </button>
             )}
             <button type="button" disabled={!!busy} onClick={() => toggleStatus(s)}
-              className="text-xs px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-700">
+              className="tb-press text-xs px-2.5 py-1 rounded-lg border border-zinc-200/80 dark:border-zinc-600 bg-white/40 dark:bg-zinc-800/40 hover:bg-white/70 dark:hover:bg-zinc-700/60">
               {s.status === 'active' ? t('providers.mcp.disable') : t('providers.mcp.enable')}
             </button>
             {!s.builtin && (
               <button type="button" disabled={!!busy} onClick={() => handleUninstall(s)}
-                className="text-xs px-2.5 py-1 rounded-lg text-red-600 border border-red-200 dark:border-red-900/50 hover:bg-red-50 dark:hover:bg-red-900/20">
+                className="tb-press text-xs px-2.5 py-1 rounded-lg text-red-600 border border-red-200/80 dark:border-red-900/50 bg-white/40 dark:bg-transparent hover:bg-red-50 dark:hover:bg-red-900/20">
                 {t('providers.mcp.uninstall')}
               </button>
             )}
@@ -1131,9 +1136,10 @@ export default function McpProvidersTab() {
               </label>
             )}
           </p>
-          <div className="tb-soft-card rounded-2xl divide-y divide-zinc-100 dark:divide-zinc-700">
+          {/* 与供给源卡一致：独立 soft-tile，去掉整表分割线 */}
+          <div className="space-y-2.5">
             {filteredManagedServers.length === 0 ? (
-              <div className="p-5 text-center space-y-2">
+              <div className="tb-soft-tile rounded-2xl p-5 text-center space-y-2">
                 <p className="text-xs text-zinc-400">
                   {agentTab
                     ? (activeAgent ? t('providers.mcp.noManagedOnAgent', { agent: activeAgent.label }) : t('providers.mcp.noManaged'))

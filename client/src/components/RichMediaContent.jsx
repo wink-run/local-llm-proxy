@@ -4,7 +4,7 @@ import { isMarkdownStable, softenStreamingMarkdown } from '../lib/stream-markdow
 import {
   looksLikeLocalPath,
   openLocalPath,
-  trimPathEdgePunct,
+  splitGluedLocalPath,
 } from '../lib/local-path';
 
 const IMG_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
@@ -72,14 +72,14 @@ export function StreamMarkdownContent({
   return <MarkdownContent content={display} className={className} theme={theme} />;
 }
 
-/** 可点击本地路径（用 code/span，避免嵌套 button） */
+/** 可点击本地路径（用 code/span，避免嵌套 button；中性字色，少网页蓝链感） */
 export function PathLink({ path, className, title }) {
   return (
     <code
       role="link"
       tabIndex={0}
-      title={title || '点击预览'}
-      className={`px-1 py-0.5 rounded text-[0.9em] font-mono cursor-pointer hover:underline break-all ${className}`}
+      title={title || '点击预览；不可预览文件将打开所在文件夹'}
+      className={`px-1 py-0.5 rounded text-[0.9em] font-mono cursor-pointer break-all text-zinc-700 dark:text-zinc-300 hover:bg-black/[0.04] dark:hover:bg-white/[0.06] ${className || ''}`}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -110,7 +110,8 @@ function renderTextWithPaths(text, keyPrefix, pathClassName) {
   let i = 0;
   while ((m = re.exec(s)) !== null) {
     const raw = m[1];
-    const full = trimPathEdgePunct(raw);
+    // 剥开 `.mp4Duration` 这类扩展名后粘连的单词
+    const { path: full } = splitGluedLocalPath(raw);
     const start = m.index + (m[0].length - raw.length);
     if (!full) {
       last = Math.max(last, start + raw.length);
@@ -121,11 +122,15 @@ function renderTextWithPaths(text, keyPrefix, pathClassName) {
     }
     if (looksLikeLocalPath(full)) {
       nodes.push(<PathLink key={`${keyPrefix}-p${i++}`} path={full} className={pathClassName} />);
+      last = start + full.length;
+      // 粘连后缀前补空格，避免视觉上仍像一个词
+      if (/^[A-Za-z\u4e00-\u9fff]/.test(s.slice(last))) {
+        nodes.push(<React.Fragment key={`${keyPrefix}-sp${i++}`}>{' '}</React.Fragment>);
+      }
     } else {
       nodes.push(<React.Fragment key={`${keyPrefix}-t${i++}`}>{full}</React.Fragment>);
+      last = start + full.length;
     }
-    // 剥离的句末标点留给后续纯文本片段
-    last = start + full.length;
   }
   if (last < s.length) {
     nodes.push(<React.Fragment key={`${keyPrefix}-t${i++}`}>{s.slice(last)}</React.Fragment>);
@@ -158,19 +163,27 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
   }
   if (last < text.length) parts.push({ type: 'text', value: text.slice(last) });
 
+  // 路径链接用中性色，避免网页蓝链；外链仍略区分
   const pathCodeCls = codeClassName.includes('white')
-    ? `${codeClassName} text-blue-100`
-    : `${codeClassName} text-blue-600 dark:text-blue-400`;
+    ? `${codeClassName} text-white/90`
+    : `${codeClassName} text-zinc-700 dark:text-zinc-300`;
+  const externalLinkCls = codeClassName.includes('white')
+    ? 'text-white/90 hover:opacity-80 break-all'
+    : 'text-zinc-700 dark:text-zinc-300 underline decoration-zinc-300/80 dark:decoration-zinc-600 underline-offset-2 hover:decoration-zinc-500 break-all';
 
   return parts.map((p, i) => {
-    const linkCls = codeClassName.includes('white')
-      ? 'text-blue-100 hover:underline break-all'
-      : 'text-blue-600 dark:text-blue-400 hover:underline break-all';
     if (p.type === 'bold') return <strong key={i} className="font-semibold">{p.value}</strong>;
     if (p.type === 'italic') return <em key={i}>{p.value}</em>;
     if (p.type === 'code') {
-      if (looksLikeLocalPath(p.value)) {
-        return <PathLink key={i} path={p.value.trim()} className={pathCodeCls} />;
+      const { path: codePath, rest } = splitGluedLocalPath(p.value.trim());
+      if (looksLikeLocalPath(codePath)) {
+        const gap = rest && /^[A-Za-z\u4e00-\u9fff]/.test(rest) ? ' ' : '';
+        return (
+          <React.Fragment key={i}>
+            <PathLink path={codePath} className={pathCodeCls} />
+            {gap}{rest || null}
+          </React.Fragment>
+        );
       }
       return (
         <code key={i} className={`px-1 py-0.5 rounded text-[0.9em] font-mono ${codeClassName}`}>
@@ -180,21 +193,23 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
     }
     if (p.type === 'link') {
       const href = String(p.href || '').trim();
-      // file:/// 或裸本地路径的 markdown 链接 → 本地预览
-      if (looksLikeLocalPath(href) || /^file:\/\//i.test(href)) {
+      // file:/// 或裸本地路径的 markdown 链接 → 本地预览 / 所在文件夹
+      if (looksLikeLocalPath(href.replace(/^file:\/\//i, '')) || /^file:\/\//i.test(href)) {
         const local = href.replace(/^file:\/\//i, '');
+        const { path: localPath } = splitGluedLocalPath(local);
+        const openTarget = localPath || local;
         return (
           <span
             key={i}
             role="link"
             tabIndex={0}
-            title="点击预览"
-            className={`${linkCls} cursor-pointer`}
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLocalPath(local); }}
+            title="点击预览；不可预览文件将打开所在文件夹"
+            className={`${pathCodeCls} cursor-pointer hover:bg-black/[0.04] dark:hover:bg-white/[0.06] rounded px-0.5`}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLocalPath(openTarget); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                openLocalPath(local);
+                openLocalPath(openTarget);
               }
             }}
           >
@@ -204,7 +219,7 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
       }
       return (
         <a key={i} href={resolveMediaUrl(p.href)} target="_blank" rel="noopener noreferrer"
-          className={linkCls}>
+          className={externalLinkCls}>
           {p.label}
         </a>
       );
@@ -347,24 +362,25 @@ function renderTextBlock(text, keyPrefix, theme = 'default') {
     }
     if (b.type === 'code') {
       const trimmedCode = String(b.text || '').trim();
-      // 单行本地路径代码块：点击用默认应用预览
-      if (looksLikeLocalPath(trimmedCode)) {
+      const { path: codePath } = splitGluedLocalPath(trimmedCode);
+      // 单行本地路径代码块：点击预览；不可预览文件打开所在目录
+      if (looksLikeLocalPath(codePath) && !trimmedCode.includes('\n')) {
         return (
           <pre
             key={key}
             role="link"
             tabIndex={0}
-            title="点击预览"
-            className="text-xs font-mono overflow-x-auto rounded-lg bg-zinc-900 dark:bg-zinc-950 text-blue-200 px-3 py-2 my-1 max-h-80 overflow-y-auto whitespace-pre-wrap break-words cursor-pointer hover:underline"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLocalPath(trimmedCode); }}
+            title="点击预览；不可预览文件将打开所在文件夹"
+            className="text-xs font-mono overflow-x-auto rounded-lg bg-zinc-900 dark:bg-zinc-950 text-zinc-200 px-3 py-2 my-1 max-h-80 overflow-y-auto whitespace-pre-wrap break-words cursor-pointer hover:bg-zinc-800"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLocalPath(codePath); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                openLocalPath(trimmedCode);
+                openLocalPath(codePath);
               }
             }}
           >
-            {b.text}
+            {codePath}
           </pre>
         );
       }

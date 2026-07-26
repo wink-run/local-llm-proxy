@@ -134,7 +134,7 @@ export default function AgentTabBar({
   if (loading) {
     return (
       <div className={shellCls} style={{ width }}>
-        <aside className="w-full border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 p-2 space-y-1.5 animate-pulse">
+        <aside className="w-full border-r border-white/40 dark:border-white/[0.06] bg-white/25 dark:bg-zinc-950/40 backdrop-blur-xl p-2 space-y-1.5 animate-pulse">
           {[1, 2, 3].map(i => (
             <div key={i} className="h-8 w-full bg-zinc-200/80 dark:bg-zinc-800 rounded-lg" />
           ))}
@@ -147,7 +147,7 @@ export default function AgentTabBar({
   if (!agents?.length) {
     return (
       <div className={shellCls} style={{ width }}>
-        <aside className="w-full border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 p-3">
+        <aside className="w-full border-r border-white/40 dark:border-white/[0.06] bg-white/25 dark:bg-zinc-950/40 backdrop-blur-xl p-3">
           <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
             {t('debug.tabs.noAgents')}
           </p>
@@ -163,7 +163,7 @@ export default function AgentTabBar({
   return (
     /* 侧栏：偏重材料，与主内容玻璃顶栏分层，避免轻材质叠轻材质 */
     <div className={shellCls} style={{ width }}>
-    <aside className="w-full border-r border-zinc-200/80 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/80 flex flex-col min-h-0 min-w-0">
+    <aside className="w-full border-r border-white/40 dark:border-white/[0.06] bg-white/25 dark:bg-zinc-950/40 backdrop-blur-xl flex flex-col min-h-0 min-w-0">
       <div className="shrink-0 px-3 pt-4 pb-2">
         <p className="text-[10px] font-semibold tracking-[0.04em] text-zinc-500 dark:text-zinc-400">
           {t('debug.tabs.agents')}
@@ -171,14 +171,14 @@ export default function AgentTabBar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-        {/* Hub：选中用实心强调色（清晰主入口），闲置仍保持可点可读 */}
+        {/* Hub：选中与列表项同一玻璃高亮，避免实心蓝跳出体系 */}
         <button
           type="button"
           onClick={() => onSelect(null)}
           className={`
             w-full flex items-center gap-1.5 text-left px-2.5 py-1.5 text-[12px] rounded-lg ${pressCls}
             ${hubActive
-              ? 'bg-blue-600 text-white font-medium shadow-sm'
+              ? 'tb-soft-bubble text-zinc-900 dark:text-zinc-100 font-medium'
               : 'text-zinc-800 dark:text-zinc-200 font-medium hover:bg-black/[0.05] dark:hover:bg-white/[0.06]'
             }
           `}
@@ -223,7 +223,7 @@ export default function AgentTabBar({
                 className={`
                   w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] rounded-lg ${pressCls}
                   ${active
-                    ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 font-medium shadow-sm'
+                    ? 'tb-soft-bubble text-zinc-900 dark:text-zinc-100 font-medium'
                     : 'text-zinc-600 dark:text-zinc-400 font-medium hover:bg-black/[0.05] dark:hover:bg-white/[0.06] hover:text-zinc-900 dark:hover:text-zinc-200'
                   }
                 `}

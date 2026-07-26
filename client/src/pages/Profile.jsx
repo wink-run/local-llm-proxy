@@ -783,7 +783,7 @@ export default function Profile() {
           <div className="space-y-2">
             {txs.map((tx) => (
               <div key={tx.id}
-                className="flex items-center justify-between tb-soft-card rounded-xl px-4 py-3">
+                className="flex items-center justify-between tb-soft-tile rounded-xl px-4 py-3">
                 <div>
                   <p className="text-sm text-gray-700 dark:text-gray-300">
                     {TX_LABEL[tx.type] || tx.type}

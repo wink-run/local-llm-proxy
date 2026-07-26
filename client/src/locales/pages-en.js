@@ -1316,7 +1316,7 @@ export default {
   'debug.preview.emptyDir': 'Empty folder',
   'debug.preview.truncated': 'Too many entries — showing a partial list',
   'debug.preview.entryCount': '{n} items',
-  'debug.preview.clickHint': 'Click to preview folders / text / HTML / images',
+  'debug.preview.clickHint': 'Click to preview; open folder for non-previewable files',
   'debug.preview.htmlRender': 'Render',
   'debug.preview.htmlSource': 'Source',
   'debug.preview.resize': 'Drag to resize',

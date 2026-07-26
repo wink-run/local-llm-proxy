@@ -238,7 +238,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
     sortBy === 'tokens' ? (b.tokens - a.tokens) : (b.calls - a.calls));
 
   return (
-    <div className="tb-soft-card rounded-2xl overflow-hidden">
+    <div className="tb-soft-panel rounded-2xl overflow-hidden">
       <div className="px-4 py-3.5 border-b border-white/40 dark:border-white/[0.06] space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>

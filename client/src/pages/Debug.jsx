@@ -2192,24 +2192,26 @@ export default function Debug() {
     setPanel({ input: e.target.value });
   }
 
-  // 共用：分段控件 / 主按钮 / 毛玻璃条
-  const segTrack = 'inline-flex rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80';
+  // 共用：分段控件 — 轨道略深，选中白片才够对比（避免与浅色顶栏糊成一片）
+  const segTrack = 'inline-flex rounded-lg p-0.5 bg-zinc-200/70 dark:bg-zinc-800/80 border border-zinc-300/50 dark:border-white/10';
   const segItem = (on) => `
-    px-3 py-1 text-sm font-medium rounded-lg transition-colors active:scale-[0.97]
+    px-3 py-1 text-sm font-medium rounded-md transition-colors active:scale-[0.97]
     ${on
-      ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 shadow-sm'
-      : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+      ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 font-semibold shadow-[0_1px_2px_rgb(15_23_42/0.08)]'
+      : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100'
     }`;
   const segItemXs = (on) => `
-    px-3 py-1.5 text-xs font-medium rounded-lg transition-colors active:scale-[0.97]
+    px-3 py-1.5 text-xs font-medium rounded-md transition-colors active:scale-[0.97]
     ${on
-      ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 shadow-sm'
-      : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800'
+      ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 font-semibold shadow-[0_1px_2px_rgb(15_23_42/0.08)]'
+      : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-300/40 dark:hover:bg-white/5'
     }`;
   const primaryBtn = 'shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg flex items-center justify-center gap-2 transition-[transform,colors,opacity] duration-100 active:scale-[0.97]';
-  const chromeTop = 'shrink-0 border-b border-white/40 dark:border-white/[0.06] bg-white/40 dark:bg-zinc-900/45 backdrop-blur-xl backdrop-saturate-150 relative z-40';
+  const chromeTop = 'shrink-0 border-b border-white/40 dark:border-white/[0.06] bg-white/25 dark:bg-zinc-900/35 backdrop-blur-xl backdrop-saturate-150 relative z-40';
   const chromeBottom = 'shrink-0 border-t border-white/40 dark:border-white/[0.06] bg-white/40 dark:bg-zinc-900/45 backdrop-blur-xl backdrop-saturate-150 electron-no-drag relative z-40';
-  const fieldCls = 'bg-zinc-100/90 dark:bg-zinc-800/90 border border-zinc-200/80 dark:border-zinc-700/80 rounded-lg text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500';
+  const fieldCls = 'tb-soft-field rounded-lg text-xs text-zinc-900 dark:text-zinc-100';
+  const ghostBtn = 'tb-soft-tile shrink-0 px-2.5 py-1.5 text-xs rounded-lg text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 disabled:opacity-40';
+  const composerField = 'tb-soft-field flex-1 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 overflow-y-auto disabled:opacity-50';
 
   const modeSwitcher = (
     <div className={segTrack}>
@@ -2342,8 +2344,8 @@ export default function Debug() {
           />
         )}
 
-        <div className="flex flex-col flex-1 min-w-0 min-h-0">
-      {/* ── Message list / Agent UI ── */}
+        <div className="flex flex-col flex-1 min-w-0 min-h-0 tb-chat-well rounded-br-[var(--tb-radius-shell)] overflow-hidden">
+      {/* ── Message list / Agent UI（井底略深，衬出气泡对比）── */}
       <div className="flex-1 overflow-y-auto px-4 pt-3 pb-4 space-y-4 min-h-0">
         {mode === 'llm' ? (
           /* LLM Mode: Chat messages */
@@ -2361,7 +2363,7 @@ export default function Debug() {
               {msg.error ? (
                 <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-xl px-4 py-2.5 text-sm text-red-600 dark:text-red-400">{msg.error}</div>
               ) : msg.role === 'assistant' && msg.images !== undefined ? (
-                <div className="rounded-xl overflow-hidden bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-transparent">
+                <div className="rounded-xl overflow-hidden tb-soft-bubble">
                   {msg.generating ? (
                     <div className="px-4 py-6 space-y-2">
                       <div className="h-3 w-28 rounded bg-zinc-200 dark:bg-zinc-700 animate-pulse" />
@@ -2404,7 +2406,7 @@ export default function Debug() {
                 <div className={`relative group rounded-xl px-4 py-2.5 text-sm ${
                   msg.role === 'user'
                     ? 'bg-blue-600 text-white whitespace-pre-wrap'
-                    : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-transparent text-zinc-900 dark:text-zinc-100'
+                    : 'tb-soft-bubble text-zinc-900 dark:text-zinc-100'
                 }`}>
                   {msg.role === 'assistant' ? (
                     <>
@@ -2554,13 +2556,11 @@ export default function Debug() {
                 })()}
               </select>
               <div className="ml-auto flex items-center gap-2 shrink-0">
-                <button type="button" onClick={() => setLlmHistoryOpen(true)}
-                  className="px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-[0.97]">
+                <button type="button" onClick={() => setLlmHistoryOpen(true)} className={ghostBtn}>
                   {t('debug.agent.history')}
                 </button>
                 {conversation.length > 0 && (
-                  <button type="button" onClick={startNewLlmSession} disabled={sending}
-                    className="px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-[0.97] disabled:opacity-40">
+                  <button type="button" onClick={startNewLlmSession} disabled={sending} className={ghostBtn}>
                     {t('debug.agent.newSession')}
                   </button>
                 )}
@@ -2578,7 +2578,7 @@ export default function Debug() {
                 placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
                 rows={2}
                 style={{ resize: 'none', height: composerTextH, minHeight: COMPOSER_H_MIN }}
-                className="flex-1 bg-zinc-100/90 dark:bg-zinc-800/90 border border-zinc-200/80 dark:border-zinc-700/80 rounded-lg px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-y-auto" />
+                className={composerField} />
               <button type="button" onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}
                 className={`${primaryBtn} w-9 h-9`}>
                 {sending
@@ -2595,7 +2595,7 @@ export default function Debug() {
                 type="button"
                 onClick={pickWorkingDir}
                 disabled={!activeAgent}
-                className="shrink-0 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 transition-colors active:scale-[0.97]"
+                className={ghostBtn}
               >
                 {t('debug.agent.pickDir')}
               </button>
@@ -2609,7 +2609,7 @@ export default function Debug() {
                   type="button"
                   onClick={() => openLocalPath(agentWorkingDir)}
                   title={t('debug.preview.clickHint')}
-                  className="flex-1 min-w-0 truncate text-xs font-mono text-left text-blue-600 dark:text-blue-400 hover:underline"
+                  className="flex-1 min-w-0 truncate text-xs font-mono text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
                 >
                   {agentWorkingDir}
                 </button>
@@ -2618,13 +2618,11 @@ export default function Debug() {
                   {t('debug.agent.noWorkingDir')}
                 </span>
               )}
-              <button type="button" onClick={() => setHistoryOpen(true)}
-                className="shrink-0 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-[0.97]">
+              <button type="button" onClick={() => setHistoryOpen(true)} className={ghostBtn}>
                 {t('debug.agent.history')}
               </button>
               {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing || taskCanStop) && (
-                <button type="button" onClick={startNewAgentSession}
-                  className="shrink-0 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-[0.97]">
+                <button type="button" onClick={startNewAgentSession} className={ghostBtn}>
                   {t('debug.agent.newSession')}
                 </button>
               )}
@@ -2652,7 +2650,7 @@ export default function Debug() {
                 }
                 rows={2}
                 style={{ resize: 'none', height: composerTextH, minHeight: COMPOSER_H_MIN }}
-                className="flex-1 bg-zinc-100/90 dark:bg-zinc-800/90 border border-zinc-200/80 dark:border-zinc-700/80 rounded-lg px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-y-auto resize-none disabled:opacity-50"
+                className={`${composerField} resize-none`}
               />
               {taskCanStop ? (
                 <button type="button" onClick={cancelAgent}

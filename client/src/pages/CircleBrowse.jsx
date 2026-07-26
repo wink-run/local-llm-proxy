@@ -178,7 +178,7 @@ function BrowseCard({ circle, applying, onApply, onOpen, t }) {
   }
 
   return (
-    <div className="tb-soft-card rounded-xl px-4 py-4">
+    <div className="tb-soft-tile rounded-xl px-4 py-4">
       <div className="flex items-center gap-4">
         <div className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0`}>
           {initial}

@@ -79,12 +79,12 @@ function redrawThinkingOutputPairs(items) {
 function getStepMeta(t) {
   return {
     /* 底色极淡：靠发丝线 + 字色区分，避免大块彩底抢视线 */
-    thinking: { icon: '', label: t('debug.log.thinking'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
-    tool_call: { icon: '', label: t('debug.log.toolCall'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
-    tool_result: { icon: '', label: t('debug.log.toolResult'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
-    code_edit: { icon: '', label: t('debug.log.codeEdit'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
+    thinking: { icon: '', label: t('debug.log.thinking'), accent: 'tb-soft-bubble' },
+    tool_call: { icon: '', label: t('debug.log.toolCall'), accent: 'tb-soft-bubble' },
+    tool_result: { icon: '', label: t('debug.log.toolResult'), accent: 'tb-soft-bubble' },
+    code_edit: { icon: '', label: t('debug.log.codeEdit'), accent: 'tb-soft-bubble' },
     terminal: { icon: '', label: t('debug.log.terminal'), accent: 'border-zinc-300 bg-zinc-900/90 dark:border-zinc-600 text-zinc-100' },
-    system_event: { icon: '', label: t('debug.log.system'), accent: 'border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03]' },
+    system_event: { icon: '', label: t('debug.log.system'), accent: 'tb-soft-bubble' },
     output: { icon: '', label: t('debug.log.reply'), accent: '' },
   };
 }
@@ -671,7 +671,7 @@ function TaskCompletionCard({ result, task }) {
             <span className="text-zinc-400">{summaryOpen ? '▾' : '▸'}</span>
           </button>
           {summaryOpen && (
-            <div className="text-xs leading-relaxed max-h-96 overflow-y-auto rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-green-100 dark:border-green-900/40 px-3 py-2 text-zinc-700 dark:text-zinc-300">
+            <div className="text-xs leading-relaxed max-h-96 overflow-y-auto rounded-lg tb-soft-field px-3 py-2 text-zinc-700 dark:text-zinc-300">
               <MarkdownContent content={displaySummary} />
             </div>
           )}
@@ -689,7 +689,7 @@ function TaskCompletionCard({ result, task }) {
                 <PathLink
                   path={fp}
                   title={t('debug.preview.clickHint')}
-                  className="text-blue-600 dark:text-blue-400 bg-transparent px-0"
+                  className="bg-transparent px-0"
                 />
               </div>
             );
@@ -784,8 +784,8 @@ function SystemEventCard({ step }) {
 
   return (
     <div className="flex justify-start w-full">
-      <div className={`max-w-[88%] w-full rounded-xl border ${meta.accent} overflow-hidden`}>
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200/50 dark:border-white/[0.06]">
+      <div className={`max-w-[88%] w-full rounded-xl ${meta.accent} overflow-hidden`}>
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-white/40 dark:border-white/[0.06]">
           {meta.icon ? <span>{meta.icon}</span> : null}
           <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">{info.title}</span>
           <span className="ml-auto text-[10px] text-zinc-400">{formatTime(step.timestamp)}</span>
@@ -816,7 +816,7 @@ function SystemEventGroupCard({ item }) {
 
   return (
     <div className="flex justify-start w-full">
-      <div className={`max-w-[88%] w-full rounded-xl border ${meta.accent} overflow-hidden`}>
+      <div className={`max-w-[88%] w-full rounded-xl ${meta.accent} overflow-hidden`}>
         <button
           type="button"
           onClick={() => setOpen(v => !v)}
@@ -1063,7 +1063,7 @@ function ToolGroupCard({ step, live = false }) {
         {open && hasDetail && (
           <div className="ml-5 mt-0.5 mb-1 space-y-1 border-l border-zinc-200 dark:border-zinc-700 pl-2.5">
             {callContent != null && !payload.empty && (
-              <pre className="text-[10px] leading-relaxed font-mono text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap break-all max-h-36 overflow-y-auto bg-zinc-100/80 dark:bg-zinc-900/60 rounded px-2 py-1.5">
+              <pre className="text-[10px] leading-relaxed font-mono text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap break-all max-h-36 overflow-y-auto tb-soft-field rounded px-2 py-1.5">
                 {payload.formatted}
               </pre>
             )}
@@ -1071,7 +1071,7 @@ function ToolGroupCard({ step, live = false }) {
               <pre className={`text-[10px] leading-relaxed font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto rounded px-2 py-1.5 ${
                 err
                   ? 'text-red-700 dark:text-red-300 bg-red-50/80 dark:bg-red-950/25'
-                  : 'text-zinc-500 dark:text-zinc-400 bg-zinc-100/80 dark:bg-zinc-900/60'
+                  : 'text-zinc-500 dark:text-zinc-400 tb-soft-field'
               }`}>
                 {String(resultContent)}
               </pre>
@@ -1100,7 +1100,7 @@ function ToolCard({ step, live = false }) {
 
   return (
     <div className="flex justify-start">
-      <div className={`max-w-[88%] w-full rounded-xl border ${meta.accent}`}>
+      <div className={`max-w-[88%] w-full rounded-xl ${meta.accent}`}>
         <button
           type="button"
           onClick={() => collapsible && setOpen(v => !v)}
@@ -1228,7 +1228,7 @@ function ThinkingGroupCard({ item, live = false }) {
     <div className="flex justify-start items-start">
       <div
         className={[
-          'max-w-[80%] min-w-0 rounded-xl border overflow-hidden',
+          'max-w-[80%] min-w-0 rounded-xl overflow-hidden',
           meta.accent,
           live ? 'ring-1 ring-zinc-300/50 dark:ring-white/10' : '',
         ].filter(Boolean).join(' ')}
@@ -1322,7 +1322,7 @@ function LiveProgressPanel({ agentName, timeline }) {
   const statusDetail = systemStatus || t('debug.log.waitStream');
 
   return (
-    <div className="rounded-xl border border-zinc-200/70 bg-zinc-50/40 dark:border-white/[0.08] dark:bg-white/[0.03] overflow-hidden">
+    <div className="rounded-xl tb-soft-bubble overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-600 dark:text-zinc-300">
         <span className="inline-block h-3 w-16 rounded bg-zinc-200/80 dark:bg-zinc-700 animate-pulse shrink-0" />
         <span className="font-medium shrink-0">{agentName || 'Agent'} {t('debug.log.executing')}</span>
@@ -1400,7 +1400,7 @@ function DelegationCard({ item }) {
 
             {/* 子 Agent 执行过程（推理/工具/输出） */}
             {item.nestedSteps?.length > 0 && (
-              <div className="rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 bg-white/60 dark:bg-zinc-900/40 p-2 space-y-2">
+              <div className="rounded-lg tb-soft-bubble p-2 space-y-2">
                 <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
                   {t('debug.log.agentOutput', { name: item.agentName || item.agentId || 'Agent' })}
                 </p>
@@ -1571,7 +1571,7 @@ export default function ExecutionLog({
           // 紧挨在推理卡后：头像已在推理行，回复只缩进对齐
           return (
             <div key={`a-${i}`} className="flex justify-start">
-              <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100">
+              <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-sm tb-soft-bubble text-zinc-900 dark:text-zinc-100">
                 <StreamMarkdownContent
                   content={normalizeDisplayText(item.content)}
                   live={isLive}
@@ -1616,7 +1616,7 @@ export default function ExecutionLog({
       {/* 本轮尚无回复/推理气泡：新开一条空回复放呼吸光标，不粘在历史消息上 */}
       {waitingForReply && (
         <div className="flex justify-start">
-          <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-blue-200/70 dark:border-blue-800/50 text-zinc-900 dark:text-zinc-100 min-h-[2.25rem] flex items-center gap-2">
+          <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-sm tb-soft-bubble border-blue-200/60 dark:border-blue-800/40 text-zinc-900 dark:text-zinc-100 min-h-[2.25rem] flex items-center gap-2">
             <span className="inline-block h-2.5 w-14 rounded bg-blue-200 dark:bg-blue-800 animate-pulse shrink-0" />
             <span className="text-xs text-blue-600/90 dark:text-blue-300/90 animate-pulse">{t('debug.log.executing')}</span>
             <span className="inline-block animate-pulse text-blue-500 dark:text-blue-400">▊</span>

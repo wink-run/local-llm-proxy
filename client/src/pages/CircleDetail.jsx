@@ -473,7 +473,7 @@ export default function CircleDetail({ routeParams }) {
                   return (
                     <div
                       key={`${a.worker_id}:${a.id}`}
-                      className="tb-soft-card flex gap-3 p-3 rounded-2xl"
+                      className="tb-soft-tile flex gap-3 p-3 rounded-2xl"
                     >
                       <CircleAgentIcon name={title} />
                       <div className="min-w-0 flex-1">
@@ -548,7 +548,7 @@ export default function CircleDetail({ routeParams }) {
 
         {posts.map(post => (
           <article key={post.id}
-            className="tb-soft-card rounded-xl px-4 py-3.5 space-y-2">
+            className="tb-soft-tile rounded-xl px-4 py-3.5 space-y-2">
             <div className="flex items-center gap-2.5">
               <AuthorAvatar author={post} />
               <div className="flex-1 min-w-0 flex items-center justify-between gap-2">

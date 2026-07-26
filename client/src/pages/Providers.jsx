@@ -962,7 +962,7 @@ function PersonalFilterBar({ value, onChange, t }) {
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border transition-colors ${
             value === item.id
               ? 'bg-blue-600 text-white border-blue-600 font-medium'
-              : 'tb-soft-card text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
+              : 'tb-soft-tile !rounded-full text-zinc-600 dark:text-zinc-400'
           }`}
         >
           {item.id !== 'all' && <PersonalTypeIcon tag={item.id} />}
@@ -1406,10 +1406,10 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
   }
 
   return (
-    <div className="tb-soft-card rounded-2xl overflow-hidden">
+    <div className="tb-soft-tile rounded-2xl overflow-hidden">
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
-        <div className="w-9 h-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🌐</div>
+        <div className="w-9 h-9 rounded-xl bg-zinc-100/70 dark:bg-zinc-800/70 backdrop-blur-sm flex items-center justify-center text-base shrink-0">🌐</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -2451,7 +2451,7 @@ function ProviderModelSection({ provider, userPayg, onUpdate, scrollable = false
   }
 
   return (
-    <div className="border-t border-zinc-100 dark:border-zinc-800 px-4 py-3 space-y-2">
+    <div className="px-4 py-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-xs text-zinc-500">{t('providers.models.list')}</span>
@@ -2465,7 +2465,7 @@ function ProviderModelSection({ provider, userPayg, onUpdate, scrollable = false
             type="button"
             onClick={() => setModelsOpen(v => !v)}
             aria-expanded={modelsOpen}
-            className="text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+            className="tb-press text-xs px-2.5 py-1 rounded-lg border border-zinc-300/80 dark:border-zinc-700 bg-white/50 dark:bg-zinc-800/60 backdrop-blur-sm text-zinc-600 dark:text-zinc-400 hover:bg-white/80 dark:hover:bg-zinc-700/80 transition-colors"
           >
             {modelsOpen ? t('providers.models.collapse') : t('providers.models.expand')}
           </button>
@@ -2538,9 +2538,9 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   }
 
   return (
-    <div className="tb-soft-card rounded-2xl overflow-hidden">
+    <div className="tb-soft-tile rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-4">
-        <div className="w-9 h-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🔗</div>
+        <div className="w-9 h-9 rounded-xl bg-zinc-100/70 dark:bg-zinc-800/70 backdrop-blur-sm flex items-center justify-center text-base shrink-0">🔗</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
@@ -2890,10 +2890,10 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
   }
 
   return (
-    <div className="tb-soft-card rounded-2xl overflow-hidden">
+    <div className="tb-soft-tile rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-3.5">
         {/* Icon（命中品牌用 lobehub logo，否则回退预设 emoji）*/}
-        <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
+        <div className="w-8 h-8 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/70 backdrop-blur-sm flex items-center justify-center text-[15px] shrink-0 mt-0.5">
           {(() => {
             // 名称/图标对齐账户实例（与统计一致）：实例名优先，品牌 logo 按实例名解析，回退实例 emoji
             const brand = resolveBrandIcon(`${provider.id || ''} ${displayName || meta.label || ''}`);
@@ -4124,7 +4124,7 @@ export default function Providers() {
         </button>
 
         {pickerOpen && (
-          <div className="tb-soft-card p-4 rounded-2xl space-y-3">
+          <div className="space-y-3">
             {!paidAccountsLoaded && (
               <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
             )}
@@ -4138,7 +4138,7 @@ export default function Providers() {
                   <button key={item.key} type="button" title={m.hint || ''} onClick={() => {
                     updateProvider(pr.id, { enabled: true });
                   }}
-                    className="tb-soft-card w-full flex items-center gap-2.5 px-3 py-3 rounded-xl text-left text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600">
+                    className="tb-soft-tile w-full flex items-center gap-2.5 px-3 py-3 rounded-xl text-left text-sm font-medium text-zinc-600 dark:text-zinc-400">
                     <span className="text-lg shrink-0">{m.icon || '🔌'}</span>
                     <span className="min-w-0 flex-1 truncate">{m.label || pr.id}</span>
                     {(m.keyless || pr.type === 'free') && (
@@ -4185,11 +4185,7 @@ export default function Providers() {
       : 'Key';
     return (
       <button key={entry.pickerKey} type="button" onClick={() => selectPickerEntry(entry)}
-        className={`tb-soft-card w-full flex items-center gap-2.5 px-3 py-3 rounded-xl text-left transition-colors hover:border-blue-300 dark:hover:border-blue-700 ${
-          isFree
-            ? 'border-teal-300/80 dark:border-teal-700/70 ring-1 ring-teal-200/70 dark:ring-teal-800/40'
-            : 'border-zinc-200 dark:border-zinc-700'
-        }`}>
+        className="tb-soft-tile w-full flex items-center gap-2.5 px-3 py-3 rounded-xl text-left">
         <ServiceIcon
           id={entry.providerId || entry.templateKey}
           name={entry.label}
@@ -4202,9 +4198,9 @@ export default function Providers() {
             {entry.label}
           </span>
           <span className="flex flex-wrap items-center gap-1 mt-0.5">
-            {/* 免费账户醒目标识（青绿，区别于 Key/OAuth/Stats） */}
+            {/* 免费仅用标签区分，不再套青绿描边（与玻璃边冲突） */}
             {isFree && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200">
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-emerald-100/90 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">
                 {t('providers.add.freeTag')}
               </span>
             )}
@@ -4291,7 +4287,8 @@ export default function Providers() {
           hint={tierConfig.local.hint}
         />
 
-        <div className="tb-soft-card rounded-2xl p-5 space-y-4">
+        {/* 不套外层玻璃：子卡直接浮在主区，立体与毛玻璃才看得见（Apple：勿叠浅色半透明） */}
+        <div className="space-y-4">
         {sourcesView !== 'model' && (
           <div className="flex items-center justify-between gap-x-3 gap-y-2 min-w-0 flex-wrap">
             <PersonalFilterBar value={personalFilter} onChange={setPersonalFilter} t={t} />
@@ -4362,7 +4359,7 @@ export default function Providers() {
       </section>
 
       {/* 社区源：未登录可浏览，启用/配置 Key 需登录 */}
-      <section className="space-y-3 pt-4 border-t border-zinc-100 dark:border-zinc-800/60">
+      <section className="space-y-3 pt-4">
         <SourceSectionHeader
           dot={tierConfig.p2p.dot}
           title={t('providers.group.remote')}

@@ -1796,7 +1796,7 @@ export default function Resources() {
                 className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
                   active
                     ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/30 shadow-sm'
-                    : 'tb-soft-card hover:border-zinc-300 dark:hover:border-zinc-600'
+                    : 'tb-soft-tile !rounded-full'
                 }`}
               >
                 {opt.id ? (
@@ -2441,7 +2441,8 @@ export default function Resources() {
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-transparent">
-      <header className="shrink-0 px-4 pt-4 pb-3 border-b border-white/40 dark:border-white/[0.06] bg-white/35 dark:bg-zinc-900/40 backdrop-blur-xl backdrop-saturate-150">
+      {/* 与下方内容同色：透明底，不单独铺白 */}
+      <header className="shrink-0 px-4 pt-4 pb-2">
         <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{t('resources.title')}</h1>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{t('resources.subtitle')}</p>
       </header>

@@ -149,7 +149,7 @@ function PolicyManager() {
       <div className="flex flex-col gap-1.5 mb-2">
         {policies.length === 0 && <div className="text-xs text-zinc-400 py-1">{t('gateway.policy.empty')}</div>}
         {policies.map(p => (
-          <div key={p.id} className="tb-soft-card flex items-center gap-2 px-3 py-2 rounded-lg text-sm">
+          <div key={p.id} className="tb-soft-tile flex items-center gap-2 px-3 py-2 rounded-lg text-sm">
             <span className="font-medium text-zinc-800 dark:text-zinc-100 truncate flex-1">{p.name}</span>
             <span className="text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
               {STRATEGY_OPTIONS.find(s => s.value === p.strategy)?.label || p.strategy}
@@ -3437,7 +3437,7 @@ function AgentLinker() {
         <div className="flex flex-col gap-2">
           {agents.map(a => (
             <div key={a.id}
-              className={`tb-soft-card flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
+              className={`tb-soft-tile flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
                 ${!a.installed ? 'opacity-40' :
                   a.linked ? 'border-green-300/70 dark:border-green-800/60 bg-green-50/50 dark:bg-green-950/25' : ''}`}
             >
@@ -4722,8 +4722,8 @@ export default function Gateway() {
         ))}
       </div>
 
-      {/* 应用列表 / 场景路由 Tab */}
-      <div className="tb-soft-card rounded-2xl overflow-hidden">
+      {/* 应用列表 / 场景路由 Tab — 大面板用更透的 soft-panel */}
+      <div className="tb-soft-panel rounded-2xl overflow-hidden">
         {/* Tab bar（macOS 分段控件）+ Endpoint 合并一行 */}
         <div className="flex items-center gap-3 px-2.5 py-2 border-b border-white/40 dark:border-white/[0.06]">
           <div className="tb-glass-chip inline-flex items-center gap-0.5 p-0.5 rounded-[10px]">
@@ -4781,7 +4781,7 @@ export default function Gateway() {
             <ImportConfigButton onImported={() => { refresh(); loadSceneData(); loadAvailableModels(); }} endpoint="/api/config/scenes" />
           </div>
         </div>
-        <div className="divide-y divide-white/40 dark:divide-white/[0.06]">
+        <div className="space-y-2 px-3 pb-3">
           {/* 新建路由编辑器：放在列表最上面 */}
           {newRoute && (
             <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} network={network} sources={sources} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
@@ -4810,7 +4810,7 @@ export default function Gateway() {
             return (
             <div key={route.id}>
               <div
-                className="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors"
+                className="tb-soft-tile flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer"
                 onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
                 title={t('gateway.common.edit')}
               >
@@ -4910,7 +4910,7 @@ export default function Gateway() {
                   onClick={clickable ? () => setSelectedLog(e) : undefined}
                   onKeyDown={clickable ? (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setSelectedLog(e); } } : undefined}
                   title={clickable ? t('gateway.log.clickHint') : undefined}
-                  className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 ${
+                  className={`tb-soft-tile flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
                     clickable ? 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-700/60 transition-colors' : ''
                   }`}>
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />

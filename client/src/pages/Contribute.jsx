@@ -848,7 +848,7 @@ function CommunityAgentsCard({ refreshKey = 0 }) {
                 className={`flex gap-3 text-left p-3 min-h-[72px] rounded-2xl border transition-all duration-200 cursor-pointer ${
                   sel
                     ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-400 dark:border-amber-600 shadow-md shadow-amber-500/10'
-                    : 'tb-soft-card border-zinc-200/60 dark:border-white/10 hover:border-zinc-300/80 dark:hover:border-white/20'
+                    : 'tb-soft-tile'
                 }`}
               >
                 <CommunityAgentIcon name={title} selected={sel} />
@@ -1217,7 +1217,7 @@ export default function Contribute() {
               return (
               <div
                 key={s.id ?? s.period_end}
-                className="tb-soft-card rounded-xl px-4 py-2.5 text-sm
+                className="tb-soft-tile rounded-xl px-4 py-2.5 text-sm
                   flex flex-col gap-1.5
                   sm:grid sm:grid-cols-[8.5rem_4.5rem_minmax(0,1fr)_4.5rem] sm:gap-x-2 sm:items-center sm:gap-y-0"
               >

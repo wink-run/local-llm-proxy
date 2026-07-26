@@ -289,12 +289,12 @@ export default function Network() {
 
           {/* Left: Model list + Agents list */}
           <div className="space-y-5">
-          <div className="tb-table-shell rounded-2xl">
-            <div className="tb-table-head px-3 py-3 flex items-center justify-between">
+          <div className="space-y-2">
+            <div className="px-1 flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.modelsTitle')}</h2>
               <span className="tb-table-cell-meta">{t('network.sortByNodes')}</span>
             </div>
-            <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
+            <div className="space-y-2">
               {modelStats.length === 0 ? (
                 <div className="px-5 py-6 text-xs text-zinc-400">{t('network.noOnlineModels')}</div>
               ) : modelStats.map(m => {
@@ -306,7 +306,7 @@ export default function Network() {
                 const size   = parseSize(m.name);
                 return (
                   <div key={m.name}
-                    className={`flex items-center gap-3 px-5 py-3 ${m.nodes === 0 ? 'opacity-50' : ''}`}
+                    className={`tb-soft-tile flex items-center gap-3 px-4 py-3 rounded-xl ${m.nodes === 0 ? 'opacity-50' : ''}`}
                   >
                     <PingDot color={dot} />
                     <div className="flex-1 min-w-0">
@@ -354,12 +354,12 @@ export default function Network() {
           </div>
 
           {/* 可用智能体：公开在线名片 */}
-          <div className="tb-table-shell rounded-2xl">
-            <div className="tb-table-head px-3 py-3 flex items-center justify-between">
+          <div className="space-y-2">
+            <div className="px-1 flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.agentsTitle')}</h2>
               <span className="tb-table-cell-meta">{t('network.agentsCount', { n: totalAgents })}</span>
             </div>
-            <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50 max-h-80 overflow-y-auto">
+            <div className="space-y-2 max-h-80 overflow-y-auto">
               {agentGroups.length === 0 ? (
                 <div className="px-5 py-6 text-xs text-zinc-400">{t('network.noOnlineAgents')}</div>
               ) : agentGroups.map((g) => {
@@ -367,7 +367,7 @@ export default function Network() {
                   ? g.ownersFull.join('、')
                   : '';
                 return (
-                  <div key={g.name} className="flex items-center gap-3 px-5 py-3">
+                  <div key={g.name} className="tb-soft-tile flex items-center gap-3 px-4 py-3 rounded-xl">
                     <PingDot color="green" />
                     <div className="flex-1 min-w-0">
                       {/* 聚合行不展示运行时/简介：不同提供者可能不一致 */}
@@ -409,12 +409,12 @@ export default function Network() {
           <div className="space-y-3">
 
             {/* Contributor ranking */}
-            <div className="tb-table-shell rounded-2xl">
-              <div className="tb-table-head px-3 py-3 flex items-center justify-between">
+            <div className="space-y-2">
+              <div className="px-1 flex items-center justify-between">
                 <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.leaderboard')}</h2>
                 <span className="tb-table-cell-meta">{t('network.leaderboardHint')}</span>
               </div>
-              <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
+              <div className="space-y-2">
                 {topWorkers.length === 0 ? (
                   <div className="px-5 py-6 text-xs text-zinc-400">{t('network.noContribData')}</div>
                 ) : topWorkers.map((w, i) => {
@@ -424,7 +424,7 @@ export default function Network() {
                   const jobs = Number(w.period_agent_jobs) || 0;
                   const toks = Number(w.period_tokens) || 0;
                   return (
-                    <div key={w.worker_id || w.name} className="flex items-center gap-3 px-5 py-3">
+                    <div key={w.worker_id || w.name} className="tb-soft-tile flex items-center gap-3 px-4 py-3 rounded-xl">
                       <span className={`text-xs font-bold w-5 shrink-0 ${rankColor}`}>#{rank}</span>
                       <div className="flex-1 min-w-0">
                         <TruncTip className="text-xs font-medium text-zinc-700 dark:text-zinc-300" title={w.name}>
@@ -497,12 +497,12 @@ export default function Network() {
 
             {/* All workers list */}
             {(network?.workers?.length ?? 0) > 0 && (
-              <div className="tb-table-shell rounded-2xl">
-                <div className="tb-table-head px-3 py-3 flex items-center justify-between">
+              <div className="space-y-2">
+                <div className="px-1 flex items-center justify-between">
                   <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.workersTitle')}</h2>
                   <span className="tb-table-cell-meta">{t('network.workersCount', { n: network.workers.length })}</span>
                 </div>
-                <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50 max-h-56 overflow-y-auto">
+                <div className="space-y-2 max-h-56 overflow-y-auto">
                   {network.workers.map(w => {
                     const { short: offerShort, full: offerFull } = workerOfferTexts(w, t);
                     const geo = w.geo?.city || w.geo?.country || '';
@@ -510,7 +510,7 @@ export default function Network() {
                     const lineFull = geo ? `${offerFull} · ${geo}` : offerFull;
                     return (
                     <div key={w.worker_id || w.name}
-                      className="flex items-center gap-3 px-5 py-2.5">
+                      className="tb-soft-tile flex items-center gap-3 px-4 py-2.5 rounded-xl">
                       <span className="relative flex h-1.5 w-1.5 shrink-0">
                         {w.status === 'busy' ? (
                           <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />

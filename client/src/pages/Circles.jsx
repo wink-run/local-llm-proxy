@@ -411,7 +411,7 @@ function CircleCard({ circle, isOwner, onOpen, onInvite, onAction, actionLabel, 
           onOpen();
         }
       }}
-      className="tb-soft-card rounded-xl px-4 py-4 space-y-3 cursor-pointer hover:bg-white/55 dark:hover:bg-white/[0.06] transition-colors"
+      className="tb-soft-tile rounded-xl px-4 py-4 space-y-3 cursor-pointer"
     >
       <div className="flex items-center gap-4">
         <div
