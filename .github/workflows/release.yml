@@ -26,13 +26,16 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Client tests
         working-directory: client
-        run: npm ci && npm test
+        run: npm ci && xvfb-run --auto-servernum npm test
 
       - name: Server tests
         working-directory: server
-        run: pip install -r requirements.txt && python -m unittest discover -s . -p 'test_*.py' -v
+        run: pip install -r requirements.txt && python3 -m unittest discover -s . -p 'test_*.py' -v
 
   # ── macOS .dmg ───────────────────────────────────────────────────────────────
   build-mac:
