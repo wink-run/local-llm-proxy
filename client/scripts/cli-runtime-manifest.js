@@ -58,6 +58,43 @@ function resolveRequire(fromFile, reqPath) {
   return base.endsWith('.js') ? base : `${base}.js`;
 }
 
+/** 检查require语句是否在try-catch中（简单启发式） */
+function isRequireOptional(src, requireIndex) {
+  // 向后查找，计算未闭合的try块数量
+  const before = src.substring(Math.max(0, requireIndex - 1000), requireIndex);
+  
+  // 统计try和对应的catch
+  let openTries = 0;
+  let lastTryPos = -1;
+  
+  // 查找所有try关键字
+  const tryRe = /\btry\s*\{/g;
+  let match;
+  while ((match = tryRe.exec(before))) {
+    openTries++;
+    lastTryPos = match.index;
+  }
+  
+  if (openTries === 0) return false;
+  
+  // 从最后一个try之后统计大括号平衡
+  const afterLastTry = before.substring(lastTryPos);
+  let braceCount = 0;
+  for (let i = 0; i < afterLastTry.length; i++) {
+    if (afterLastTry[i] === '{') braceCount++;
+    else if (afterLastTry[i] === '}') braceCount--;
+  }
+  
+  // 如果大括号还有未闭合的，说明require在try块内
+  if (braceCount > 0) {
+    // 检查后面是否有catch
+    const after = src.substring(requireIndex, Math.min(src.length, requireIndex + 500));
+    return /\}\s*catch|catch\s*[\({]/.test(after) || /catch/.test(after);
+  }
+  
+  return false;
+}
+
 /** 静态扫描 require()，收集 CLI 运行时依赖的本地 JS 文件 */
 function collectRequiredLocalFiles(entryPath, seen = new Set(), missing = []) {
   if (seen.has(entryPath)) return { seen, missing };
@@ -77,7 +114,11 @@ function collectRequiredLocalFiles(entryPath, seen = new Set(), missing = []) {
     // 只追踪 client 目录内的源码
     if (!resolved.startsWith(CLIENT_ROOT)) continue;
     if (!fs.existsSync(resolved)) {
-      missing.push({ from: entryPath, req, resolved });
+      // 检查是否是可选依赖（在try-catch中）
+      const optional = isRequireOptional(src, m.index);
+      if (!optional) {
+        missing.push({ from: entryPath, req, resolved });
+      }
       continue;
     }
     if (resolved.endsWith('.js')) {

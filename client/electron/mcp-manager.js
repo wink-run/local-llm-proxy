@@ -7,7 +7,8 @@ const os = require('os');
 const path = require('path');
 const localStats = require('./local-stats');
 const { STATS_DIR } = require('../shared/telemetry');
-const shim = require('./shim-installer');
+let shim = null;
+try { shim = require('./shim-installer'); } catch { /* optional in CLI */ }
 const { getCatalogItem, listCatalogItems, listCatalogGrouped, MCP_CATEGORY_GROUPS } = require('./mcp-catalog');
 
 const { DELIVERY_POLICY } = require('./agent-delivery-policy');
@@ -477,7 +478,7 @@ class MCPManager {
     }
 
     const command = item.command === 'npx'
-      ? (shim.resolveRealCommand('npx') || 'npx')
+      ? (shim?.resolveRealCommand?.('npx') || 'npx')
       : item.command;
 
     const existing = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(item.id);
@@ -1213,7 +1214,7 @@ class MCPManager {
 
     let command = serverRow.command;
     if (command === 'npx') {
-      command = shim.resolveRealCommand('npx') || 'npx';
+      command = shim?.resolveRealCommand?.('npx') || 'npx';
     }
 
     return {

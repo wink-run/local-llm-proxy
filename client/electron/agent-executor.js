@@ -14,11 +14,14 @@ function nanoid(size = 8) {
   return crypto.randomBytes(Math.ceil(size / 2)).toString('hex').slice(0, size);
 }
 const { STATS_DIR } = require('../shared/telemetry');
-const shim = require('./shim-installer');
-const agentLinker = require('./agent-linker');
+let shim = null;
+let agentLinker = null;
+let runProbe = null;
+try { shim = require('./shim-installer'); } catch { /* optional in CLI */ }
+try { agentLinker = require('./agent-linker'); } catch { /* optional in CLI */ }
+try { runProbe = require('./detect-tools')._internal?.runProbe; } catch { /* optional in CLI */ }
 const { parseAgentOutputLine, summarizeAgentStdout, extractModifiedFiles, extractCliSessionId, normalizeCliSessionId, detectAgentExecutionFailure, formatAgentExitError, parseClaudeSyncStdout } = require('./agent-output-parser');
 const mcpManager = require('./mcp-manager');
-const { _internal: { runProbe } } = require('./detect-tools');
 const {
   isAssistantAgentId,
   assistantResourceId,
@@ -216,15 +219,15 @@ class AgentExecutor extends EventEmitter {
       : [cfg.detectCommand].filter(Boolean);
 
     for (const name of names) {
-      const resolved = shim.resolveRealCommand(name);
+      const resolved = shim?.resolveRealCommand?.(name);
       if (resolved) {
         return { executable: resolved, argPrefix: [], detectCommand: name };
       }
     }
 
     if (cfg.npxPackage) {
-      const npx = shim.resolveRealCommand('npx') || 'npx';
-      return { executable: npx, argPrefix: ['-y', cfg.npxPackage], detectCommand: 'npx' };
+      const npx = shim?.resolveRealCommand?.('npx') || 'npx';
+      return { executable: npx, argPrefix: ['-y', cfg.npxPackage], detectCommand: 'npx'};
     }
 
     const fallback = names[0] || cfg.detectCommand;
@@ -317,9 +320,11 @@ class AgentExecutor extends EventEmitter {
         let version = null;
         try {
           const probeCmd = launch.detectCommand || cfg.detectCommand;
-          const probe = await runProbe(probeCmd, ['--version'], 1800);
-          if (probe.ok) {
-            version = probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout;
+          if (runProbe) {
+            const probe = await runProbe(probeCmd, ['--version'], 1800);
+            if (probe.ok) {
+              version = probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout;
+            }
           }
         } catch {
           // 忽略版本探测失败
@@ -997,10 +1002,10 @@ class AgentExecutor extends EventEmitter {
     const cliCfg = AGENT_CLI[gatewayAgentId] || {};
     // Cursor 等直连账号：不注入网关、不告警「未找到工具配置」
     const useGateway = cliCfg.gatewayInject !== false;
-    let spawnEnv = useGateway
+    let spawnEnv = useGateway && agentLinker
       ? agentLinker.buildSpawnEnv(gatewayAgentId, process.env)
       : { ...process.env };
-    const spawnDiag = useGateway
+    const spawnDiag = useGateway && agentLinker
       ? agentLinker.diagnoseGatewaySpawn(gatewayAgentId, process.env)
       : {
         toolId: gatewayAgentId,

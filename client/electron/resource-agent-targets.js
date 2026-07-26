@@ -8,6 +8,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+let shimInstaller = null;
+let agentLinker = null;
+try { shimInstaller = require('./shim-installer'); } catch { /* optional in CLI */ }
+try { agentLinker = require('./agent-linker'); } catch { /* optional in CLI */ }
+
 /** 支持 Skill 投射的 Agent */
 const AGENT_RESOURCE_TARGETS = {
   'claude-code': {
@@ -125,18 +130,17 @@ function isAgentInstalled(agentId) {
   if (!id) return false;
 
   try {
-    const tool = require('./agent-linker').list().find(t => t.id === id);
+    const tool = agentLinker?.list?.()?.find(t => t.id === id);
     if (tool?.installed) return true;
   } catch { /* ignore */ }
 
   try {
     const cl = require('./config-loader');
-    const shim = require('./shim-installer');
     const ent = cl.appEntityById?.(id);
-    if (ent?.detect_command && shim.resolveRealCommand(ent.detect_command)) return true;
+    if (ent?.detect_command && shimInstaller?.resolveRealCommand?.(ent.detect_command)) return true;
     if (ent?.proxy_mode === 'api_key') {
       if (ent.detect_type === 'command' && ent.detect_value) {
-        if (shim.resolveRealCommand(ent.detect_value)) return true;
+        if (shimInstaller?.resolveRealCommand?.(ent.detect_value)) return true;
       }
       if (ent.detect_type === 'appx' && ent.detect_value) {
         const appName = String(ent.detect_value).split('.').pop();
@@ -151,9 +155,7 @@ function isAgentInstalled(agentId) {
 
   if (id === 'cursor') {
     if (macAppExists('Cursor')) return true;
-    try {
-      if (require('./shim-installer').resolveRealCommand('cursor')) return true;
-    } catch { /* ignore */ }
+    if (shimInstaller?.resolveRealCommand?.('cursor')) return true;
   }
 
   // codex CLI 未进 PATH 时，仍认 Desktop（投射目标 id 为 codex）

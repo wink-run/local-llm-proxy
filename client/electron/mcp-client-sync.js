@@ -5,7 +5,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const shim = require('./shim-installer');
+let shim = null;
+try { shim = require('./shim-installer'); } catch { /* optional in CLI */ }
 const { BUILTIN_BRIDGE_ID, BUILTIN_PROMPTS_ID, BUILTIN_MODELS_ID, BUILTIN_RESOURCES_ID, writeElectronAsNodeLauncher } = require('./mcp-manager');
 const { CLIENT_TARGETS } = require('./mcp-agent-targets');
 
@@ -110,7 +111,7 @@ function serverToEntry(serverRow, clientId) {
   let command = serverRow.command;
   if (command === '__DYNAMIC_ELECTRON__') return null;
   if (command === 'npx') {
-    command = shim.resolveRealCommand('npx') || 'npx';
+    command = shim?.resolveRealCommand?.('npx') || 'npx';
   }
 
   let args = [];
