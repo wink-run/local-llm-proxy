@@ -29,8 +29,10 @@ const CATEGORY_SLUGS = [
 const CATEGORY_RULE = `- category 只能取以下英文 slug 之一(不要用中文或其它词):${CATEGORY_SLUGS.join(', ')}。`;
 
 const TYPE_SOURCES = {
-  skill: '来源:用 find-skill / `skillhub search --json` 在 SkillHub 检索技能。只推荐检索结果里真实存在的 slug,禁止编造。',
-  assistant: '来源(智能体):① 优先选下方「Token Bank 社区目录」真实条目(填 catalogId);② 目录没有合适的,可按用户需求自建:写完整 soul + 搭配客观存在的技能。',
+  // SkillHub 为主;ECC/skills 作补充探索路径(目录名即真实 skill)
+  skill: '来源:① 用 find-skill / `skillhub search --json` 在 SkillHub 检索;② https://github.com/affaan-m/ECC/tree/main/skills。只推荐真实存在的 slug/目录名,禁止编造。',
+  // 社区目录优先;ECC/agents 作补充探索(可参考其 md 写 composed soul)
+  assistant: '来源(智能体):① 优先选下方「Token Bank 社区目录」真实条目(填 catalogId);② https://github.com/affaan-m/ECC/tree/main/agents;③ 目录与 ECC 没有合适的,可按用户需求自建:写完整 soul + 搭配客观存在的技能。',
   prompt: '来源(提示词):① https://github.com/f/awesome-chatgpt-prompts(prompts.csv);② https://www.aishort.top/;③ https://lexica.art/。',
 };
 const TYPE_JSON = {
@@ -421,13 +423,14 @@ function discoverPrompt(persona, traits, goals, extensions, needs, supplement, e
   );
   if (rtype === 'prompt') L.push('- content 必须是提示词正文全文;无正文的不要列。');
   if (rtype === 'skill') {
-    L.push('- 每条必须来自 `skillhub search --json` 的真实结果,slug 原样回填;搜不到的不要编。');
+    L.push('- 每条必须来自 `skillhub search --json` 或 ECC/skills 真实目录名,slug 原样回填;搜不到的不要编。');
   }
   if (rtype === 'assistant') {
     L.push(
       '- 优先选「Token Bank 社区目录」里已有智能体(填 catalogId,可省略 soul)。',
-      '- 目录覆盖不到的需求:允许自建智能体(source=composed):必须写完整 soul(角色/职责/工作方式/输出风格),并搭配客观存在的技能。',
-      '- skills 硬约束:只能填下方目录技能 name,或经 `skillhub search --json` 确认存在的真实 slug;禁止 python/api-dev/testing-patterns 等泛化假名。',
+      '- 也可参考 ECC/agents 下真实 agent md,提炼为自建智能体(source=composed)。',
+      '- 目录与 ECC 覆盖不到的需求:允许自建智能体(source=composed):必须写完整 soul(角色/职责/工作方式/输出风格),并搭配客观存在的技能。',
+      '- skills 硬约束:只能填下方目录技能 name、ECC/skills 真实目录名,或经 `skillhub search --json` 确认存在的真实 slug;禁止 python/api-dev/testing-patterns 等泛化假名。',
       '- 自建至少搭配 1~6 个真实技能;没有真实技能可配的不要硬凑。',
     );
     if (catalogPool && catalogPool.assistants && catalogPool.assistants.length) {
