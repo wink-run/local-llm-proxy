@@ -28,4 +28,4 @@ jobs:
 
       - name: Server tests
         working-directory: server
-        run: pip install -r requirements.txt && python -m unittest discover -s . -p 'test_*.py' -v
+        run: pip install -r requirements.txt && python3 -m unittest discover -s . -p 'test_*.py' -v
