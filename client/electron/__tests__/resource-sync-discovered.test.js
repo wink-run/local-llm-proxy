@@ -79,3 +79,72 @@ test('syncDiscoveredSkills 扫描即纳管，且幂等 + 内容变更自动更�
     fs.rmSync(skillsDir, { recursive: true, force: true });
   }
 });
+
+test('.agents（agents-hub）skill 纳管后默认投射到已安装 Agent', () => {
+  const statsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-hub-auto-db-'));
+  const hubRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-hub-auto-skills-'));
+  localStats.close();
+  assert.ok(localStats.init(statsDir, { force: true }), '临时 local-stats DB 应初始化成功');
+
+  writeSkill(hubRoot, 'hub-auto-skill', '# from .agents');
+
+  const origScanGlobal = scanner.scanGlobalSkills;
+  // 只暴露一份全局 ~/.agents/skills 条目（模拟 EXTRA_SKILL_ROOTS agents-hub）
+  scanner.scanGlobalSkills = () => {
+    const skillDir = path.join(hubRoot, 'hub-auto-skill');
+    const skillPath = path.join(skillDir, 'SKILL.md');
+    const content = fs.readFileSync(skillPath, 'utf8');
+    return [{
+      scanKey: 'agents-hub::hub-auto-skill',
+      type: 'skill',
+      name: 'hub-auto-skill',
+      display_name: 'hub-auto-skill',
+      description: 'hub-auto-skill desc',
+      version: '',
+      content,
+      hash: scanner.hashContent(content),
+      agentId: 'agents-hub',
+      agentLabel: '.agents',
+      skillDir,
+      skillPath,
+      skillRoot: hubRoot,
+      metadata: { tags: [], scannedFrom: skillDir },
+      scope: 'global',
+    }];
+  };
+
+  const targets = require('../resource-agent-targets');
+  const origInstalled = targets.isAgentInstalled;
+  targets.isAgentInstalled = (id) => id === 'cursor' || id === 'claude-code';
+
+  const projectCalls = [];
+  const origProject = resourceManager.projectToAgents.bind(resourceManager);
+  resourceManager.projectToAgents = (resourceId, agentIds, scope, options) => {
+    projectCalls.push({ resourceId, agentIds: [...agentIds], scope, options: { ...options } });
+    return { results: [] };
+  };
+
+  try {
+    const first = resourceManager.syncDiscoveredSkills({});
+    assert.equal(first.imported, 1);
+
+    const res = resourceManager.listResources({ type: 'skill' })
+      .find((r) => r.name === 'hub-auto-skill');
+    assert.ok(res, '应已纳管');
+    assert.equal(res.metadata?.autoProjectedFromAgentsHub, true, '应标记已尝试默认投射');
+    assert.equal(projectCalls.length, 1, '应触发一次默认投射');
+    assert.deepEqual(projectCalls[0].agentIds.sort(), ['claude-code', 'cursor'].sort());
+    assert.equal(projectCalls[0].options.force, false);
+
+    // 再次同步：metadata 已打标，不再投射
+    resourceManager.syncDiscoveredSkills({});
+    assert.equal(projectCalls.length, 1, '重复同步不应再次默认投射');
+  } finally {
+    resourceManager.projectToAgents = origProject;
+    targets.isAgentInstalled = origInstalled;
+    scanner.scanGlobalSkills = origScanGlobal;
+    localStats.close();
+    fs.rmSync(statsDir, { recursive: true, force: true });
+    fs.rmSync(hubRoot, { recursive: true, force: true });
+  }
+});

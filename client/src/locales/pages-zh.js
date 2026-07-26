@@ -1726,6 +1726,7 @@ export default {
   'resources.uninstallConfirm': '确定卸载「{name}」？\n\n将永久删除该技能的原文件，删除后无法恢复，请谨慎操作。',
   'resources.uninstallFailed': '卸载失败',
   'resources.uninstallNeedUnproject': '该技能仍投射在其它应用，请先点标签上的 × 移除后再卸载。',
+  'resources.uninstallForceConfirm': '「{name}」当前仍投射到其它应用。\n\n若只是不想在某个应用中启用，直接点标签上的 × 取消投射即可。\n\n仍要强制卸载吗？将自动取消所有投射，并永久删除技能原文件（不可恢复）。',
   'resources.deleteNeedUnproject': '该智能体仍投射在应用，请先点标签上的 × 移除后再删除。',
   'resources.emptyCatalog': '暂无匹配的资产',
   'resources.emptyManaged': '暂无已纳管资产',

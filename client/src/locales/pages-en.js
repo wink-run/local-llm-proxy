@@ -1719,6 +1719,7 @@ export default {
   'resources.uninstallConfirm': 'Uninstall "{name}"?\n\nThis permanently deletes the skill’s original files. This cannot be undone — proceed with caution.',
   'resources.uninstallFailed': 'Uninstall failed',
   'resources.uninstallNeedUnproject': 'This skill is still projected on other apps. Tap × on those tags to remove, then uninstall.',
+  'resources.uninstallForceConfirm': '"{name}" is still projected to other apps.\n\nIf you only want to disable it in one app, tap × on that tag to remove the projection.\n\nForce uninstall anyway? This cancels all projections and permanently deletes the skill’s original files. This cannot be undone.',
   'resources.deleteNeedUnproject': 'This assistant is still projected on an app. Tap × on those tags to remove, then delete.',
   'resources.emptyCatalog': 'No matching assets',
   'resources.emptyManaged': 'No managed assets yet',

@@ -205,10 +205,17 @@ function registerResourceHandlers() {
     }
   });
 
-  ipcMain.handle('resource:deleteResource', async (_event, resourceId) => {
+  // 支持 deleteResource(id) / deleteResource(id, opts) / deleteResource({ resourceId, force })
+  ipcMain.handle('resource:deleteResource', async (_event, resourceIdOrPayload, maybeOptions) => {
     try {
       resourceManager.init();
-      return resourceManager.deleteResource(resourceId);
+      let resourceId = resourceIdOrPayload;
+      let options = maybeOptions || {};
+      if (resourceIdOrPayload && typeof resourceIdOrPayload === 'object') {
+        resourceId = resourceIdOrPayload.resourceId;
+        options = resourceIdOrPayload;
+      }
+      return resourceManager.deleteResource(resourceId, options || {});
     } catch (error) {
       console.error('[IPC] resource:deleteResource error:', error);
       return { success: false, error: error.message };

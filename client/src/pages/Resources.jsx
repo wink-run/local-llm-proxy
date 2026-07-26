@@ -999,22 +999,39 @@ export default function Resources() {
     return (projections || []).some(p => canUnprojectProjection(p, authorityPath));
   }
 
-  /** Skill 卸载：有其它投射则提示先取消；否则确认后删除权威目录 */
+  /** Skill 卸载：有投射则确认强制撤投射并删权威目录 */
   async function handleUninstallSkill(item) {
     const resourceId = item.resourceId || item.id;
     if (!resourceId) return;
     const authorityPath = item.authorityPath || getSkillLocation(item);
-    if (hasProjectedLinks(item.projections, authorityPath)) {
-      setError(t('resources.uninstallNeedUnproject'));
-      return;
-    }
     const name = item.display_name || item.name;
-    if (!window.confirm(t('resources.uninstallConfirm', { name }))) return;
+    const hasLinks = hasProjectedLinks(item.projections, authorityPath);
+    // 系统弹窗确认（列表很长时顶部提示看不见）
+    const ok = window.confirm(
+      hasLinks
+        ? t('resources.uninstallForceConfirm', { name })
+        : t('resources.uninstallConfirm', { name }),
+    );
+    if (!ok) return;
     setBusy(resourceId);
     try {
-      const res = await window.electronAPI.resource.deleteResource(resourceId);
+      // 先撤可取消投射：不依赖 preload 是否已重载 force 参数，避免仍被后端拦截
+      const removable = (item.projections || []).filter((p) => canUnprojectProjection(p, authorityPath));
+      for (const p of removable) {
+        const up = await window.electronAPI.resource.unproject({
+          resourceId,
+          agentId: p.agentId,
+          projectionId: p.id,
+        });
+        if (!up?.success) {
+          window.alert(up?.error || t('resources.unprojectFailed'));
+          return;
+        }
+      }
+      // force:true 双保险（preload 已更新时由主进程一并处理）
+      const res = await window.electronAPI.resource.deleteResource(resourceId, { force: true });
       if (!res.success) {
-        setError(res.error || t('resources.uninstallFailed'));
+        window.alert(res.error || t('resources.uninstallFailed'));
         return;
       }
       removeResourceLocally(resourceId, { ...item, id: resourceId, type: 'skill' });
@@ -1932,7 +1949,7 @@ export default function Resources() {
               onClick={() => handleUninstallSkill(item)}
               className="text-xs px-3 py-1.5 rounded-lg border border-red-200/90 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30 disabled:opacity-45 transition active:scale-[0.98]"
               title={hasProjectedLinks(item.projections, item.authorityPath || getSkillLocation(item))
-                ? t('resources.uninstallNeedUnproject')
+                ? t('resources.uninstallForceConfirm', { name: item.display_name || item.name })
                 : undefined}
             >
               {busy === item.resourceId ? t('resources.busy') : t('resources.uninstall')}

@@ -107,7 +107,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveResource: (data) => ipcRenderer.invoke('resource:saveResource', data || {}),
     pickImportPath: (options) => ipcRenderer.invoke('resource:pickImportPath', options || {}),
     importFromPath: (params) => ipcRenderer.invoke('resource:importFromPath', params || {}),
-    deleteResource: (resourceId) => ipcRenderer.invoke('resource:deleteResource', resourceId),
+    // 兼容旧调用 deleteResource(id)；新调用可带 { force: true } 强制卸载
+    deleteResource: (resourceId, options) => ipcRenderer.invoke(
+      'resource:deleteResource',
+      { resourceId, ...(options && typeof options === 'object' ? options : {}) },
+    ),
     project: (params) => ipcRenderer.invoke('resource:project', params || {}),
     unproject: (params) => ipcRenderer.invoke('resource:unproject', params || {}),
     verifyProjections: (params) => ipcRenderer.invoke('resource:verifyProjections', params || {}),

@@ -1191,7 +1191,11 @@ class ResourceManager {
     return { deleted: true, path: abs };
   }
 
-  deleteResource(resourceId) {
+  /**
+   * @param {string} resourceId
+   * @param {{ force?: boolean }} [options] force=true：有投射时先撤再删权威目录（强制卸载）
+   */
+  deleteResource(resourceId, { force = false } = {}) {
     this.init();
     const db = this._getDb();
     const resource = this.getResource(resourceId);
@@ -1200,8 +1204,8 @@ class ResourceManager {
       throw new Error('内置智能体不可删除');
     }
 
-    // Skill：仅当仍有「可取消」的投射时禁止卸载；只剩权威源时可直接卸载
-    if (resource.type === 'skill') {
+    // Skill：默认有可取消投射则禁止；force 时自动撤投射再删文件
+    if (resource.type === 'skill' && !force) {
       const authorityDir = this._resolveSkillAuthorityDir(resource);
       const blocking = (resource.projections || []).filter(p =>
         this._isRemovableProjection(p, authorityDir, resource.name),
@@ -1211,21 +1215,22 @@ class ResourceManager {
       }
     }
 
-    // Skill 卸载 = 删除权威目录
-    let deletedFiles = null;
-    if (resource.type === 'skill') {
-      deletedFiles = this._deleteSkillFiles(resource);
-    }
-
     const promptClientIds = resource.type === 'prompt'
       ? (resource.projections || []).map(p => p.agentId)
       : [];
 
+    // 先撤投射（软链/副本），再删权威目录，避免残留指向已删路径的链接
     for (const proj of resource.projections || []) {
       try {
         unprojectResource(resource, proj.agentId, proj.projectionType, proj.targetPath);
       } catch {}
     }
+
+    let deletedFiles = null;
+    if (resource.type === 'skill') {
+      deletedFiles = this._deleteSkillFiles(resource);
+    }
+
     db.prepare('DELETE FROM resource_projections WHERE resource_id = ?').run(resourceId);
     db.prepare('DELETE FROM resources WHERE id = ?').run(resourceId);
     this._resyncPromptClients(promptClientIds);
@@ -1744,6 +1749,49 @@ class ResourceManager {
     return { items, scanStats };
   }
 
+  /**
+   * `.agents`（agents-hub）协议目录下的 skill：默认投射到本机已安装 Agent。
+   * 用 metadata.autoProjectedFromAgentsHub 只尝试一次，避免用户撤投射后被同步加回。
+   * 项目内 / 自定义扫描根下的 .agents/skills 不自动投到全局 Agent 目录。
+   */
+  _maybeAutoProjectFromAgentsHub(resourceId, group) {
+    // 仅认全局 ~/.agents/skills；同 hash 的项目内/自定义根副本不触发、也不拦截
+    const hubAgents = (group?.agents || []).filter((a) => (
+      a.agentId === 'agents-hub'
+      && !a.projectRoot
+      && !a.customScanRoot
+      && a.scope !== 'project'
+      && a.scope !== 'custom'
+    ));
+    if (!hubAgents.length || !resourceId) return;
+
+    const resource = this.getResource(resourceId);
+    if (!resource) return;
+    const meta = resource.metadata && typeof resource.metadata === 'object' ? resource.metadata : {};
+    if (meta.autoProjectedFromAgentsHub) return;
+
+    const db = this._getDb();
+    const now = Date.now();
+    // 先打标，防止投射抛错或下次 sync 反复尝试
+    const nextMeta = { ...meta, autoProjectedFromAgentsHub: true };
+    db.prepare('UPDATE resources SET metadata = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(nextMeta), now, resourceId);
+
+    const already = new Set(
+      (db.prepare(
+        'SELECT agent_id FROM resource_projections WHERE resource_id = ? AND status = ?',
+      ).all(resourceId, 'active') || []).map((r) => r.agent_id),
+    );
+    const targets = listSkillProjectableAgentIds().filter((aid) => !already.has(aid));
+    if (!targets.length) return;
+
+    try {
+      this.projectToAgents(resourceId, targets, 'global', { force: false });
+    } catch (e) {
+      console.warn('[resource-manager] auto-project from .agents failed:', e?.message || e);
+    }
+  }
+
   /** 将扫描到的本机 Skill 纳管进 Token Bank（不移动原文件，记录 scan 投射） */
   /**
    * 把单个扫描分组写入 resources 并建立 scan 投射。
@@ -1753,6 +1801,7 @@ class ResourceManager {
   _importDiscoveredGroup(group, entry, { updateIfExists = false } = {}) {
     const existing = this._findByTypeName('skill', group.name);
     if (existing && !updateIfExists) {
+      this._maybeAutoProjectFromAgentsHub(existing.id, group);
       return { id: existing.id, updated: false, skipped: true };
     }
 
@@ -1840,6 +1889,9 @@ class ResourceManager {
       }
     }
 
+    // 协议目录 ~/.agents/skills：纳管后默认投射到已安装应用
+    this._maybeAutoProjectFromAgentsHub(id, group);
+
     return { id, updated: !!existing, skipped: false };
   }
 
@@ -1889,7 +1941,11 @@ class ResourceManager {
       const descMissing = managedRes
         && !(managedRes.description || '').trim()
         && !!(group.description || '').trim();
-      if (managedRes && !contentChanged && !descMissing) continue;
+      if (managedRes && !contentChanged && !descMissing) {
+        // 已纳管未变更：仍尝试一次 .agents 默认投射（幂等，靠 metadata 防重）
+        this._maybeAutoProjectFromAgentsHub(managedRes.id, group);
+        continue;
+      }
 
       const entry = rawEntries.find(i => i.scanKey === group.scanKey)
         || rawEntries.find(i => i.name === group.name && i.hash === group.hash);
