@@ -1823,14 +1823,13 @@ function readLocalConfig() {
           cfg.initialized_routes = true;
         }
       }
-      // 内置策略路由（模型无关，统一表示 steps:[{strategy}]）随版本内置：老配置也补齐缺失的。
-      // 识别策略路由：route-level strategy（旧）或单步 strategy-only（新）。
+      // 内置默认路由随版本补齐：老配置缺失的默认路由（策略路由 + 预定义模型链路由）都补上，
+      // 但跳过用户显式删除过的（记在 removed_default_routes，尊重删除意图，不复活）。
       try {
         const have = new Set((cfg.scene_routes || []).map(r => r.id));
+        const removed = new Set(Array.isArray(cfg.removed_default_routes) ? cfg.removed_default_routes : []);
         const defRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || [];
-        const isStrat = (r) => !!(r.strategy
-          || (Array.isArray(r.steps) && r.steps.length === 1 && r.steps[0] && r.steps[0].strategy && !r.steps[0].model));
-        const missing = defRoutes.filter(r => isStrat(r) && !have.has(r.id));
+        const missing = defRoutes.filter(r => !have.has(r.id) && !removed.has(r.id));
         if (missing.length) {
           cfg.scene_routes = cfg.scene_routes || [];
           for (const sr of missing) cfg.scene_routes.push({ ...sr, created_at: new Date().toISOString() });
@@ -3465,6 +3464,14 @@ function registerIPC() {
   ipcMain.handle('localConfig:deleteSceneRoute', (_e, id) => {
     const cfg = readLocalConfig();
     cfg.scene_routes = cfg.scene_routes.filter(r => r.id !== id);
+    // 若删的是「默认路由」，记下来，避免下次启动自动补齐时复活（尊重用户删除意图）
+    try {
+      const defIds = new Set((loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || []).map(r => r.id));
+      if (defIds.has(id)) {
+        cfg.removed_default_routes = Array.isArray(cfg.removed_default_routes) ? cfg.removed_default_routes : [];
+        if (!cfg.removed_default_routes.includes(id)) cfg.removed_default_routes.push(id);
+      }
+    } catch {}
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
     return { ok: true };

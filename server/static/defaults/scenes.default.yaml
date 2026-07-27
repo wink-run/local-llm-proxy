@@ -50,5 +50,47 @@ scene_routes:
     scope: personal
     flow: auto
 
-  # 模型链路由（代码助手/日常对话/长上下文/快速响应等）不再作为默认铺设——
-  # 它们钉死具体模型名、与用户实际拥有的源未必匹配；需要时由用户在界面自建。
+  # ── 任务分型模型链路由（预定义模板，仿 OpenCode / DigitalOcean Inference Router）──
+  #    每条 = 主模型 + 后备池；flow=fallback（主挂了按列出顺序切后备）。
+  #    app 按任务类型调对应 model_key（design/repo-qa/chore/debug）。
+  #    steps 只钉 model、不限 tier → 解析到任意拥有该模型的源；用户源不同则自动落到可用那个。
+  #    模型名与你实际拥有的源未必都匹配——解析不到的那步会被跳过，可在界面自行替换。
+  - id: route-design
+    scene_name: design
+    icon: 🎨
+    model_key: llm-router-design
+    flow: fallback
+    steps:
+      - model: glm-5.1
+      - model: deepseek-v4-pro
+      - model: minimax-m3
+      - model: mimo-v2.5
+  - id: route-repo-qa
+    scene_name: repo-qa
+    icon: 📚
+    model_key: llm-router-repo-qa
+    flow: fallback
+    steps:
+      - model: google/gemma-4-31b-it:free
+      - model: mimo-v2.5
+      - model: minimax-m2.7
+      - model: inclusionai/ling-3.0-flash:free
+  - id: route-chore
+    scene_name: chore
+    icon: 🧹
+    model_key: llm-router-chore
+    flow: fallback
+    steps:
+      - model: google/gemma-4-26b-a4b-it:free
+      - model: google/gemma-4-31b-it:free
+      - model: mimo-v2.5
+  - id: route-debug
+    scene_name: debug
+    icon: 🐛
+    model_key: llm-router-debug
+    flow: fallback
+    steps:
+      - model: glm-5.1
+      - model: deepseek-v4-pro
+      - model: minimax-m3
+      - model: deepseek-v4-flash
