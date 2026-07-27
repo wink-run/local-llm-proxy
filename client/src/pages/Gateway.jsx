@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { loadGatewayAvailableModels, resolveLocalGatewayBase, inferModelTypeFromName } from '../api/gatewayModels';
 import { getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig, getApps, getOauth } from '../api/adapter';
@@ -352,8 +353,8 @@ function AppToolboxGuideModal({ app, mode, onClose }) {
     : t('gateway.toolbox.uninstallGuideTitle', { name: app.name });
   const brand = resolveBrandIcon(`${app.id} ${app.name}`);
 
-  return (
-    <div className="electron-no-drag fixed inset-0 z-[65] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+  return createPortal(
+    <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md mx-auto flex flex-col max-h-[min(85vh,420px)]"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
@@ -387,7 +388,8 @@ function AppToolboxGuideModal({ app, mode, onClose }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -396,7 +398,8 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
   const { t } = useLang();
   const wrapRef = useRef(null);
   const btnRef = useRef(null);
-  const [pos, setPos] = useState({ top: 0, bottom: null, right: 16, maxH: 240 });
+  const panelRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, bottom: null, right: 16, maxH: 360 });
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState({});
@@ -439,12 +442,17 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
     const r = btnRef.current.getBoundingClientRect();
     const right = Math.max(8, window.innerWidth - r.right);
     const spaceBelow = window.innerHeight - r.bottom - 12;
-    // 浮层最高约 240px，不足空间时向上展开
-    const maxH = Math.min(240, Math.max(160, spaceBelow));
-    if (spaceBelow >= 180) {
-      setPos({ top: r.bottom + 6, bottom: null, right, maxH });
+    // 相对视口定位（panel portal 到 body）；高度随可用空间放大
+    const PANEL_MAX = 420;
+    if (spaceBelow >= 200) {
+      setPos({ top: r.bottom + 6, bottom: null, right, maxH: Math.min(PANEL_MAX, Math.max(220, spaceBelow)) });
     } else {
-      setPos({ top: null, bottom: window.innerHeight - r.top + 6, right, maxH: Math.min(240, r.top - 12) });
+      setPos({
+        top: null,
+        bottom: window.innerHeight - r.top + 6,
+        right,
+        maxH: Math.min(PANEL_MAX, Math.max(180, r.top - 12)),
+      });
     }
   }, []);
 
@@ -468,11 +476,13 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
     };
   }, [open, refreshKey, loadItems, updatePos]);
 
-  // 点击外部关闭
+  // 点击外部关闭（按钮 + portal 浮层都算内部）
   useEffect(() => {
     if (!open) return;
     const onDoc = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) onClose();
+      const t = e.target;
+      if (wrapRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      onClose();
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -480,122 +490,125 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
 
   const openGuide = (app, install) => setGuideDlg({ app, mode: install ? 'install' : 'uninstall' });
 
-  return (
-    <>
-    {guideDlg && (
-      <AppToolboxGuideModal app={guideDlg.app} mode={guideDlg.mode} onClose={() => setGuideDlg(null)} />
-    )}
-    <div ref={wrapRef} className="relative ml-auto">
-      <button ref={btnRef} type="button" onClick={onToggle} disabled={busy}
-        title={t('gateway.toolbox.title')}
-        aria-expanded={open}
-        className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors disabled:opacity-50
-          ${open
-            ? 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400'
-            : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'}`}>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={`w-3.5 h-3.5 shrink-0 ${busy ? 'animate-spin' : ''}`}>
-          {busy
-            ? <path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-            : <>
-                <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8z" />
-                <path d="M3.3 7 12 12l8.7-5M12 22V12" />
-              </>}
-        </svg>
-        {busy ? t('gateway.toolbox.syncing') : t('gateway.toolbox.btn')}
-      </button>
-
-      {/* 下拉浮层：fixed 锚定按钮，高度受限避免遮挡下方列表 */}
-      <div
-        aria-hidden={!open}
-        style={{
-          ...(pos.top != null ? { top: pos.top } : {}),
-          ...(pos.bottom != null ? { bottom: pos.bottom } : {}),
-          right: pos.right,
-          maxHeight: pos.maxH,
-        }}
-        className={`fixed z-[55] w-[min(calc(100vw-1rem),280px)] flex flex-col
-          origin-top-right transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]
-          ${open ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto' : 'opacity-0 -translate-y-1.5 scale-[0.97] pointer-events-none'}`}>
-        <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-xl shadow-black/10 dark:shadow-black/40 border border-zinc-200/80 dark:border-zinc-700 flex flex-col min-h-0 flex-1 overflow-hidden">
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
-            <h3 className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-100 flex-1 truncate" title={t('gateway.toolbox.hint')}>
-              {t('gateway.toolbox.panelTitle')}
-            </h3>
-            <button type="button" onClick={loadItems} title={t('gateway.common.refresh')}
-              className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 p-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700/50 transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="w-3 h-3">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-              </svg>
-            </button>
-            <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-sm leading-none p-0.5 transition-colors">✕</button>
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto p-2">
-            {syncError && (
-              <div className="mb-2 px-2 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/50 text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
-                {t('gateway.toolbox.syncFailed', { error: syncError })}
-              </div>
-            )}
-            {loading ? (
-              <div className="flex items-center justify-center gap-2 py-6 text-[11px] text-zinc-400">
-                <div className="w-3 h-3 border-2 border-zinc-300 dark:border-zinc-600 border-t-blue-500 rounded-full animate-spin" />
-                {t('gateway.toolbox.loading')}
-              </div>
-            ) : items.length === 0 ? (
-              <div className="py-6 text-center text-[11px] text-zinc-400">{t('gateway.toolbox.empty')}</div>
-            ) : (
-              <div className="grid grid-cols-3 gap-1.5">
-                {items.map(a => {
-                  const brand = resolveBrandIcon(`${a.id} ${a.name}`);
-                  const dim = a.installed ? '' : 'grayscale opacity-45';
-                  const install = !a.installed;
-                  const canNpm = install && !!a.npm_package && !!getApps().npmGlobalInstall;   // 未装 + 有 npm 包 → 可一键装
-                  const canNpmUninstall = !install && !!a.npm_package && !!getApps().npmGlobalUninstall;  // 已装 + 有 npm 包 → 可命令行卸
-                  const installing = !!npmBusy[a.id];
-                  const btnLabel = installing ? (install ? t('gateway.toolbox.installing') : t('gateway.toolbox.uninstalling'))
-                    : canNpm ? t('gateway.toolbox.oneClickInstall')
-                    : canNpmUninstall ? t('gateway.toolbox.oneClickUninstall')
-                    : install ? t('gateway.toolbox.install') : t('gateway.toolbox.uninstall');
-                  const btnTitle = canNpm ? t('gateway.toolbox.oneClickTitle', { name: a.name })
-                    : canNpmUninstall ? t('gateway.toolbox.oneClickUninstallTitle', { name: a.name })
-                    : install ? t('gateway.toolbox.installTitle', { name: a.name })
-                    : t('gateway.toolbox.uninstallTitle', { name: a.name });
-                  const onBtn = () => canNpm ? oneClickInstall(a)
-                    : canNpmUninstall ? oneClickUninstall(a)
-                    : openGuide(a, install);
-                  return (
-                    <div key={a.id}
-                      className={`flex flex-col items-center gap-0.5 p-1.5 rounded-md border transition-colors
-                        ${a.installed
-                          ? 'border-zinc-200/80 dark:border-zinc-600/50 bg-zinc-50/50 dark:bg-zinc-700/20'
-                          : 'border-zinc-100 dark:border-zinc-700/40'}`}>
-                      <div className="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-700/40 shrink-0">
-                        {brand && !failed[a.id]
-                          ? <img src={brand} alt="" aria-hidden onError={() => setFailed(f => ({ ...f, [a.id]: true }))}
-                              className={`w-4 h-4 object-contain ${dim}`} />
-                          : isAppIcon(a.icon)
-                            ? appIconSvg(a.icon, `w-4 h-4 ${dim}`)
-                            : <span aria-hidden className={`text-sm leading-none ${dim}`}>{a.icon}</span>}
-                      </div>
-                      <span className="text-[9px] font-medium text-zinc-700 dark:text-zinc-200 text-center truncate w-full leading-none" title={a.name}>
-                        {a.name}
-                      </span>
-                      <button type="button" title={btnTitle} disabled={installing}
-                        onClick={onBtn}
-                        className={`text-[9px] px-1 py-px rounded font-medium transition-colors w-full leading-tight disabled:opacity-60
-                          ${install
-                            ? 'bg-blue-500 hover:bg-blue-600 text-white'
-                            : 'border border-zinc-200 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50'}`}>
-                        {btnLabel}
-                      </button>
+  const panel = (
+    <div
+      ref={panelRef}
+      aria-hidden={!open}
+      style={{
+        ...(pos.top != null ? { top: pos.top } : {}),
+        ...(pos.bottom != null ? { bottom: pos.bottom } : {}),
+        right: pos.right,
+        maxHeight: pos.maxH,
+      }}
+      className={`fixed z-[80] w-[min(calc(100vw-1rem),300px)] flex flex-col
+        origin-top-right transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]
+        ${open ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto' : 'opacity-0 -translate-y-1.5 scale-[0.97] pointer-events-none'}`}>
+      <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-xl shadow-black/10 dark:shadow-black/40 border border-zinc-200/80 dark:border-zinc-700 flex flex-col min-h-0 flex-1 overflow-hidden">
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
+          <h3 className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-100 flex-1 truncate" title={t('gateway.toolbox.hint')}>
+            {t('gateway.toolbox.panelTitle')}
+          </h3>
+          <button type="button" onClick={loadItems} title={t('gateway.common.refresh')}
+            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 p-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700/50 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="w-3 h-3">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+          </button>
+          <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-sm leading-none p-0.5 transition-colors">✕</button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto p-2">
+          {syncError && (
+            <div className="mb-2 px-2 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/50 text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
+              {t('gateway.toolbox.syncFailed', { error: syncError })}
+            </div>
+          )}
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-[11px] text-zinc-400">
+              <div className="w-3 h-3 border-2 border-zinc-300 dark:border-zinc-600 border-t-blue-500 rounded-full animate-spin" />
+              {t('gateway.toolbox.loading')}
+            </div>
+          ) : items.length === 0 ? (
+            <div className="py-6 text-center text-[11px] text-zinc-400">{t('gateway.toolbox.empty')}</div>
+          ) : (
+            <div className="grid grid-cols-3 gap-1.5">
+              {items.map(a => {
+                const brand = resolveBrandIcon(`${a.id} ${a.name}`);
+                const dim = a.installed ? '' : 'grayscale opacity-45';
+                const install = !a.installed;
+                const canNpm = install && !!a.npm_package && !!getApps().npmGlobalInstall;   // 未装 + 有 npm 包 → 可一键装
+                const canNpmUninstall = !install && !!a.npm_package && !!getApps().npmGlobalUninstall;  // 已装 + 有 npm 包 → 可命令行卸
+                const installing = !!npmBusy[a.id];
+                const btnLabel = installing ? (install ? t('gateway.toolbox.installing') : t('gateway.toolbox.uninstalling'))
+                  : canNpm ? t('gateway.toolbox.oneClickInstall')
+                  : canNpmUninstall ? t('gateway.toolbox.oneClickUninstall')
+                  : install ? t('gateway.toolbox.install') : t('gateway.toolbox.uninstall');
+                const btnTitle = canNpm ? t('gateway.toolbox.oneClickTitle', { name: a.name })
+                  : canNpmUninstall ? t('gateway.toolbox.oneClickUninstallTitle', { name: a.name })
+                  : install ? t('gateway.toolbox.installTitle', { name: a.name })
+                  : t('gateway.toolbox.uninstallTitle', { name: a.name });
+                const onBtn = () => canNpm ? oneClickInstall(a)
+                  : canNpmUninstall ? oneClickUninstall(a)
+                  : openGuide(a, install);
+                return (
+                  <div key={a.id}
+                    className={`flex flex-col items-center gap-0.5 p-1.5 rounded-md border transition-colors
+                      ${a.installed
+                        ? 'border-zinc-200/80 dark:border-zinc-600/50 bg-zinc-50/50 dark:bg-zinc-700/20'
+                        : 'border-zinc-100 dark:border-zinc-700/40'}`}>
+                    <div className="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-700/40 shrink-0">
+                      {brand && !failed[a.id]
+                        ? <img src={brand} alt="" aria-hidden onError={() => setFailed(f => ({ ...f, [a.id]: true }))}
+                            className={`w-4 h-4 object-contain ${dim}`} />
+                        : isAppIcon(a.icon)
+                          ? appIconSvg(a.icon, `w-4 h-4 ${dim}`)
+                          : <span aria-hidden className={`text-sm leading-none ${dim}`}>{a.icon}</span>}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                    <span className="text-[9px] font-medium text-zinc-700 dark:text-zinc-200 text-center truncate w-full leading-none" title={a.name}>
+                      {a.name}
+                    </span>
+                    <button type="button" title={btnTitle} disabled={installing}
+                      onClick={onBtn}
+                      className={`text-[9px] px-1 py-px rounded font-medium transition-colors w-full leading-tight disabled:opacity-60
+                        ${install
+                          ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                          : 'border border-zinc-200 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50'}`}>
+                      {btnLabel}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <>
+      {guideDlg && (
+        <AppToolboxGuideModal app={guideDlg.app} mode={guideDlg.mode} onClose={() => setGuideDlg(null)} />
+      )}
+      <div ref={wrapRef} className="relative ml-auto">
+        <button ref={btnRef} type="button" onClick={onToggle} disabled={busy}
+          title={t('gateway.toolbox.title')}
+          aria-expanded={open}
+          className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors disabled:opacity-50
+            ${open
+              ? 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400'
+              : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'}`}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={`w-3.5 h-3.5 shrink-0 ${busy ? 'animate-spin' : ''}`}>
+            {busy
+              ? <path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+              : <>
+                  <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8z" />
+                  <path d="M3.3 7 12 12l8.7-5M12 22V12" />
+                </>}
+          </svg>
+          {busy ? t('gateway.toolbox.syncing') : t('gateway.toolbox.btn')}
+        </button>
+      </div>
+      {createPortal(panel, document.body)}
     </>
   );
 }
@@ -1391,8 +1404,8 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   const fmtTime = ts => ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
   const clientLabel = CLIENT_LABELS[trace?.client] || trace?.client || agentId || 'agent';
 
-  return (
-    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+  return createPortal(
+    <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-4xl mx-4 max-h-[92vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 space-y-2">
@@ -1654,7 +1667,8 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2343,12 +2357,12 @@ function AppDetailModal({ app, onClose }) {
     return rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   })();
 
-  return (
+  return createPortal(
     <>
       {traceSid && canTrace && (
         <SessionTraceModal app={app} sessionId={traceSid} traceAgentId={traceAgentId} onClose={() => setTraceSid(null)} />
       )}
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+    <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-3xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 sticky top-0 bg-white dark:bg-zinc-800 z-10">
@@ -2526,7 +2540,8 @@ function AppDetailModal({ app, onClose }) {
         )}
       </div>
     </div>
-    </>
+    </>,
+    document.body,
   );
 }
 
@@ -4361,8 +4376,8 @@ function RouteLogDetailModal({ entry, onClose }) {
     </div>
   );
 
-  return (
-    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+  return createPortal(
+    <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-lg mx-4 max-h-[85vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-2">
@@ -4454,7 +4469,8 @@ function RouteLogDetailModal({ entry, onClose }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -2792,10 +2792,10 @@ export default function Resources() {
 
       {renderProjectMenu()}
 
-      {/* 闲置 Skill 清理 */}
-      {cleanupOpen && (
+      {/* 闲置 Skill 清理 — portal 到 body，避免被主内容区 / glass 裁切 */}
+      {cleanupOpen && createPortal(
         <div
-          className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
+          className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
           onClick={() => {
             if (!busy && !idleLoading && !idleAiLoading) {
               abortIdleAi();
@@ -3074,7 +3074,8 @@ export default function Resources() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       <SkillInstallDialog
@@ -3093,9 +3094,9 @@ export default function Resources() {
         }}
       />
 
-      {editorOpen && (
+      {editorOpen && createPortal(
         <div
-          className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
+          className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
           onClick={() => { if (busy !== 'editor') setEditorOpen(false); }}
         >
           <div
@@ -3211,7 +3212,8 @@ export default function Resources() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

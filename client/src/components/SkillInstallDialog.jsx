@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLang } from '../store/lang';
 
 const INSTALLER_NAME = 'resource-installer';
@@ -260,9 +261,9 @@ export default function SkillInstallDialog({
     || ((ready.installer && ready.installer.projections && ready.installer.projections[0]) || {}).agentId
     || '';
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
+      className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
       onClick={() => { if (!running && !preparing) onClose(); }}
     >
       <div
@@ -394,6 +395,7 @@ export default function SkillInstallDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
