@@ -1062,7 +1062,7 @@ export default function McpProvidersTab() {
       rawJson: '',
       installedCount: [...new Set([
         ...(server.clientTargets || []).filter(c => c.installed).map(c => c.id),
-        ...(server.sync_clients || []),
+        ...(server.sync_clients || []).filter((id) => syncWritableAgents.some((t) => t.id === id)),
       ])].length,
     };
     form.rawJson = buildEditRawJson(form);
@@ -1431,9 +1431,12 @@ export default function McpProvidersTab() {
     );
   }
 
-  /** 已安装于哪些 Agent（只读徽标） */
+  /** 已投射于哪些已纳管 Agent（配置残留但未安装的不展示） */
   function renderInstalledAgentBadges(server) {
-    const installed = (server.clientTargets || []).filter(c => c.installed);
+    const writable = new Set(syncWritableAgents.map((t) => t.id));
+    const installed = (server.clientTargets || []).filter(
+      (c) => c.installed && writable.has(c.id),
+    );
     if (!installed.length) {
       return <span className="text-[10px] text-zinc-400">{t('providers.mcp.notInstalledOnAgent')}</span>;
     }

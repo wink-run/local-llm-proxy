@@ -1916,15 +1916,14 @@ function resolveCfgPath(p) {
   catch { return String(p || ''); }
 }
 
-/** config_file 检测：目录存在=弱信号；state.vscdb 等主配置存在=强信号（Trae 等 VS Code 系 IDE） */
+/** config_file 检测：文件存在=弱/强信号；勿用「父目录存在」——MCP 同步建目录会误判已安装 */
 function configFileDetect(d) {
   try {
     const f = resolveCfgPath(d.config_file);
     if (!f) return { hit: false, strong: false, weak: false };
     const fileOk = fs.existsSync(f);
-    const dirOk = fs.existsSync(path.dirname(f));
     const strong = fileOk && /state\.vscdb$/i.test(f);
-    return { hit: fileOk || dirOk, strong, weak: dirOk };
+    return { hit: fileOk, strong, weak: fileOk };
   } catch { return { hit: false, strong: false, weak: false }; }
 }
 

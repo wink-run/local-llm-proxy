@@ -156,6 +156,11 @@ function loadJsonMcp(filePath) {
 }
 
 function syncJsonClient(clientId, filePath, servers) {
+  const list = Array.isArray(servers) ? servers : [];
+  // 无待写条目且目标文件尚不存在 → 不建目录、不落盘（避免未安装应用被「造」出配置）
+  if (!list.length && !fs.existsSync(filePath)) {
+    return { synced: [], keys: [], path: filePath, skipped: true };
+  }
   ensureDir(filePath);
   const prev = readState().clients[clientId]?.keys || [];
   const doc = loadJsonMcp(filePath);
@@ -170,7 +175,7 @@ function syncJsonClient(clientId, filePath, servers) {
   const newKeys = [];
   const synced = [];
 
-  for (const srv of servers) {
+  for (const srv of list) {
     const entry = serverToEntry(srv, clientId);
     if (!entry) continue;
     const key = clientKeyForServer(srv, existingKeys, prev);
@@ -243,18 +248,24 @@ function buildCodexMcpSections(entries) {
 }
 
 function syncCodexClient(clientId, filePath, servers, prevKeys) {
+  const list = Array.isArray(servers) ? servers : [];
+  const prev = Array.isArray(prevKeys) ? prevKeys : [];
+  // 无待写/待清条目且文件不存在 → 不创建 Codex 配置
+  if (!list.length && !prev.length && !fs.existsSync(filePath)) {
+    return { synced: [], keys: [], path: filePath, skipped: true };
+  }
   ensureDir(filePath);
   const original = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
-  let text = stripCodexTbMcpSections(original, prevKeys);
+  let text = stripCodexTbMcpSections(original, prev);
 
   const entries = [];
   const synced = [];
   const newKeys = [];
 
-  for (const srv of servers) {
+  for (const srv of list) {
     const entry = serverToEntry(srv, clientId);
     if (!entry) continue;
-    const key = clientKeyForServer(srv, new Set(), prevKeys);
+    const key = clientKeyForServer(srv, new Set(), prev);
     entries.push({ key, entry });
     newKeys.push(key);
     synced.push({ id: srv.id, name: srv.display_name || srv.name, clientKey: key });
@@ -277,15 +288,19 @@ function syncCodexClient(clientId, filePath, servers, prevKeys) {
 /**
  * 同步 active MCP 到 Agent 客户端（可按 Agent 分别写入）
  * @param {object[]} servers 来自 mcpManager.listManagedServers()
- * @param {{ clientIds?: string[] }} options 指定 Agent；缺省则同步全部可写 Agent
+ * @param {{ clientIds?: string[] }} options 指定 Agent；缺省仅同步本机已安装应用
  */
 function syncAll(servers, options = {}) {
+  const { listInstalledClientIds, listSyncEnabledClientIds } = require('./mcp-agent-targets');
   const state = readState();
   const results = [];
-  const allSyncIds = Object.keys(CLIENT_TARGETS).filter(id => CLIENT_TARGETS[id].sync !== false);
-  const clientIds = Array.isArray(options.clientIds) && options.clientIds.length
-    ? options.clientIds.filter(id => allSyncIds.includes(id))
-    : allSyncIds;
+  const allSyncIds = listSyncEnabledClientIds();
+  const installedIds = new Set(listInstalledClientIds());
+  // 未指定时只写已安装应用；指定时仍与已安装取交，避免误写未纳管客户端
+  const requested = Array.isArray(options.clientIds) && options.clientIds.length
+    ? options.clientIds.filter((id) => allSyncIds.includes(id))
+    : [...installedIds];
+  const clientIds = requested.filter((id) => installedIds.has(id));
 
   for (const clientId of clientIds) {
     const target = CLIENT_TARGETS[clientId];
@@ -336,17 +351,19 @@ function syncAll(servers, options = {}) {
   return { success: results.every(r => r.success), results, state };
 }
 
-/** 读取 MCP 应同步到哪些 Agent（默认全部可写 Agent） */
+/** 读取 MCP 应同步到哪些 Agent（须显式投射，且仅本机已安装） */
 function getServerSyncClients(server) {
-  const { listSyncEnabledClientIds } = require('./mcp-agent-targets');
-  const defaults = listSyncEnabledClientIds();
+  const { listSyncEnabledClientIds, listInstalledClientIds } = require('./mcp-agent-targets');
+  const allowed = listSyncEnabledClientIds();
+  const installed = new Set(listInstalledClientIds());
+  let ids = [];
   if (Array.isArray(server?.sync_clients)) {
-    return server.sync_clients.filter(id => defaults.includes(id));
+    ids = server.sync_clients.filter((id) => allowed.includes(id));
+  } else if (Array.isArray(server?.metadata?.sync_clients)) {
+    ids = server.metadata.sync_clients.filter((id) => allowed.includes(id));
   }
-  if (Array.isArray(server?.metadata?.sync_clients)) {
-    return server.metadata.sync_clients.filter(id => defaults.includes(id));
-  }
-  return defaults;
+  // 未显式配置 sync_clients → 不下发（避免启动时往未安装应用写配置）
+  return ids.filter((id) => installed.has(id));
 }
 
 /** 筛选应写入指定 Agent 的 MCP 列表 */
@@ -437,11 +454,13 @@ function enrichServersWithClientInstalls(servers) {
   const installMap = getServerInstallMap();
   const scanIndex = buildScanIndex();
   const allClients = Object.entries(CLIENT_TARGETS).map(([id, t]) => ({ id, label: t.label }));
+  let isAgentInstalled = () => false;
+  try { isAgentInstalled = require('./resource-agent-targets').isAgentInstalled; } catch { /* ignore */ }
 
   return (servers || []).map(s => {
     // 以配置文件扫描为准：sync-state 残留绑定若文件已删，不算「已安装」
     const installs = [];
-    const installedSet = new Set();
+    const inConfigSet = new Set();
 
     for (const inst of (installMap[s.id] || [])) {
       const keyMap = scanIndex[inst.clientId];
@@ -449,7 +468,7 @@ function enrichServersWithClientInstalls(servers) {
       const keys = [inst.clientKey, s.name].filter(Boolean);
       if (!keys.some(k => keyMap.has(k))) continue;
       installs.push(inst);
-      installedSet.add(inst.clientId);
+      inConfigSet.add(inst.clientId);
     }
 
     // 扫描匹配：按 server.name 或已绑定的 clientKey 在各 Agent 配置中查找
@@ -459,7 +478,7 @@ function enrichServersWithClientInstalls(servers) {
     }
 
     for (const [clientId, keyMap] of Object.entries(scanIndex)) {
-      if (installedSet.has(clientId)) continue;
+      if (inConfigSet.has(clientId)) continue;
       const target = CLIENT_TARGETS[clientId];
       for (const key of matchKeys) {
         if (keyMap.has(key)) {
@@ -469,7 +488,7 @@ function enrichServersWithClientInstalls(servers) {
             clientKey: key,
             source: 'scan',
           });
-          installedSet.add(clientId);
+          inConfigSet.add(clientId);
           break;
         }
       }
@@ -479,14 +498,20 @@ function enrichServersWithClientInstalls(servers) {
       ...s,
       sync_clients: getServerSyncClients(s),
       clientInstalls: installs,
-      clientTargets: allClients.map(c => ({
-        ...c,
-        syncAssigned: getServerSyncClients(s).includes(c.id) && CLIENT_TARGETS[c.id]?.sync !== false,
-        syncEnabled: CLIENT_TARGETS[c.id]?.sync !== false,
-        installed: installedSet.has(c.id),
-        synced: installs.some(i => i.clientId === c.id && i.source !== 'scan'),
-        clientKey: installs.find(i => i.clientId === c.id)?.clientKey || null,
-      })),
+      clientTargets: allClients.map(c => {
+        const inConfig = inConfigSet.has(c.id);
+        const agentOk = !!isAgentInstalled(c.id);
+        return {
+          ...c,
+          syncAssigned: getServerSyncClients(s).includes(c.id) && CLIENT_TARGETS[c.id]?.sync !== false,
+          syncEnabled: CLIENT_TARGETS[c.id]?.sync !== false,
+          // 仅本机已纳管的应用算「已投射」；配置残留但未安装的不展示
+          inConfig,
+          installed: inConfig && agentOk,
+          synced: installs.some(i => i.clientId === c.id && i.source !== 'scan'),
+          clientKey: installs.find(i => i.clientId === c.id)?.clientKey || null,
+        };
+      }),
     };
   });
 }
@@ -742,10 +767,12 @@ function discoverExternalMcps(managedServers = []) {
   }
 
   const allClients = Object.entries(CLIENT_TARGETS).map(([id, t]) => ({ id, label: t.label }));
+  let isAgentInstalled = () => false;
+  try { isAgentInstalled = require('./resource-agent-targets').isAgentInstalled; } catch { /* ignore */ }
 
   return Array.from(byKey.values())
     .map(group => {
-      const installedSet = new Set(group.clients.map(c => c.clientId));
+      const inConfigSet = new Set(group.clients.map(c => c.clientId));
       return {
         id: `client-external:${group.clientKey}`,
         name: group.clientKey,
@@ -769,11 +796,15 @@ function discoverExternalMcps(managedServers = []) {
           label: c.label,
           clientKey: group.clientKey,
         })),
-        clientTargets: allClients.map(c => ({
-          ...c,
-          installed: installedSet.has(c.id),
-          clientKey: installedSet.has(c.id) ? group.clientKey : null,
-        })),
+        clientTargets: allClients.map(c => {
+          const inConfig = inConfigSet.has(c.id);
+          return {
+            ...c,
+            inConfig,
+            installed: inConfig && !!isAgentInstalled(c.id),
+            clientKey: inConfig ? group.clientKey : null,
+          };
+        }),
       };
     })
     .sort((a, b) => a.display_name.localeCompare(b.display_name, 'zh-CN'));

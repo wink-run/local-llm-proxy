@@ -1529,10 +1529,11 @@ class MCPManager {
   _formatServerRow(row) {
     const metadata = this._parseJson(row.metadata, {});
     const { listSyncEnabledClientIds } = require('./mcp-agent-targets');
-    const syncDefaults = listSyncEnabledClientIds();
+    const syncAllowed = listSyncEnabledClientIds();
+    // 未显式配置 sync_clients → 空列表（不默认投射到全部 Agent）
     const sync_clients = Array.isArray(metadata.sync_clients)
-      ? metadata.sync_clients.filter(id => syncDefaults.includes(id))
-      : syncDefaults;
+      ? metadata.sync_clients.filter((id) => syncAllowed.includes(id))
+      : [];
 
     // 网关按应用绑定；兼容旧 gateway_routed 布尔（仅内置 MCP 归入通用档）
     let gateway_clients = Array.isArray(metadata.gateway_clients)
