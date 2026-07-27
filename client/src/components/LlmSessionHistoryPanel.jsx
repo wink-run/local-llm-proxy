@@ -1,5 +1,6 @@
 // LLM Playground：本地历史会话面板（浏览 / 恢复 / 删除）
 import React, { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   deleteLlmSessionSnapshot,
   formatSessionTime,
@@ -37,9 +38,9 @@ export default function LlmSessionHistoryPanel({ open, onClose, onRestore }) {
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
-      className="electron-no-drag fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
+      className="electron-no-drag fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
       onClick={onClose}
     >
       <div
@@ -109,6 +110,7 @@ export default function LlmSessionHistoryPanel({ open, onClose, onRestore }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

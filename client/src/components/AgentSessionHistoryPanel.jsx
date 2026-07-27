@@ -1,5 +1,6 @@
 // 历史会话面板：浏览并恢复本地/DB 中的 Agent 对话记录
 import React, { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   deleteAgentSessionSnapshot,
   formatSessionTime,
@@ -132,9 +133,9 @@ export default function AgentSessionHistoryPanel({
 
   const empty = !localItems.length && !dbItems.length && !loadingDb;
 
-  return (
+  return createPortal(
     <div
-      className="electron-no-drag fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
+      className="electron-no-drag fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
       onClick={onClose}
     >
       <div
@@ -229,6 +230,7 @@ export default function AgentSessionHistoryPanel({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

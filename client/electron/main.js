@@ -468,7 +468,8 @@ function createWindow() {
   // 屏蔽默认应用菜单栏（File / Edit / View / Window / Help）
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
-    width: 960,
+    // 默认以最小宽度打开，用户可再拉宽
+    width: 900,
     height: 600,
     minWidth: 900,
     minHeight: 600,
