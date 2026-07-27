@@ -98,6 +98,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setServerSyncClients: (params) => ipcRenderer.invoke('mcp:setServerSyncClients', params),
     toggleServerSyncClient: (params) => ipcRenderer.invoke('mcp:toggleServerSyncClient', params),
     removeFromAgent: (params) => ipcRenderer.invoke('mcp:removeFromAgent', params),
+    setServerGatewayRouted: (params) => ipcRenderer.invoke('mcp:setServerGatewayRouted', params),
+    setServersGatewayRouted: (params) => ipcRenderer.invoke('mcp:setServersGatewayRouted', params),
+    getGatewayInfo: () => ipcRenderer.invoke('mcp:getGatewayInfo'),
   },
   resource: {
     listCatalog: (filters) => ipcRenderer.invoke('resource:listCatalog', filters || {}),

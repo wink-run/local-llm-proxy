@@ -193,6 +193,36 @@ function registerMcpHandlers() {
       return { success: false, error: error.message };
     }
   });
+
+  ipcMain.handle('mcp:setServerGatewayRouted', async (_event, { serverId, enabled, clientIds }) => {
+    try {
+      mcpManager.init();
+      return mcpManager.setServerGatewayRouted(serverId, !!enabled, clientIds);
+    } catch (error) {
+      console.error('[IPC] mcp:setServerGatewayRouted error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mcp:setServersGatewayRouted', async (_event, { serverIds, enabled, clientIds }) => {
+    try {
+      mcpManager.init();
+      return mcpManager.setServersGatewayRouted(serverIds || [], !!enabled, clientIds);
+    } catch (error) {
+      console.error('[IPC] mcp:setServersGatewayRouted error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mcp:getGatewayInfo', async () => {
+    try {
+      mcpManager.init();
+      return { success: true, ...mcpManager.getGatewayInfo() };
+    } catch (error) {
+      console.error('[IPC] mcp:getGatewayInfo error:', error);
+      return { success: false, error: error.message };
+    }
+  });
 }
 
 module.exports = { registerMcpHandlers };

@@ -777,7 +777,9 @@ function noteCooldown(provider, model, err, sharer) {
 /** 用户是否在供给源页启用了社区分享网络 */
 function isCommunityP2pEnabled() {
   if (!_getConfig) return true;
-  const p = (_getConfig().providers || []).find(x => x.id === 'tokenbank-p2p' || x.type === 'p2p');
+  // getConfig 可能返回 null（配置尚未就绪），需与 shared/community-p2p 一致做空值保护
+  const cfg = _getConfig();
+  const p = (cfg?.providers || []).find(x => x.id === 'tokenbank-p2p' || x.type === 'p2p');
   if (!p) return true;
   return p.enabled !== false;
 }

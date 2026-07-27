@@ -2271,6 +2271,19 @@ function registerIPC() {
     const resourceManager = require('./resource-manager');
     const { startDispatchServer, setResourceHitHandler } = require('./agent-dispatch-server');
     startDispatchServer(agentExecutor, resourceManager);
+    try {
+      const mcpManager = require('./mcp-manager');
+      const { startMcpGateway } = require('./mcp-gateway-server');
+      const { setAppsGetter } = require('./mcp-gateway-targets');
+      // 与 Gateway「API 应用」同源：延迟取 getApps（同函数内后文声明，运行时已就绪）
+      setAppsGetter(() => {
+        try { return getApps(); } catch { return []; }
+      });
+      mcpManager.init();
+      startMcpGateway(() => mcpManager.listGatewayRoutedServers());
+    } catch (gwErr) {
+      console.warn('[mcp-gateway] start skipped:', gwErr.message);
+    }
     setResourceHitHandler((evt) => {
       // React ResourceHitToast（徽记卡牌特效）：IPC + CustomEvent 双投；勿再 DOM 硬注卡片
       const payload = evt && typeof evt === 'object' ? evt : {};
@@ -3572,6 +3585,10 @@ function registerIPC() {
     const cfg = readLocalConfig();
     return cfg.apps || [];
   }
+  // 确保 MCP 网关绑定目标与 Gateway 应用列表同源（含「New app」等 API 应用）
+  try {
+    require('./mcp-gateway-targets').setAppsGetter(() => getApps());
+  } catch { /* ignore */ }
   function saveApps(apps) {
     const cfg = readLocalConfig();
     cfg.apps = apps;

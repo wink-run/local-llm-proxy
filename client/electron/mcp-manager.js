@@ -54,6 +54,13 @@ const BUILTIN_BRIDGE_ID = 'tokenbank-agent-bridge';
 const BUILTIN_PROMPTS_ID = 'tokenbank-prompts';
 const BUILTIN_MODELS_ID = 'tokenbank-models';
 const BUILTIN_RESOURCES_ID = 'tokenbank-resources';
+
+/** 可进「通用」中转档的 Token Bank 内置 MCP（不含 Bridge） */
+function isTokenbankBuiltinRelayId(serverId) {
+  return serverId === BUILTIN_PROMPTS_ID
+    || serverId === BUILTIN_MODELS_ID
+    || serverId === BUILTIN_RESOURCES_ID;
+}
 /** 默认即开发模式（含 Agent 桥 + 已纳管工具 MCP），不再做多 Profile 选择 */
 const DEVELOPMENT_PROFILE_ID = 'development';
 const DEFAULT_PROFILE_ID = DEVELOPMENT_PROFILE_ID;
@@ -257,14 +264,61 @@ class MCPManager {
       this._linkServerToProfile(profileId, BUILTIN_RESOURCES_ID);
     }
 
+    // 通用中转档默认只挂 Token Bank 内置 MCP
+    this._ensureBuiltinGatewayApiClients();
     this._seeded = true;
+  }
+
+  /** 将内置 prompts/models/resources 默认绑到通用中转档（api）；并清掉非内置上的 api 绑定 */
+  _ensureBuiltinGatewayApiClients() {
+    const db = this._getDb();
+    const ids = [BUILTIN_PROMPTS_ID, BUILTIN_MODELS_ID, BUILTIN_RESOURCES_ID];
+    const now = Date.now();
+    for (const serverId of ids) {
+      const row = db.prepare('SELECT id, metadata FROM mcp_servers WHERE id = ?').get(serverId);
+      if (!row) continue;
+      const metadata = this._parseJson(row.metadata, {});
+      let clients = Array.isArray(metadata.gateway_clients)
+        ? metadata.gateway_clients.filter((id) => typeof id === 'string' && /^[\w.-]{1,64}$/.test(id))
+        : [];
+      if (!Array.isArray(metadata.gateway_clients) && metadata.gateway_routed) {
+        clients = ['api'];
+      }
+      if (clients.includes('api')) continue;
+      clients = [...clients, 'api'];
+      const nextMeta = {
+        ...metadata,
+        gateway_clients: clients,
+        gateway_routed: true,
+      };
+      db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify(nextMeta), now, serverId);
+    }
+
+    // 非内置 MCP：从通用档移除（历史误绑）
+    const rows = db.prepare('SELECT id, metadata FROM mcp_servers').all();
+    for (const row of rows) {
+      if (isTokenbankBuiltinRelayId(row.id)) continue;
+      const metadata = this._parseJson(row.metadata, {});
+      if (!Array.isArray(metadata.gateway_clients) || !metadata.gateway_clients.includes('api')) continue;
+      const clients = metadata.gateway_clients.filter((id) => id !== 'api');
+      const nextMeta = {
+        ...metadata,
+        gateway_clients: clients,
+        gateway_routed: clients.length > 0,
+      };
+      db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify(nextMeta), now, row.id);
+    }
   }
 
   /** 确保内置 Prompts MCP 存在 */
   _ensureBuiltinPrompts(now = Date.now()) {
     const db = this._getDb();
-    const prompts = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_PROMPTS_ID);
+    const prompts = db.prepare('SELECT id, metadata FROM mcp_servers WHERE id = ?').get(BUILTIN_PROMPTS_ID);
+    const prev = this._parseJson(prompts?.metadata, {});
     const meta = JSON.stringify({
+      ...prev,
       description: '内置提示词服务：tb_get_prompt / tb_list_prompts（须先投射提示词到该 Agent）',
       tools: ['tb_get_prompt', 'tb_list_prompts'],
     });
@@ -293,8 +347,10 @@ class MCPManager {
   /** 确保内置 Models MCP 存在（常驻：查可用模型 / 动态切换） */
   _ensureBuiltinModels(now = Date.now()) {
     const db = this._getDb();
-    const row = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_MODELS_ID);
+    const row = db.prepare('SELECT id, metadata FROM mcp_servers WHERE id = ?').get(BUILTIN_MODELS_ID);
+    const prev = this._parseJson(row?.metadata, {});
     const meta = JSON.stringify({
+      ...prev,
       description: '内置模型资源：tb_list_models / tb_resolve_model（查询网关可用模型并动态切换）',
       tools: ['tb_list_models', 'tb_resolve_model'],
     });
@@ -326,8 +382,10 @@ class MCPManager {
   /** 确保内置 Resources MCP 存在（能力总览 + 已纳管/社区资源发现） */
   _ensureBuiltinResources(now = Date.now()) {
     const db = this._getDb();
-    const row = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_RESOURCES_ID);
+    const row = db.prepare('SELECT id, metadata FROM mcp_servers WHERE id = ?').get(BUILTIN_RESOURCES_ID);
+    const prev = this._parseJson(row?.metadata, {});
     const meta = JSON.stringify({
+      ...prev,
       description: '内置资源发现：能力总览 / 资源 / tb_get_prompt / 目录 / 网关',
       tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_get_prompt', 'tb_list_prompts', 'tb_list_catalog', 'tb_list_gateway'],
     });
@@ -560,9 +618,15 @@ class MCPManager {
 
     const prevMeta = this._parseJson(existing?.metadata, {});
     const nextMeta = { ...prevMeta, ...(data.metadata || {}) };
-    // 未显式传入时保留原 sync_clients
+    // 未显式传入时保留原 sync_clients / 中转绑定
     if (data.metadata?.sync_clients === undefined && Array.isArray(prevMeta.sync_clients)) {
       nextMeta.sync_clients = prevMeta.sync_clients;
+    }
+    if (data.metadata?.gateway_clients === undefined && Array.isArray(prevMeta.gateway_clients)) {
+      nextMeta.gateway_clients = prevMeta.gateway_clients;
+    }
+    if (data.metadata?.gateway_routed === undefined && prevMeta.gateway_routed != null) {
+      nextMeta.gateway_routed = prevMeta.gateway_routed;
     }
 
     const type = data.type || existing?.type || 'stdio';
@@ -723,6 +787,216 @@ class MCPManager {
     const metadata = { ...this._parseJson(row.metadata, {}), sync_clients: ids };
     db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
       .run(JSON.stringify(metadata), Date.now(), serverId);
+  }
+
+  /** 网关可绑定的应用 id（Agent + API 应用 + 通用 api） */
+  _isAllowedGatewayClient(id) {
+    const { isAllowedGatewayClientId } = require('./mcp-gateway-targets');
+    return isAllowedGatewayClientId(id);
+  }
+
+  /** 经内置 MCP 网关代理的服务器列表（active + 已绑定应用 + stdio） */
+  listGatewayRoutedServers() {
+    this.init();
+    return this.listManagedServers().filter((s) => (
+      s
+      && s.status === 'active'
+      && !!s.gateway_routed
+      && s.id !== BUILTIN_BRIDGE_ID
+      && !s.url
+      && s.type !== 'sse'
+      && s.type !== 'http'
+      && !!s.command
+    ));
+  }
+
+  /**
+   * 按应用绑定/解绑网关代理（必须写入 gateway_clients，不能只靠旧布尔 gateway_routed）
+   * @param {string} serverId
+   * @param {boolean} enabled
+   * @param {string[]} [clientIds] 目标应用；开启时必填；关闭且不传则清空全部绑定
+   */
+  setServerGatewayRouted(serverId, enabled, clientIds) {
+    this.init();
+    if (serverId === BUILTIN_BRIDGE_ID) {
+      throw new Error('内置 Bridge 不参与网关代理');
+    }
+    const db = this._getDb();
+    const row = db.prepare('SELECT id, type, command, url, metadata FROM mcp_servers WHERE id = ?').get(serverId);
+    if (!row) throw new Error('Server not found');
+
+    // 中转仅支持 stdio
+    if (row.url || row.type === 'sse' || row.type === 'http' || !row.command) {
+      throw new Error('仅 stdio 型 MCP 可加入内置中转');
+    }
+
+    const metadata = this._parseJson(row.metadata, {});
+    let clients = Array.isArray(metadata.gateway_clients)
+      ? metadata.gateway_clients.filter((id) => typeof id === 'string' && /^[\w.-]{1,64}$/.test(id))
+      : [];
+    // 旧数据：仅 gateway_routed 布尔 → 内置 MCP 落入通用档，其余不自动归通用
+    if (!Array.isArray(metadata.gateway_clients) && metadata.gateway_routed) {
+      clients = isTokenbankBuiltinRelayId(serverId) ? ['api'] : [];
+    }
+
+    const rawIds = Array.isArray(clientIds) ? clientIds : (clientIds ? [clientIds] : []);
+    // 开启：校验目标；关闭：允许解绑已删除的 API 应用
+    let targets = [...new Set(rawIds.filter((id) => (
+      typeof id === 'string'
+      && /^[\w.-]{1,64}$/.test(id)
+      && (!enabled || this._isAllowedGatewayClient(id))
+    )))];
+    // 通用档（api）仅允许 Token Bank 内置 MCP
+    if (enabled && targets.includes('api') && !isTokenbankBuiltinRelayId(serverId)) {
+      targets = targets.filter((id) => id !== 'api');
+      if (!targets.length) {
+        throw new Error('通用档仅可绑定 Token Bank 内置 MCP（prompts / models / resources）');
+      }
+    }
+    if (enabled) {
+      if (!targets.length) {
+        throw new Error('请指定要绑定的应用（含 API 应用；不同应用可绑定不同 MCP）');
+      }
+      clients = [...new Set([...clients, ...targets])];
+    } else if (targets.length) {
+      const remove = new Set(targets);
+      clients = clients.filter((id) => !remove.has(id));
+    } else {
+      clients = [];
+    }
+
+    const nextMeta = {
+      ...metadata,
+      gateway_clients: clients,
+      gateway_routed: clients.length > 0,
+    };
+    db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(nextMeta), Date.now(), serverId);
+
+    // 回读校验：确保 gateway_clients 已落库
+    const verify = db.prepare('SELECT metadata FROM mcp_servers WHERE id = ?').get(serverId);
+    const verifyMeta = this._parseJson(verify?.metadata, {});
+    const written = Array.isArray(verifyMeta.gateway_clients) ? verifyMeta.gateway_clients : [];
+    if (enabled && targets.some((id) => !written.includes(id))) {
+      console.error('[mcp-manager] gateway_clients write verify failed', {
+        serverId, targets, written, verifyMeta,
+      });
+      throw new Error('中转绑定写入失败，请重启 Token Bank 后重试');
+    }
+
+    // 任意 MCP 加入某应用的中转时，默认一并挂上 Token Bank 内置 MCP
+    if (enabled && targets.length) {
+      this._ensureBuiltinRelayBoundToClients(targets);
+    }
+
+    try {
+      const gw = require('./mcp-gateway-server');
+      gw.reloadMcpGateway();
+    } catch (e) {
+      console.warn('[mcp-manager] reload gateway:', e.message);
+    }
+    const server = this.getServer(serverId);
+    return {
+      success: true,
+      server,
+      gateway_clients: server?.gateway_clients || written,
+    };
+  }
+
+  /**
+   * 将 prompts/models/resources 绑到指定中转应用（幂等；不递归调 setServerGatewayRouted）
+   * @param {string[]} clientIds
+   */
+  _ensureBuiltinRelayBoundToClients(clientIds) {
+    const targets = [...new Set((clientIds || []).filter((id) => (
+      typeof id === 'string'
+      && /^[\w.-]{1,64}$/.test(id)
+      && this._isAllowedGatewayClient(id)
+    )))];
+    if (!targets.length) return;
+
+    const db = this._getDb();
+    const now = Date.now();
+    const builtinIds = [BUILTIN_PROMPTS_ID, BUILTIN_MODELS_ID, BUILTIN_RESOURCES_ID];
+    for (const bid of builtinIds) {
+      const row = db.prepare('SELECT id, metadata FROM mcp_servers WHERE id = ?').get(bid);
+      if (!row) continue;
+      const metadata = this._parseJson(row.metadata, {});
+      let clients = Array.isArray(metadata.gateway_clients)
+        ? metadata.gateway_clients.filter((id) => typeof id === 'string' && /^[\w.-]{1,64}$/.test(id))
+        : [];
+      if (!Array.isArray(metadata.gateway_clients) && metadata.gateway_routed) {
+        clients = ['api'];
+      }
+      const next = [...new Set([...clients, ...targets])];
+      if (next.length === clients.length && targets.every((id) => clients.includes(id))) continue;
+      const nextMeta = {
+        ...metadata,
+        gateway_clients: next,
+        gateway_routed: true,
+      };
+      db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify(nextMeta), now, bid);
+    }
+  }
+
+  /** 批量按应用设置网关路由 */
+  setServersGatewayRouted(serverIds, enabled, clientIds) {
+    this.init();
+    const ids = [...new Set((serverIds || []).filter(Boolean))];
+    const results = [];
+    let ok = 0;
+    for (const id of ids) {
+      if (id === BUILTIN_BRIDGE_ID) continue;
+      try {
+        const r = this.setServerGatewayRouted(id, enabled, clientIds);
+        results.push(r);
+        if (r?.success) ok += 1;
+      } catch (e) {
+        results.push({ success: false, serverId: id, error: e.message });
+      }
+    }
+    try {
+      require('./mcp-gateway-server').reloadMcpGateway();
+    } catch { /* ignore */ }
+    return {
+      success: ok > 0 || ids.length === 0,
+      ok,
+      failed: results.filter((r) => !r.success).length,
+      results,
+      gateway: this.getGatewayInfo(),
+      error: ok === 0 && ids.length
+        ? (results.find((r) => r.error)?.error || '绑定失败')
+        : undefined,
+    };
+  }
+
+  getGatewayInfo() {
+    try {
+      const gw = require('./mcp-gateway-server');
+      const { listGatewayBindTargets, listGatewayApiApps } = require('./mcp-gateway-targets');
+      const status = gw.getGatewayStatus();
+      const bindTargets = listGatewayBindTargets();
+      const ep = status.endpoint;
+      const byClient = status.byClient || {};
+      // 为每个可绑定目标补齐 profile（含 0 个 MCP 的 API 应用）
+      const profiles = bindTargets.map((t) => ({
+        id: t.id,
+        label: t.label,
+        kind: t.kind,
+        url: ep?.url ? String(ep.url).replace(/\/mcp\/?$/, '') + `/mcp/${t.id}` : '',
+        routedCount: (byClient[t.id] || []).length,
+        configJson: gw.buildClientConfigJson(ep, t.id),
+      }));
+      return {
+        ...status,
+        bindTargets,
+        apiApps: listGatewayApiApps(),
+        profiles,
+      };
+    } catch (e) {
+      return { running: false, error: e.message };
+    }
   }
 
   /** 设置 MCP 同步到哪些 Agent（可分别指定）；未传 syncClientIds 时同步「旧+新」相关 Agent，确保取消勾选的会被移除 */
@@ -1140,7 +1414,7 @@ class MCPManager {
   /** 运行时 Server 配置（内置 bridge 注入 task 上下文） */
   _buildRuntimeServerConfig(serverRow, ctx) {
     const { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId } = ctx;
-    const baseEnv = this._parseJson(serverRow.env, {});
+    const baseEnv = this._asObject(serverRow.env, {});
 
     if (serverRow.id === BUILTIN_BRIDGE_ID || serverRow.name === BUILTIN_BRIDGE_ID) {
       // 编排模式优先走 shell launcher（env 写在脚本内，Codex MCP 子进程更可靠）
@@ -1213,14 +1487,42 @@ class MCPManager {
     }
 
     let command = serverRow.command;
+    // 已 format 的行 args 可能是数组；兼容 DB 原始 JSON 字符串
+    const args = this._asArray(serverRow.args, []);
     if (command === 'npx') {
       command = shim?.resolveRealCommand?.('npx') || 'npx';
     }
 
     return {
       command,
-      args: this._parseJson(serverRow.args, []),
+      args,
       env: { ...baseEnv },
+    };
+  }
+
+  /**
+   * 中转网关启动配置：第三方 MCP 原样使用 command/args/env（不做 npx/env 等特判）；
+   * 仅展开 Token Bank 内置的 __DYNAMIC_ELECTRON__ 占位符。
+   */
+  resolveGatewaySpawnConfig(serverRow) {
+    this.init();
+    const command = String(serverRow?.command || '').trim();
+    const needsBuiltinLaunch = command === '__DYNAMIC_ELECTRON__'
+      || isTokenbankBuiltinRelayId(serverRow?.id)
+      || serverRow?.id === BUILTIN_BRIDGE_ID;
+    if (needsBuiltinLaunch) {
+      return this._buildRuntimeServerConfig(serverRow, {
+        taskId: 'gateway',
+        workingDir: process.cwd(),
+        mainAgentId: '',
+        sessionKey: '',
+        sessionInstanceId: '',
+      });
+    }
+    return {
+      command,
+      args: this._asArray(serverRow?.args, []),
+      env: { ...this._asObject(serverRow?.env, {}) },
     };
   }
 
@@ -1232,19 +1534,47 @@ class MCPManager {
       ? metadata.sync_clients.filter(id => syncDefaults.includes(id))
       : syncDefaults;
 
+    // 网关按应用绑定；兼容旧 gateway_routed 布尔（仅内置 MCP 归入通用档）
+    let gateway_clients = Array.isArray(metadata.gateway_clients)
+      ? metadata.gateway_clients.filter((id) => typeof id === 'string' && /^[\w.-]{1,64}$/.test(id))
+      : [];
+    if (!Array.isArray(metadata.gateway_clients) && metadata.gateway_routed) {
+      gateway_clients = isTokenbankBuiltinRelayId(row.id) ? ['api'] : [];
+    }
+    // 非内置 MCP 不允许出现在通用档
+    if (!isTokenbankBuiltinRelayId(row.id)) {
+      gateway_clients = gateway_clients.filter((id) => id !== 'api');
+    }
+
     return {
       ...row,
       args: this._parseJson(row.args, []),
       env: this._parseJson(row.env, {}),
       metadata,
       sync_clients,
+      gateway_clients,
+      gateway_routed: gateway_clients.length > 0,
       builtin: !!row.builtin,
     };
   }
 
   _parseJson(raw, fallback) {
-    if (!raw) return fallback;
+    if (raw == null || raw === '') return fallback;
+    // 已是对象/数组（format 后再解析）时直接返回，避免 JSON.parse(array) 得到 []
+    if (typeof raw === 'object') return raw;
     try { return JSON.parse(raw); } catch { return fallback; }
+  }
+
+  _asArray(raw, fallback = []) {
+    if (Array.isArray(raw)) return raw;
+    const parsed = this._parseJson(raw, null);
+    return Array.isArray(parsed) ? parsed : fallback;
+  }
+
+  _asObject(raw, fallback = {}) {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+    const parsed = this._parseJson(raw, null);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;
   }
 }
 
