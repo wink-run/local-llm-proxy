@@ -8,7 +8,8 @@ const mcp = require('../resources-mcp');
 const SAMPLE = [
   {
     id: 's1', type: 'skill', name: 'image-gen', display_name: 'image-gen',
-    description: '图片生成', content: '# image-gen\nuse model', projections: [],
+    description: '图片生成', content: '# image-gen\nuse model',
+    projections: [{ agentId: 'cursor' }],
     authorityPath: null,
   },
   {
@@ -40,18 +41,29 @@ function mockRm() {
       return rows;
     },
     listAssistantsForClient(clientId) {
+      return this._listForClient('assistant', clientId);
+    },
+    listSkillsForClient(clientId) {
+      return this._listForClient('skill', clientId);
+    },
+    listPromptsForClient(clientId) {
+      return this._listForClient('prompt', clientId);
+    },
+    _listForClient(type, clientId) {
       const cid = String(clientId || '').trim();
-      const rows = SAMPLE.filter(r => r.type === 'assistant');
-      if (!cid) {
-        return rows.map(r => ({
-          id: r.id, name: r.name, display_name: r.display_name, description: r.description,
-        }));
-      }
-      return rows
-        .filter(r => (r.projections || []).some(p => p.agentId === cid))
-        .map(r => ({
-          id: r.id, name: r.name, display_name: r.display_name, description: r.description,
-        }));
+      const rows = SAMPLE.filter(r => r.type === type);
+      const picked = cid
+        ? rows.filter(r => (r.projections || []).some(p => p.agentId === cid))
+        : rows;
+      return picked.map(r => ({
+        id: r.id, name: r.name, display_name: r.display_name, description: r.description,
+      }));
+    },
+    isResourceProjectedToClient(id, clientId) {
+      const cid = String(clientId || '').trim();
+      if (!cid) return true;
+      const r = SAMPLE.find(x => x.id === id);
+      return !!(r && (r.projections || []).some(p => p.agentId === cid));
     },
     resolveAssistantForClient(ref, clientId) {
       const cid = String(clientId || '').trim();
@@ -133,6 +145,47 @@ test('tb_list_resources type=assistant 按 TB_CLIENT_ID 投射过滤', async () 
     process.env.TB_CLIENT_ID = 'codex';
     const empty = await mcp.handleToolCall('tb_list_resources', { type: 'assistant' });
     assert.ok(empty.content[0].text.includes('暂无') || !empty.content[0].text.includes('[assistant] writer'));
+  } finally {
+    if (prev == null) delete process.env.TB_CLIENT_ID;
+    else process.env.TB_CLIENT_ID = prev;
+    mcp.setResourceManager(null);
+  }
+});
+
+test('tb_list_resources type=skill 按 TB_CLIENT_ID 投射过滤', async () => {
+  mcp.setResourceManager(mockRm());
+  const prev = process.env.TB_CLIENT_ID;
+  try {
+    process.env.TB_CLIENT_ID = 'cursor';
+    const ok = await mcp.handleToolCall('tb_list_resources', { type: 'skill' });
+    assert.ok(ok.content[0].text.includes('image-gen'));
+
+    process.env.TB_CLIENT_ID = 'codex';
+    const empty = await mcp.handleToolCall('tb_list_resources', { type: 'skill' });
+    assert.ok(!empty.content[0].text.includes('[skill] image-gen'));
+    assert.ok(empty.content[0].text.includes('暂无'));
+  } finally {
+    if (prev == null) delete process.env.TB_CLIENT_ID;
+    else process.env.TB_CLIENT_ID = prev;
+    mcp.setResourceManager(null);
+  }
+});
+
+test('tb_get_resource: skill 投射门控（未投射→isError，已投射→正文）', async () => {
+  const rm = mockRm();
+  mcp.setResourceManager(rm);
+  const prev = process.env.TB_CLIENT_ID;
+  try {
+    process.env.TB_CLIENT_ID = 'codex';
+    const denied = await mcp.handleToolCall('tb_get_resource', { type: 'skill', name: 'image-gen' });
+    assert.equal(denied.isError, true);
+    assert.deepEqual(rm.hits, []);
+
+    process.env.TB_CLIENT_ID = 'cursor';
+    const ok = await mcp.handleToolCall('tb_get_resource', { type: 'skill', name: 'image-gen' });
+    assert.equal(ok.isError, false);
+    assert.ok(ok.content[0].text.includes('use model'));
+    assert.deepEqual(rm.hits, ['s1']);
   } finally {
     if (prev == null) delete process.env.TB_CLIENT_ID;
     else process.env.TB_CLIENT_ID = prev;

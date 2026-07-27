@@ -100,6 +100,50 @@ function listGatewayApiApps() {
     }));
 }
 
+/**
+ * 已纳管(hosted)的 Agent id 集合 —— 与 Gateway apps:list「已纳管」口径一致：
+ *   shim 默认纳管(hosted !== false)，其余须 hosted === true；needs_dev_mode 视为未纳管。
+ * 供资源投射目标使用（可投射 = 已纳管，而非「机器上装了」）。
+ * @returns {Set<string>}
+ */
+function listHostedAgentIds() {
+  const { MCP_SYNC_ID_ALIASES } = require('./mcp-agent-targets');
+  const ids = new Set();
+  for (const a of readLocalApps()) {
+    if (!a || a.draft) continue;
+    const isShim = a.link_method === 'shim';
+    const managed = isShim ? a.hosted !== false : a.hosted === true;
+    if (!managed) continue;
+    if (a.needs_dev_mode) continue;
+    const raw = a.agent_id || a.preset_id;
+    if (!raw) continue;
+    const id = String(raw);
+    ids.add(id);
+    // 别名：codex-desktop→codex、claude-desktop→claude-code（与 MCP 写盘口径一致）
+    if (MCP_SYNC_ID_ALIASES[id]) ids.add(MCP_SYNC_ID_ALIASES[id]);
+  }
+  return ids;
+}
+
+/**
+ * 全部「已纳管」应用的投射目标 id 集合（prompt / 智能体投射用，非 skill）——
+ * = 已纳管 agent（含 Trae 等，来自 listHostedAgentIds）∪ 已纳管的 manual/API 应用（New app）。
+ * 这些 id 即投射 / 中转交付的 cid：能映射 stdio sync client 的（codex-desktop→codex）已含别名，
+ * 其余（trae-work / app-xxx）以自身 id 经内置中转 MCP 交付。
+ * 说明：安装过滤交由展示层（apps:list 已滤）；此处从宽，仅作投射入参的安全白名单。
+ * @returns {Set<string>}
+ */
+function listManagedAppTargetIds() {
+  const ids = new Set(listHostedAgentIds());
+  for (const a of readLocalApps()) {
+    if (!a || a.draft) continue;
+    if (a.link_method === 'manual' && a.hosted === true && typeof a.id === 'string') {
+      ids.add(a.id);
+    }
+  }
+  return ids;
+}
+
 /** Agent 目标（Cursor / Claude Code 等） */
 function listGatewayAgentTargets() {
   return listSyncEnabledClientIds().map((id) => ({
@@ -138,6 +182,8 @@ module.exports = {
   setAppsGetter,
   isApiAppRecord,
   isAllowedGatewayClientId,
+  listHostedAgentIds,
+  listManagedAppTargetIds,
   listGatewayApiApps,
   listGatewayAgentTargets,
   listGatewayBindTargets,

@@ -186,7 +186,8 @@ class ResourceManager {
           results.push({ catalogId, status: 'ready', resourceId, agentId: resource.projections[0].agentId });
           continue;
         }
-        const allowed = listAssistantProjectableAgentIds();
+        const { listManagedResourceAgentIds } = require('./resource-agent-targets');
+        const allowed = listManagedResourceAgentIds();
         const agentId = this._pickBuiltinProjectAgentId(allowed);
         if (!agentId) {
           results.push({ catalogId, status: 'needAgent', resourceId });
@@ -670,6 +671,37 @@ class ResourceManager {
       JOIN resources r ON r.id = ps.resource_id
       WHERE ps.agent_id = ? AND r.type = 'assistant' LIMIT 1
     `).get(cid);
+    return !!row;
+  }
+
+  /** 投射给该 client 的 Skill 轻量列表;clientId 为空 → 全部 skill */
+  listSkillsForClient(clientId) {
+    this.init();
+    const db = this._getDb();
+    const cid = String(clientId || '').trim();
+    if (!cid) {
+      return db.prepare(`
+        SELECT id, name, display_name, description FROM resources
+        WHERE type = 'skill' ORDER BY updated_at DESC
+      `).all();
+    }
+    return db.prepare(`
+      SELECT DISTINCT r.id, r.name, r.display_name, r.description
+      FROM resources r
+      JOIN resource_projections ps ON ps.resource_id = r.id
+      WHERE r.type = 'skill' AND ps.agent_id = ?
+      ORDER BY r.updated_at DESC
+    `).all(cid);
+  }
+
+  /** 资源是否投射给该 client(clientId 为空视为不设限,返回 true) */
+  isResourceProjectedToClient(resourceId, clientId) {
+    this.init();
+    const cid = String(clientId || '').trim();
+    if (!cid) return true;
+    const row = this._getDb().prepare(
+      'SELECT 1 FROM resource_projections WHERE resource_id = ? AND agent_id = ? LIMIT 1',
+    ).get(resourceId, cid);
     return !!row;
   }
 
@@ -1346,15 +1378,26 @@ class ResourceManager {
     const resource = this.getResource(resourceId);
     if (!resource) throw new Error('资产不存在');
 
-    // prompt / skill：已安装即可；assistant：需勾选「可投射智能体」
-    const allowedIds = resource.type === 'prompt'
-      ? listPromptProjectableAgentIds()
-      : resource.type === 'assistant'
-        ? listAssistantProjectableAgentIds()
-        : listSkillProjectableAgentIds();
-    const allowed = new Set(allowedIds);
-    const ids = [...new Set((agentIds || []).filter(id => allowed.has(id)))];
-    if (!ids.length) throw new Error('请至少选择一个可投射的 Agent');
+    // 投射目标白名单：
+    //  - skill 必须有 skills 目录 → 只能投到可承载 skill 的已纳管 agent
+    //  - prompt / 智能体 走 MCP/中转 → 可投到任意已纳管应用（含 Trae / API 应用）
+    const { listManagedResourceAgentIds, getAgentTarget } = require('./resource-agent-targets');
+    let requested = [...new Set(agentIds || [])].filter(Boolean);
+    let allowed;
+    if (resource.type === 'skill') {
+      allowed = new Set(listManagedResourceAgentIds());
+    } else {
+      const { listManagedAppTargetIds } = require('./mcp-gateway-targets');
+      const { resolveMcpSyncClientId } = require('./mcp-agent-targets');
+      // 归一到交付 cid：能映射 stdio sync client 的归一（codex-desktop→codex），其余按自身（走中转）
+      requested = requested.map(id => resolveMcpSyncClientId(id) || id);
+      allowed = listManagedAppTargetIds();
+    }
+    const ids = [...new Set(requested.filter(id => allowed.has(id)))];
+    if (!ids.length) throw new Error('请至少选择一个已纳管的应用');
+
+    // Skill 落盘只能进可承载 skill 的目标（智能体的关联 Skill 依赖同理）
+    const skillHostableIds = ids.filter(id => getAgentTarget(id));
 
     const resourcesToProject = [resource];
     let missingDeps = [];
@@ -1367,7 +1410,10 @@ class ResourceManager {
 
     const results = [];
     for (const res of resourcesToProject) {
-      const batch = this._projectOneResourceToAgents(res, ids, scope, { force: !!options.force });
+      // skill 类资源（含智能体关联 Skill）只投到 skill-hostable 目标，避免对 Trae/API 目标物化失败
+      const targetIds = res.type === 'skill' ? skillHostableIds : ids;
+      if (!targetIds.length) continue;
+      const batch = this._projectOneResourceToAgents(res, targetIds, scope, { force: !!options.force });
       results.push(...batch.results);
     }
 
@@ -1590,9 +1636,10 @@ class ResourceManager {
     return this.getResource(resourceId);
   }
 
-  /** Skill 投射目标：已安装且有 Skill 根目录的 Agent */
+  /** Skill / Prompt / 智能体投射目标：已纳管应用（同源） */
   listAgentTargets() {
-    const allowed = new Set(listSkillProjectableAgentIds());
+    const { listManagedResourceAgentIds } = require('./resource-agent-targets');
+    const allowed = new Set(listManagedResourceAgentIds());
     return Object.values(AGENT_RESOURCE_TARGETS)
       .filter(t => allowed.has(t.id))
       .map(t => ({
@@ -1602,28 +1649,16 @@ class ResourceManager {
       }));
   }
 
-  /** 智能体投射目标：勾选 resource_project 且已安装 */
+  /** 智能体投射目标：与 Skill 相同（已纳管）；runtime 能力见 listAssistantRuntimeAgentIds */
   listAssistantAgentTargets() {
-    const allowed = new Set(listAssistantProjectableAgentIds());
-    return Object.values(AGENT_RESOURCE_TARGETS)
-      .filter(t => allowed.has(t.id))
-      .map(t => ({
-        id: t.id,
-        label: t.label,
-        skillRoot: t.getSkillRoot(),
-      }));
+    return this.listAgentTargets();
   }
 
   /**
-   * prompt 投射目标 = 本机已纳管的应用（与 Skill 一致）
-   * （投射驱动下发 tokenbank-prompts，不必先「投射到应用」，避免鸡生蛋）
+   * prompt 投射目标 = 已纳管应用（与 Skill / 智能体一致）
    */
   listPromptAgentTargets() {
-    const { CLIENT_TARGETS } = require('./mcp-agent-targets');
-    return listPromptProjectableAgentIds().map(id => ({
-      id,
-      label: AGENT_RESOURCE_TARGETS[id]?.label || CLIENT_TARGETS[id]?.label || id,
-    }));
+    return this.listAgentTargets();
   }
 
   /** prompt 投射变更后刷新对应 client 的 MCP 配置(失败仅告警,不阻断) */

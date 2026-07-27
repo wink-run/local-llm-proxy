@@ -1916,7 +1916,9 @@ function resolveCfgPath(p) {
   catch { return String(p || ''); }
 }
 
-/** config_file 检测：文件存在=弱/强信号；勿用「父目录存在」——MCP 同步建目录会误判已安装 */
+/** config_file 检测：文件存在=弱信号；state.vscdb=强。
+ * 弱信号不可单独用于「已安装/自动纳管」——配置可能由本程序启动时误写。
+ */
 function configFileDetect(d) {
   try {
     const f = resolveCfgPath(d.config_file);
@@ -1927,10 +1929,38 @@ function configFileDetect(d) {
   } catch { return { hit: false, strong: false, weak: false }; }
 }
 
+/** Windows：按 appx 末段探测桌面端 userData（APPDATA / LOCALAPPDATA） */
+function winDesktopAppDataPresent(appx) {
+  if (process.platform !== 'win32' || !appx) return false;
+  const appName = String(appx).split('.').pop();
+  if (!appName) return false;
+  const bases = [process.env.APPDATA, process.env.LOCALAPPDATA].filter(Boolean);
+  for (const base of bases) {
+    try {
+      if (fs.existsSync(path.join(base, appName))) return true;
+      // Codex Desktop 数据目录常为 Codex（与 OpenAI.Codex 包名末段不完全一致）
+      if (/codex/i.test(appName) && fs.existsSync(path.join(base, 'Codex'))) return true;
+    } catch { /* ignore */ }
+  }
+  return false;
+}
+
+/**
+ * WorkBuddy 强信号：真实会话痕迹或桌面端 userData。
+ * 不用 ~/.workbuddy/models.json / 空目录——MCP 投射会建目录，易在未安装机误判已纳管。
+ */
+function workbuddyStrongPresent() {
+  try {
+    return !!require('./resource-agent-targets').isWorkbuddyPresent?.();
+  } catch {
+    return false;
+  }
+}
+
 // api_key 应用是否检测到（跨平台）：
-//   Windows → appx 包 / CLI 命令
-//   macOS   → /Applications/<App>.app / CLI 命令 / 配置目录已存在
-//   Linux   → CLI 命令 / 配置目录已存在
+//   Windows → appx 包 / CLI 命令 / 桌面 userData
+//   macOS   → /Applications/<App>.app / CLI 命令 / Application Support
+//   Linux   → CLI 命令
 /** macOS：按 appx 末段探测桌面应用是否已装（.app / Application Support / 嵌入式 Framework） */
 function macDesktopAppPresent(appx) {
   if (process.platform !== 'darwin' || !appx) return false;
@@ -1954,14 +1984,10 @@ function macDesktopAppPresent(appx) {
 }
 
 function apiKeyAppDetected(d) {
-  if (d.appx && appxInstalled(d.appx)) return true;            // Windows Store 包
-  if (d.command && commandInstalled(d.command)) return true;   // CLI 命令（跨平台，含 npm 全局 bin）
-  if (d.appx && macDesktopAppPresent(d.appx)) return true;
-  if (d.config_file) {
-    const cf = configFileDetect(d);
-    if (cf.strong || cf.weak) return true;
-  }
-  return false;
+  const det = apiKeyDetect(d);
+  // 已定义强信号（appx/command/专用探测）：只认强，避免残留 config.toml / models.json 误显示「已纳管」
+  if (det.strongDefined) return !!det.strong;
+  return !!(det.strong || det.weak);
 }
 
 // 分强/弱信号检测（供 apps:supported 用）：
@@ -1975,8 +2001,14 @@ function apiKeyDetect(d) {
     strongDefined = true;
     if (appxInstalled(d.appx)) strong = true;
     if (!strong && macDesktopAppPresent(d.appx)) strong = true;
+    if (!strong && winDesktopAppDataPresent(d.appx)) strong = true;
   }
   if (d.command) { strongDefined = true; if (commandInstalled(d.command)) strong = true; }
+  // WorkBuddy：强制走强信号，忽略单独 models.json
+  if (d.id === 'workbuddy') {
+    strongDefined = true;
+    if (workbuddyStrongPresent()) strong = true;
+  }
   let weak = false;
   if (d.config_file) {
     const cf = configFileDetect(d);
@@ -4262,7 +4294,9 @@ function registerIPC() {
         const isConfigFileApp = !!freshConfigFile || def?.config_file_optional === true;
         const needsDevMode = def?.config_file_optional === true && def?.dev_mode_ready === false;
         // 在线(经网关) = 纳管 且 绑了路由；纳管但直连(无 route_id) = 仅读文件、不走网关
-        return { ...withCaps, linked: true, installed: true,
+        // installed：以强信号探测为准，避免残留配置把未安装应用标成已纳管
+        const detected = def ? apiKeyAppDetected(def) : true;
+        return { ...withCaps, linked: true, installed: detected,
                  hosted: app.hosted === true,
                  configured: !!(app.hosted && (app.route_id || (app.route_ids && app.route_ids.length))),
                  config_file: freshConfigFile, patch: freshPatch, env: freshEnv,
@@ -4272,10 +4306,16 @@ function registerIPC() {
                  host_method: isConfigFileApp ? 'config-file' : 'api-key',
                  needs_dev_mode: needsDevMode };
       })
-      // 机器上没有的 shim / direct 应用不展示；api-key 应用始终展示。
+      // 机器上没有的 shim / direct / session / 预设 api-key 应用不展示
       .filter(app => app.link_method !== 'shim' || app.installed)
       .filter(app => app.link_method !== 'direct' || directInstalled(app.agent_id))
-      .filter(app => app.link_method !== 'session' || directInstalled(app.agent_id));
+      .filter(app => app.link_method !== 'session' || directInstalled(app.agent_id))
+      .filter(app => {
+        // 用户手工 API / 虚拟待添加行保留；预设 api-key 须本机真正装过
+        if (app.link_method === 'manual' || app._virtual_apikey) return true;
+        if (app.link_method !== 'api-key') return true;
+        return app.installed !== false;
+      });
 
     // 同一 agent_id 去重：api-key(持久) > shim > session/direct。
     // 例外——多账号 shim 实例：每个独立 CONFIG_DIR 各占一行（否则两个账号会被折叠成一行）。
@@ -4533,14 +4573,19 @@ function registerIPC() {
         const codexCfg = require('./codex-config');
         const { getRouteModels } = require('./app-handlers');
         const codexHome = path.dirname(file);
+        // config.toml 不存在则不新建（避免自写后再被判已安装）
+        if (!fs.existsSync(file)) {
+          return { ok: false, error: 'config-missing', file };
+        }
         const baseUrl = resolvedPatch['model_providers.tokenbank.base_url'] || `${patchCtx.base}/v1`;
         const models = getRouteModels(appRec, readLocalConfig().scene_routes || []);
         const model = resolvedPatch['model'] || models[0] || '';
         codexCfg.writeCodexCatalog(codexHome, models);
-        codexCfg.applyCodexProvider(file, {
+        const applied = codexCfg.applyCodexProvider(file, {
           providerId: 'tokenbank', name: 'Tokenbank',
           baseUrl, model, bearerToken: appRec?.api_key || '', catalogFile: codexCfg.CATALOG_FILE,
         });
+        if (!applied?.ok) return { ok: false, error: applied?.error || 'codex-write-failed', file };
         codexCfg.cleanupThirdPartyAuthKey(codexHome);   // 清第三方残留 key，不动官方 tokens.*
         // 会话归一到 tokenbank：threads(Desktop 列表) + rollout 一并归一，纳管态看到全部
         try { codexCfg.syncCodexSessionProvider(codexHome, 'tokenbank'); } catch {}
@@ -4553,13 +4598,16 @@ function registerIPC() {
       // Trae：模型配置由用户在 IDE 内手工填写，此处不写入 state.vscdb
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
+      // 配置文件不存在则不新建（避免自写 models.json / config 后再被判已安装）
+      if (!fs.existsSync(file)) {
+        return { ok: false, error: 'config-missing', file };
+      }
       const bak = file + '.tokenbank-bak';
       // 只备份"真正的原始配置"：既有文件若已是 tokenbank 托管配置，绝不备份——否则会把网关配置
       // 存成 .tokenbank-bak，还原时又写回网关配置，导致 Claude Desktop 还原后仍走网关。
-      if (fs.existsSync(file) && !fs.existsSync(bak) && !isTokenbankManagedConfig(file)) {
+      if (!fs.existsSync(bak) && !isTokenbankManagedConfig(file)) {
         try { fs.copyFileSync(file, bak); } catch {}
       }
-      fs.mkdirSync(path.dirname(file), { recursive: true });
       if (/\.json$/i.test(file)) {
         fs.writeFileSync(file, JSON.stringify(patchToObject(resolvedPatch), null, 2), 'utf8');
       } else if (/\.ya?ml$/i.test(file)) {

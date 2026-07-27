@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ServiceIcon from './ServiceIcon';
+import { resolveBrandIcon } from '../lib/brandIcons';
 import { useLang } from '../store/lang';
 
 const SUPPLY_TAB_KEY = 'tokenbank.providers.supplyTab';
@@ -108,15 +109,17 @@ export default function McpProvidersTab() {
   const [editServer, setEditServer] = useState(null);
   const [syncStatus, setSyncStatus] = useState(null);
   const [syncMsg, setSyncMsg] = useState('');
-  const [agentInstallations, setAgentInstallations] = useState([]);
   const [agentTab, setAgentTab] = useState(() => readMcpAgentTab());
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [syncMenuPos, setSyncMenuPos] = useState(null);
   /** null=批量安装菜单，string=单行 MCP id */
   const [installMenuServerId, setInstallMenuServerId] = useState(null);
   const [syncSelectedIds, setSyncSelectedIds] = useState([]);
+  // 菜单模式：project=写盘投射；relay=中转绑定（分按钮入口）
+  const [syncMenuMode, setSyncMenuMode] = useState('project');
   const [selectedServerIds, setSelectedServerIds] = useState([]);
-  const syncBtnRef = useRef(null);
+  const syncProjectBtnRef = useRef(null);
+  const syncRelayBtnRef = useRef(null);
   const syncMenuRef = useRef(null);
   /** 编辑弹窗内容区：打开时滚回顶部 */
   const editPanelRef = useRef(null);
@@ -127,6 +130,8 @@ export default function McpProvidersTab() {
   const [gatewayProfileId, setGatewayProfileId] = useState('api');
   /** Gateway API 应用（与 apps:list 同源，避免下拉漏项） */
   const [gatewayApiApps, setGatewayApiApps] = useState([]);
+  /** Gateway 应用全量（与「应用」页 apps:list 同源，供顶部筛选对齐已纳管） */
+  const [gatewayApps, setGatewayApps] = useState([]);
 
   // 主栏有 backdrop-filter 时 fixed 会相对主栏定位；弹窗挂到 body 并复位滚动
   useEffect(() => {
@@ -137,21 +142,23 @@ export default function McpProvidersTab() {
     return () => cancelAnimationFrame(id);
   }, [editServer]);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (opts = {}) => {
     if (!window.electronAPI?.mcp) {
       setLoading(false);
       return;
     }
-    setLoading(true);
+    const silent = !!opts.silent;
+    // silent：投射等操作后局部刷新，不整页进入 loading
+    if (!silent) setLoading(true);
     setError('');
+    // apps:list 很重：与 MCP 并行拉，但不参与首屏 loading 门闩
+    const appsPromise = window.electronAPI.apps?.list?.() || Promise.resolve([]);
     try {
-      const [catRes, srvRes, syncRes, agentRes, gwRes, appsList] = await Promise.all([
+      const [catRes, srvRes, syncRes, gwRes] = await Promise.all([
         window.electronAPI.mcp.listCatalog(),
         window.electronAPI.mcp.listServers(),
         window.electronAPI.mcp.getSyncStatus(),
-        window.electronAPI.mcp.listAgentInstallations(),
         window.electronAPI.mcp.getGatewayInfo?.() || Promise.resolve(null),
-        window.electronAPI.apps?.list?.() || Promise.resolve([]),
       ]);
       if (catRes.success) {
         setCatalog(catRes.catalog || []);
@@ -160,14 +167,19 @@ export default function McpProvidersTab() {
       else setError(catRes.error || t('providers.mcp.loadCatalogFailed'));
       if (srvRes.success) setServers(srvRes.servers || []);
       if (syncRes.success) setSyncStatus(syncRes);
-      if (agentRes.success) {
-        const agents = agentRes.agents || [];
-        setAgentInstallations(agents);
-      }
       if (gwRes?.success) setGatewayInfo(gwRes);
       else if (gwRes && gwRes.success === false) setGatewayInfo(null);
-      // 与 Gateway「接入 = API」同源：仅 manual（新建 API 应用）
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+
+    // 补齐 Gateway 纳管应用（筛选 / 投射列表）；失败不影响已展示的 MCP
+    try {
+      const appsList = await appsPromise;
       const rows = Array.isArray(appsList) ? appsList : [];
+      setGatewayApps(rows.filter((a) => a && !a.draft));
       setGatewayApiApps(
         rows
           .filter((a) => a && !a.draft && !a._virtual_apikey && a.link_method === 'manual')
@@ -179,30 +191,108 @@ export default function McpProvidersTab() {
             link_method: a.link_method,
           })),
       );
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+    } catch {
+      /* ignore */
     }
   }, [t]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // 与 Skill/Prompt 一致：只列出本机已纳管的应用（不再用 syncEnabled 裁剪）
-  const syncWritableAgents = (syncStatus?.targets || []).filter(t => t.installed);
+  /**
+   * 与 Gateway 应用表「状态」列一致：已纳管 / API 在线 → true；未纳管 → false。
+   * 见 Gateway.jsx 行内 isManaged 计算。
+   */
+  function isGatewayAppManaged(app) {
+    if (!app || app.draft) return false;
+    const keyApp = app.link_method === 'api-key' || app.link_method === 'manual';
+    const isCfgApp = keyApp && app.host_method === 'config-file';
+    const isDirectOnly = app.link_method === 'direct';
+    const isSessionApp = app.link_method === 'session';
+    const hostable = app.link_method === 'shim' || isCfgApp || isDirectOnly;
+    const tracked = app.hosted === true && !app.needs_dev_mode;
+    if (isSessionApp) return tracked;
+    if (hostable) return tracked;
+    return keyApp && !app._virtual_apikey;
+  }
 
-  // 当前筛选目标失效时回退到全部（已安装 Agent 或 API 应用均有效）
+  // 投射/中转桌面列表：与顶部筛选同源（Gateway 已纳管，不含 API）
+  // syncClientId：实际写盘目标（codex-desktop→codex，claude-desktop→claude-code）
+  const MCP_SYNC_ID_ALIAS = {
+    'codex-desktop': 'codex',
+    'claude-desktop': 'claude-code',
+  };
+  // 与 CLI 复用写盘：投射列表不单独展示（选 Claude Code 即覆盖 Desktop）
+  const MCP_PROJECT_LIST_HIDDEN = new Set(['claude-desktop']);
+  function resolveSyncWriteId(filterId) {
+    const cand = MCP_SYNC_ID_ALIAS[filterId] || filterId;
+    const t = (syncStatus?.targets || []).find((x) => x.id === cand && x.syncEnabled !== false);
+    return t ? t.id : null;
+  }
+  function expandClientMatchIds(filterId) {
+    const ids = new Set([filterId]);
+    const syncId = resolveSyncWriteId(filterId) || MCP_SYNC_ID_ALIAS[filterId];
+    if (syncId) ids.add(syncId);
+    for (const [from, to] of Object.entries(MCP_SYNC_ID_ALIAS)) {
+      if (from === filterId || to === filterId || from === syncId || to === syncId) {
+        ids.add(from);
+        ids.add(to);
+      }
+    }
+    return ids;
+  }
+
+  const syncWritableAgents = (() => {
+    const items = [];
+    const seen = new Set();
+    for (const app of gatewayApps) {
+      if (!isGatewayAppManaged(app) || app.link_method === 'manual') continue;
+      const id = app.agent_id || app.preset_id || app.id;
+      if (!id || seen.has(id)) continue;
+      // Claude Desktop 不单独展示，与 Claude Code 复用
+      if (MCP_PROJECT_LIST_HIDDEN.has(id)) continue;
+      seen.add(id);
+      const syncClientId = resolveSyncWriteId(id);
+      items.push({
+        id,
+        label: app.name || id,
+        syncClientId,
+        projectable: !!syncClientId,
+        installed: true,
+        appId: app.id,
+      });
+    }
+    return items;
+  })();
+
+  // 当前筛选目标须落在 Gateway「已纳管/在线」列表；尚未拉到 apps 时不误清
   useEffect(() => {
     if (!agentTab) return;
-    if (agentInstallations.some(a => a.id === agentTab && a.installed)) return;
-    // 等网关目标加载完再判断 API 应用，避免误清
-    if (gatewayInfo == null && gatewayApiApps.length === 0) return;
-    if (gatewayApiApps.some(a => a.id === agentTab)) return;
-    if ((gatewayInfo?.apiApps || []).some(a => a.id === agentTab)) return;
-    if ((gatewayInfo?.bindTargets || []).some(a => a.id === agentTab)) return;
+    if (gatewayApps.length === 0 && gatewayApiApps.length === 0) return;
+    const managedIds = new Set();
+    for (const app of gatewayApps) {
+      if (!isGatewayAppManaged(app)) continue;
+      if (app.link_method === 'manual' && app.id) managedIds.add(app.id);
+      else {
+        const aid = app.agent_id || app.preset_id || app.id;
+        if (aid) managedIds.add(aid);
+        if (app.id) managedIds.add(app.id);
+        // Desktop 隐藏项：映射到复用的 CLI id，避免旧筛选态被清掉后空白
+        const aliased = MCP_SYNC_ID_ALIAS[aid];
+        if (aliased) managedIds.add(aliased);
+      }
+    }
+    for (const a of gatewayApiApps) if (a?.id) managedIds.add(a.id);
+    // 旧态若停在 claude-desktop，自动切到 claude-code
+    if (MCP_PROJECT_LIST_HIDDEN.has(agentTab)) {
+      const next = MCP_SYNC_ID_ALIAS[agentTab] || '';
+      setAgentTab(next);
+      saveMcpAgentTab(next);
+      return;
+    }
+    if (managedIds.has(agentTab)) return;
     setAgentTab('');
     saveMcpAgentTab('');
-  }, [agentTab, agentInstallations, gatewayInfo, gatewayApiApps]);
+  }, [agentTab, gatewayApps, gatewayApiApps]);
 
   /** 可加入网关代理：已启用、stdio、非 Bridge */
   function canRouteViaGateway(s) {
@@ -220,7 +310,7 @@ export default function McpProvidersTab() {
       || s.id === 'tokenbank-resources';
   }
 
-  /** 网关目标：通用 api + Agent + Gateway「API 应用」（UI 与后端列表合并去重） */
+  /** 网关目标：通用 api + 已纳管桌面/CLI + Gateway「API 应用」 */
   function gatewayProfileOptions() {
     const seen = new Set();
     const opts = [];
@@ -234,10 +324,14 @@ export default function McpProvidersTab() {
       });
     };
     push('api', t('providers.mcp.gatewayProfileApi'), 'generic');
-    for (const a of syncStatus?.targets || []) {
+    // 仅已纳管且可写盘的应用（不含未安装 / OpenClaw 等）
+    for (const a of syncWritableAgents) {
       push(a.id, a.label || a.id, 'agent');
     }
     for (const t of gatewayInfo?.bindTargets || gatewayInfo?.profiles || []) {
+      if (!t?.id || t.id === 'api') continue;
+      // Agent 类已由 syncWritableAgents 覆盖；此处只补 API 应用等
+      if (t.kind === 'agent') continue;
       push(t.id, t.label, t.kind);
     }
     // 与 Gateway 页 apps:list 同源，确保「New app」等可见
@@ -262,40 +356,6 @@ export default function McpProvidersTab() {
   function activeGatewayProfileId() {
     if (agentTab) return agentTab;
     return gatewayProfileId || 'api';
-  }
-
-  async function toggleGatewayRouted(server) {
-    if (!canRouteViaGateway(server)) return;
-    if (typeof window.electronAPI?.mcp?.setServerGatewayRouted !== 'function') {
-      alert(t('providers.mcp.gatewayApiMissing'));
-      return;
-    }
-    const profileId = activeGatewayProfileId();
-    if (!profileId) {
-      alert(t('providers.mcp.gatewayNeedApp'));
-      return;
-    }
-    const enabled = !isGatewayBoundToProfile(server, profileId);
-    setBusy(server.id);
-    try {
-      const res = await window.electronAPI.mcp.setServerGatewayRouted({
-        serverId: server.id,
-        enabled,
-        clientIds: [profileId],
-      });
-      if (!res?.success) {
-        alert(res?.error || t('providers.mcp.gatewayToggleFailed'));
-        return;
-      }
-      if (res.server) {
-        setServers((prev) => prev.map((s) => (s.id === res.server.id ? { ...s, ...res.server } : s)));
-      }
-      await loadAll();
-    } catch (e) {
-      alert(e.message || t('providers.mcp.gatewayToggleFailed'));
-    } finally {
-      setBusy('');
-    }
   }
 
   async function bulkSetGateway(enabled, explicitServerIds) {
@@ -353,14 +413,15 @@ export default function McpProvidersTab() {
         alert(t('providers.mcp.gatewayToggleFailed') + (res.error ? `: ${res.error}` : ''));
         return;
       }
+      setSelectedServerIds([]);
+      // 先刷新再弹结果
+      await loadAll({ silent: true });
       if (res.failed > 0) {
         alert(t('providers.mcp.gatewayPartialFail', { ok: res.ok || 0, fail: res.failed }));
       } else if (enabled) {
         const appLabel = gatewayProfileOptions().find((o) => o.id === profileId)?.label || profileId;
         alert(t('providers.mcp.gatewayBoundOk', { n: res.ok || boundN || ids.length, app: appLabel }));
       }
-      setSelectedServerIds([]);
-      await loadAll();
     } catch (e) {
       alert(e.message || t('providers.mcp.gatewayToggleFailed'));
     } finally {
@@ -485,24 +546,6 @@ export default function McpProvidersTab() {
             </code>
           )}
           <div className="flex items-center gap-1 shrink-0 ml-auto">
-            <button
-              type="button"
-              disabled={!!busy || selectedSyncableIds.length === 0}
-              onClick={() => bulkSetGateway(true)}
-              title={selectedSyncableIds.length === 0 ? t('providers.mcp.gatewaySelectStdio') : undefined}
-              className="tb-press text-[11px] px-2 py-1 rounded-lg border border-sky-300/80 dark:border-sky-700/60 bg-sky-50/80 dark:bg-sky-900/25 text-sky-700 dark:text-sky-300 disabled:opacity-40"
-            >
-              {t('providers.mcp.gatewayAddSelected')}
-              {selectedSyncableIds.length > 0 ? ` (${selectedSyncableIds.length})` : ''}
-            </button>
-            <button
-              type="button"
-              disabled={!!busy || selectedSyncableIds.length === 0}
-              onClick={() => bulkSetGateway(false)}
-              className="tb-press text-[11px] px-2 py-1 rounded-lg border border-zinc-200 dark:border-zinc-600 text-zinc-500 disabled:opacity-40"
-            >
-              {t('providers.mcp.gatewayRemoveSelected')}
-            </button>
             {(() => {
               const isGeneric = profileId === 'api';
               // 通用档：一键只绑内置；API 应用：空档时一键绑全部可中转 stdio
@@ -607,86 +650,134 @@ export default function McpProvidersTab() {
     if (!syncMenuOpen) return;
     const onDoc = (e) => {
       const t = e.target;
-      if (syncBtnRef.current?.contains(t) || syncMenuRef.current?.contains(t)) return;
+      if (syncMenuRef.current?.contains(t)) return;
+      if (syncProjectBtnRef.current?.contains(t) || syncRelayBtnRef.current?.contains(t)) return;
       if (t.closest?.('[data-row-install-btn]')) return;
       closeSyncMenu();
     };
+    // 页面或任意外层滚动时关闭浮窗（菜单内部滚动除外）
+    const onScroll = (e) => {
+      if (syncMenuRef.current?.contains(e.target)) return;
+      closeSyncMenu();
+    };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('scroll', onScroll, true);
+    };
   }, [syncMenuOpen, closeSyncMenu]);
 
-  function openInstallMenu({ serverId = null, anchorEl, selectedAgentIds }) {
-    if (syncMenuOpen && installMenuServerId === serverId) {
+  function openInstallMenu({ serverId = null, anchorEl, selectedAgentIds, mode = 'project' }) {
+    if (syncMenuOpen && installMenuServerId === serverId && syncMenuMode === mode) {
       closeSyncMenu();
       return;
     }
     setInstallMenuServerId(serverId);
+    setSyncMenuMode(mode === 'relay' ? 'relay' : 'project');
     setSyncSelectedIds(selectedAgentIds);
     if (anchorEl) {
       const r = anchorEl.getBoundingClientRect();
-      setSyncMenuPos({ top: r.bottom + 4, left: r.right, align: 'right' });
+      const menuW = 256;
+      const spaceBelow = window.innerHeight - r.bottom - 8;
+      const spaceAbove = r.top - 8;
+      // 下方空间不足时向上展开，避免被视口裁切
+      const openUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+      const maxH = Math.min(400, Math.max(180, openUp ? spaceAbove : spaceBelow));
+      const left = Math.min(Math.max(8, r.right - menuW), window.innerWidth - menuW - 8);
+      setSyncMenuPos({
+        top: openUp ? null : r.bottom + 4,
+        bottom: openUp ? window.innerHeight - r.top + 4 : null,
+        left,
+        maxH,
+      });
     }
     setSyncMenuOpen(true);
   }
 
-  function openSyncMenu() {
-    // 批量：默认勾选当前中转所选应用（若为 API）+ 全部可写 Agent
+  function openSyncMenu(mode, anchorEl) {
+    // 批量：投射仅可写盘纳管应用；中转默认勾选当前档 API（若有）+ 全部纳管桌面
     const profileId = activeGatewayProfileId();
     const apiDefault = gatewayApiApps.some((a) => a.id === profileId) ? [profileId] : [];
+    const projectableIds = syncWritableAgents.filter((t) => t.projectable).map((t) => t.id);
+    const selected = mode === 'relay'
+      ? [...apiDefault, ...syncWritableAgents.map((t) => t.id)]
+      : projectableIds;
     openInstallMenu({
       serverId: null,
-      anchorEl: syncBtnRef.current,
-      selectedAgentIds: [...apiDefault, ...syncWritableAgents.map((t) => t.id)],
+      anchorEl,
+      selectedAgentIds: selected,
+      mode,
     });
   }
 
-  function openRowInstallMenu(server, e) {
+  function openRowInstallMenu(server, e, mode = 'project') {
     if (server.status !== 'active') return;
-    // 默认勾选：已中转绑定的 API 应用 + 已投射 Agent；皆空则全选
-    const installed = (server.clientTargets || [])
-      .filter(c => c.installed && syncWritableAgents.some(t => t.id === c.id))
-      .map(c => c.id);
-    const fromSync = (server.sync_clients || [])
-      .filter(id => syncWritableAgents.some(t => t.id === id));
-    const fromGateway = getGatewayBoundApiAppIds(server);
-    const assigned = [...new Set([...fromGateway, ...installed, ...fromSync])];
-    const defaults = assigned.length
-      ? assigned
-      : [...gatewayApiApps.map((a) => a.id), ...syncWritableAgents.map((t) => t.id)];
+    let defaults;
+    if (mode === 'relay') {
+      const fromGateway = getGatewayBoundRelayIds(server);
+      defaults = fromGateway.length
+        ? fromGateway
+        : [...gatewayApiApps.map((a) => a.id), ...syncWritableAgents.map((t) => t.id)];
+    } else {
+      const installed = getInstalledAgentIds(server);
+      const projectableIds = syncWritableAgents.filter((t) => t.projectable).map((t) => t.id);
+      defaults = installed.length ? installed : projectableIds;
+    }
     openInstallMenu({
       serverId: server.id,
       anchorEl: e.currentTarget,
       selectedAgentIds: defaults,
+      mode,
     });
   }
 
   function toggleSyncSelected(id) {
     const isApi = gatewayApiApps.some((a) => a.id === id);
-    const agent = (syncStatus?.targets || []).find(t => t.id === id);
-    if (!isApi && !agent?.installed) return;
+    const agent = syncWritableAgents.find((t) => t.id === id);
+    if (!isApi && !agent) return;
+    // 投射菜单：不可写盘的纳管应用不可勾选
+    if (syncMenuMode === 'project' && agent && !agent.projectable) return;
     setSyncSelectedIds(prev => (
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     ));
   }
 
-  /** 收集某 MCP 当前已投射到的可写 Agent */
+  /** 收集某 MCP 当前已投射到的纳管应用（返回筛选同源 id） */
   function getInstalledAgentIds(server) {
     if (!server) return [];
     const ids = new Set();
+    const hitIds = new Set();
     for (const c of server.clientTargets || []) {
-      if (c.installed && syncWritableAgents.some(t => t.id === c.id)) ids.add(c.id);
+      if (c.installed) hitIds.add(c.id);
     }
-    for (const id of server.sync_clients || []) {
-      if (syncWritableAgents.some(t => t.id === id)) ids.add(id);
+    for (const id of server.sync_clients || []) hitIds.add(id);
+
+    for (const agent of syncWritableAgents) {
+      const match = expandClientMatchIds(agent.id);
+      if ([...hitIds].some((h) => match.has(h))) ids.add(agent.id);
     }
     return [...ids];
   }
 
-  /** 某 MCP 已绑定中转的 API 应用 */
-  function getGatewayBoundApiAppIds(server) {
+  /** 某 MCP 已中转绑定的目标（API 应用 + 可写桌面/CLI；不含「通用」） */
+  function getGatewayBoundRelayIds(server) {
     if (!server) return [];
     const clients = serverGatewayClients(server);
-    return gatewayApiApps.filter((a) => clients.includes(a.id)).map((a) => a.id);
+    const ids = [];
+    for (const a of gatewayApiApps) {
+      if (clients.includes(a.id)) ids.push(a.id);
+    }
+    for (const a of syncWritableAgents) {
+      if (clients.includes(a.id)) ids.push(a.id);
+    }
+    return ids;
+  }
+
+  function relayTargetLabel(id) {
+    return gatewayApiApps.find((a) => a.id === id)?.label
+      || syncStatus?.targets?.find((t) => t.id === id)?.label
+      || id;
   }
 
   async function handleSyncClients(clientIds) {
@@ -703,7 +794,21 @@ export default function McpProvidersTab() {
     }
 
     const apiIds = ids.filter((id) => gatewayApiApps.some((a) => a.id === id));
-    const agentIds = ids.filter((id) => syncWritableAgents.some((a) => a.id === id));
+    const syncDoProject = syncMenuMode === 'project';
+    const syncDoRelay = syncMenuMode === 'relay';
+    // 投射：筛选用 id → 写盘 syncClientId（跳过暂不支持写盘的项）
+    const agentIds = syncDoProject
+      ? [...new Set(
+        ids
+          .map((id) => syncWritableAgents.find((a) => a.id === id))
+          .filter((a) => a?.projectable && a.syncClientId)
+          .map((a) => a.syncClientId),
+      )]
+      : ids.filter((id) => syncWritableAgents.some((a) => a.id === id));
+    // 中转入口：桌面+API；投射入口：不写中转（API 不应出现在投射列表）
+    const relayIds = syncDoRelay
+      ? [...new Set([...apiIds, ...agentIds])]
+      : [];
 
     const singleServer = singleId ? servers.find(s => s.id === singleId) : null;
     const singleName = singleServer?.display_name || singleServer?.name || null;
@@ -714,54 +819,52 @@ export default function McpProvidersTab() {
     try {
       const parts = [];
 
-      // API 应用：走内置中转绑定（无法写盘投射）
-      if (apiIds.length) {
-        if (singleId) {
-          const previously = getGatewayBoundApiAppIds(singleServer);
-          const toAdd = apiIds.filter((id) => !previously.includes(id));
-          const toRemove = previously.filter((id) => !apiIds.includes(id));
-          for (const appId of toAdd) {
-            const r = await window.electronAPI.mcp.setServerGatewayRouted({
-              serverId: singleId,
-              enabled: true,
-              clientIds: [appId],
-            });
-            if (!r?.success) throw new Error(r?.error || t('providers.mcp.gatewayToggleFailed'));
-          }
-          for (const appId of toRemove) {
-            const r = await window.electronAPI.mcp.setServerGatewayRouted({
-              serverId: singleId,
-              enabled: false,
-              clientIds: [appId],
-            });
-            if (!r?.success) throw new Error(r?.error || t('providers.mcp.gatewayToggleFailed'));
-          }
-          if (apiIds.length) {
-            parts.push(t('providers.mcp.gatewayBoundTo', {
-              agents: apiIds.map((id) => gatewayApiApps.find((a) => a.id === id)?.label || id).join('、'),
-            }));
-          }
-          if (toRemove.length) {
-            parts.push(t('providers.mcp.gatewayUnboundFrom', {
-              agents: toRemove.map((id) => gatewayApiApps.find((a) => a.id === id)?.label || id).join('、'),
-            }));
-          }
-        } else {
-          const r = await window.electronAPI.mcp.setServersGatewayRouted({
-            serverIds,
+      // 中转绑定（仅「中转」入口）
+      if (syncDoRelay && singleId) {
+        const previouslyAll = getGatewayBoundRelayIds(singleServer);
+        const toAdd = relayIds.filter((id) => !previouslyAll.includes(id));
+        const toRemove = previouslyAll.filter((id) => !relayIds.includes(id));
+        for (const appId of toAdd) {
+          const r = await window.electronAPI.mcp.setServerGatewayRouted({
+            serverId: singleId,
             enabled: true,
-            clientIds: apiIds,
+            clientIds: [appId],
           });
           if (!r?.success) throw new Error(r?.error || t('providers.mcp.gatewayToggleFailed'));
-          parts.push(t('providers.mcp.gatewayBoundBatch', {
-            n: serverIds.length,
-            agents: apiIds.map((id) => gatewayApiApps.find((a) => a.id === id)?.label || id).join('、'),
+        }
+        for (const appId of toRemove) {
+          const r = await window.electronAPI.mcp.setServerGatewayRouted({
+            serverId: singleId,
+            enabled: false,
+            clientIds: [appId],
+          });
+          if (!r?.success) throw new Error(r?.error || t('providers.mcp.gatewayToggleFailed'));
+        }
+        if (relayIds.length) {
+          parts.push(t('providers.mcp.gatewayBoundTo', {
+            agents: relayIds.map(relayTargetLabel).join('、'),
           }));
         }
+        if (toRemove.length) {
+          parts.push(t('providers.mcp.gatewayUnboundFrom', {
+            agents: toRemove.map(relayTargetLabel).join('、'),
+          }));
+        }
+      } else if (syncDoRelay && relayIds.length) {
+        const r = await window.electronAPI.mcp.setServersGatewayRouted({
+          serverIds,
+          enabled: true,
+          clientIds: relayIds,
+        });
+        if (!r?.success) throw new Error(r?.error || t('providers.mcp.gatewayToggleFailed'));
+        parts.push(t('providers.mcp.gatewayBoundBatch', {
+          n: serverIds.length,
+          agents: relayIds.map(relayTargetLabel).join('、'),
+        }));
       }
 
-      // 桌面/CLI：写盘投射
-      if (agentIds.length || (!apiIds.length && singleId)) {
+      // 桌面/CLI：写盘投射（仅「投射」入口）
+      if (syncDoProject && (singleId || agentIds.length)) {
         let res;
         if (singleId) {
           const previously = getInstalledAgentIds(singleServer);
@@ -804,22 +907,28 @@ export default function McpProvidersTab() {
         }
       }
 
-      if (!apiIds.length && !agentIds.length) {
+      // 批量须至少选目标；单条空勾选可撤
+      if (!singleId && !apiIds.length && !agentIds.length) {
         alert(t('providers.mcp.selectAgentFirst'));
         return;
       }
 
+      // 含 API 应用时提醒：客户端须手工配置中转
+      if (syncDoRelay && apiIds.length) {
+        parts.push(t('providers.mcp.gatewayApiManualConfigHint'));
+      }
+      if (!singleId) setSelectedServerIds([]);
+      // 中转成功后同步下拉
+      if (syncDoRelay && relayIds[0]) setGatewayProfileId(relayIds[0]);
+      setSyncMsg('');
+      // 先完成静默刷新，再弹结果（避免先提示后刷新）
+      await loadAll({ silent: true });
       if (singleId) {
         if (!parts.length) parts.push(t('providers.mcp.notInstalledAny'));
         alert(`${singleName}：${parts.join('；')}`);
       } else {
         alert(parts.join('\n') || t('providers.mcp.installedBatch', { n: serverIds.length, agents: '' }));
-        setSelectedServerIds([]);
       }
-      // 选中 API 应用时同步中转下拉
-      if (apiIds[0]) setGatewayProfileId(apiIds[0]);
-      setSyncMsg('');
-      await loadAll();
     } catch (e) {
       setSyncMsg(e.message);
       alert(e.message);
@@ -833,25 +942,37 @@ export default function McpProvidersTab() {
     const singleServer = installMenuServerId
       ? servers.find(s => s.id === installMenuServerId)
       : null;
+    const isRelay = syncMenuMode === 'relay';
+    // 勾选了 API 应用时展示手工配置提醒（仅中转菜单）
+    const hasApiSelected = isRelay && syncSelectedIds.some((id) => gatewayApiApps.some((a) => a.id === id));
+    const showApiApps = isRelay && gatewayApiApps.length > 0;
     return createPortal(
       <div
         ref={syncMenuRef}
-        className="fixed z-[9999] w-56 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg overflow-hidden"
+        className="fixed z-[9999] w-64 flex flex-col rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg overflow-hidden"
         style={{
-          top: syncMenuPos.top,
-          left: syncMenuPos.align === 'right' ? syncMenuPos.left - 224 : syncMenuPos.left,
+          ...(syncMenuPos.top != null ? { top: syncMenuPos.top } : {}),
+          ...(syncMenuPos.bottom != null ? { bottom: syncMenuPos.bottom } : {}),
+          left: syncMenuPos.left,
+          maxHeight: syncMenuPos.maxH,
         }}
       >
-        <div className="px-3 py-2 border-b border-zinc-100 dark:border-zinc-700">
-          <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">{t('providers.mcp.pickAgentsTitle')}</p>
+        <div className="px-3 py-2 border-b border-zinc-100 dark:border-zinc-700 shrink-0">
+          <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+            {isRelay ? t('providers.mcp.pickRelayTitle') : t('providers.mcp.pickProjectTitle')}
+          </p>
           <p className="text-[10px] text-zinc-400 mt-0.5">
             {singleServer
-              ? t('providers.mcp.installHintSingle', { name: singleServer.display_name || singleServer.name })
-              : t('providers.mcp.installHintBatch', { n: selectedSyncableIds.length })}
+              ? (isRelay
+                ? t('providers.mcp.relayHintSingle', { name: singleServer.display_name || singleServer.name })
+                : t('providers.mcp.installHintSingle', { name: singleServer.display_name || singleServer.name }))
+              : (isRelay
+                ? t('providers.mcp.relayHintBatch', { n: selectedSyncableIds.length })
+                : t('providers.mcp.installHintBatch', { n: selectedSyncableIds.length }))}
           </p>
         </div>
-        <div className="py-1 max-h-56 overflow-y-auto">
-          {gatewayApiApps.length > 0 && (
+        <div className="py-1 min-h-0 flex-1 overflow-y-auto">
+          {showApiApps && (
             <>
               <p className="px-3 pt-1.5 pb-0.5 text-[10px] text-zinc-400">{t('providers.mcp.gatewayGroupApiApps')}</p>
               {gatewayApiApps.map((app) => {
@@ -875,41 +996,55 @@ export default function McpProvidersTab() {
                   </label>
                 );
               })}
+              {hasApiSelected && (
+                <p className="px-3 pb-1.5 text-[10px] leading-snug text-amber-700 dark:text-amber-300/90">
+                  {t('providers.mcp.gatewayApiManualConfigHint')}
+                </p>
+              )}
             </>
           )}
           {syncWritableAgents.length > 0 && (
             <p className="px-3 pt-1.5 pb-0.5 text-[10px] text-zinc-400">{t('providers.mcp.gatewayGroupAgents')}</p>
           )}
-          {syncWritableAgents.length === 0 && gatewayApiApps.length === 0 ? (
+          {syncWritableAgents.length === 0 && !showApiApps ? (
             <p className="text-xs text-zinc-400 px-3 py-2">{t('providers.mcp.noAgents')}</p>
           ) : syncWritableAgents.map(agent => {
             const checked = syncSelectedIds.includes(agent.id);
+            const blocked = !isRelay && !agent.projectable;
             return (
               <label
                 key={agent.id}
-                className={`flex items-center gap-2 px-3 py-2 text-xs cursor-pointer ${
-                  checked ? 'bg-violet-50 dark:bg-violet-900/20' : 'hover:bg-zinc-50 dark:hover:bg-zinc-700/40'
+                className={`flex items-center gap-2 px-3 py-2 text-xs ${
+                  blocked
+                    ? 'opacity-45 cursor-not-allowed'
+                    : `cursor-pointer ${checked ? 'bg-violet-50 dark:bg-violet-900/20' : 'hover:bg-zinc-50 dark:hover:bg-zinc-700/40'}`
                 }`}
+                title={blocked ? t('providers.mcp.projectUnsupported') : undefined}
               >
                 <input
                   type="checkbox"
                   checked={checked}
+                  disabled={blocked}
                   onChange={() => toggleSyncSelected(agent.id)}
                   className="rounded border-zinc-300 dark:border-zinc-600"
                 />
                 <ServiceIcon id={agent.id} name={agent.label} boxClass="w-6 h-6" imgClass="w-3.5 h-3.5" />
                 <span className="text-zinc-700 dark:text-zinc-200 flex-1 truncate" title={agent.label}>{agent.label}</span>
+                {blocked && (
+                  <span className="text-[9px] text-zinc-400 shrink-0">{t('providers.mcp.projectUnsupportedTag')}</span>
+                )}
               </label>
             );
           })}
         </div>
-        <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-zinc-100 dark:border-zinc-700 bg-zinc-50/80 dark:bg-zinc-900/40">
+        <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-zinc-100 dark:border-zinc-700 bg-zinc-50/80 dark:bg-zinc-900/40 shrink-0">
           <button
             type="button"
-            onClick={() => setSyncSelectedIds([
-              ...gatewayApiApps.map((a) => a.id),
-              ...syncWritableAgents.map((t) => t.id),
-            ])}
+            onClick={() => setSyncSelectedIds(
+              isRelay
+                ? [...gatewayApiApps.map((a) => a.id), ...syncWritableAgents.map((t) => t.id)]
+                : syncWritableAgents.filter((t) => t.projectable).map((t) => t.id),
+            )}
             className="text-[10px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
           >
             {t('providers.mcp.selectAll')}
@@ -918,13 +1053,17 @@ export default function McpProvidersTab() {
             type="button"
             disabled={!!busy || (!installMenuServerId && syncSelectedIds.length === 0)}
             onClick={() => handleSyncClients(syncSelectedIds)}
-            className="text-xs px-2.5 py-1 rounded-lg bg-violet-600 text-white disabled:opacity-40 hover:bg-violet-500"
+            className={`text-xs px-2.5 py-1 rounded-lg text-white disabled:opacity-40 ${
+              isRelay
+                ? 'bg-sky-600 hover:bg-sky-500'
+                : 'bg-violet-600 hover:bg-violet-500'
+            }`}
           >
             {busy
               ? t('providers.mcp.processing')
-              : installMenuServerId
-                ? t('providers.mcp.confirmN', { n: syncSelectedIds.length })
-                : t('providers.mcp.installN', { n: syncSelectedIds.length })}
+              : isRelay
+                ? t('providers.mcp.relayConfirmN', { n: syncSelectedIds.length })
+                : t('providers.mcp.confirmN', { n: syncSelectedIds.length })}
           </button>
         </div>
       </div>,
@@ -936,16 +1075,30 @@ export default function McpProvidersTab() {
     return (
       <>
         <button
-          ref={syncBtnRef}
+          ref={syncProjectBtnRef}
           type="button"
-          onClick={openSyncMenu}
-          disabled={!!busy || (syncWritableAgents.length === 0 && gatewayApiApps.length === 0) || selectedSyncableIds.length === 0}
+          onClick={() => openSyncMenu('project', syncProjectBtnRef.current)}
+          disabled={!!busy || !syncWritableAgents.some((t) => t.projectable) || selectedSyncableIds.length === 0}
           className="text-xs px-3 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1"
         >
-          {busy === 'sync' ? t('providers.mcp.installing') : (
+          {busy === 'sync' && syncMenuMode === 'project' ? t('providers.mcp.installing') : (
             selectedSyncableIds.length
               ? t('providers.mcp.installToAgentN', { n: selectedSyncableIds.length })
               : t('providers.mcp.installToAgent')
+          )}
+          <span className="text-[10px] opacity-70">▾</span>
+        </button>
+        <button
+          ref={syncRelayBtnRef}
+          type="button"
+          onClick={() => openSyncMenu('relay', syncRelayBtnRef.current)}
+          disabled={!!busy || (syncWritableAgents.length === 0 && gatewayApiApps.length === 0) || selectedSyncableIds.length === 0}
+          className="text-xs px-3 py-1.5 rounded-lg border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-900/30 whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1"
+        >
+          {busy === 'sync' && syncMenuMode === 'relay' ? t('providers.mcp.relaying') : (
+            selectedSyncableIds.length
+              ? t('providers.mcp.installRelayN', { n: selectedSyncableIds.length })
+              : t('providers.mcp.installRelay')
           )}
           <span className="text-[10px] opacity-70">▾</span>
         </button>
@@ -992,16 +1145,6 @@ export default function McpProvidersTab() {
     setMcpViewTab('managed');
     saveMcpViewTab('managed');
     loadAll();
-  }
-
-  async function toggleStatus(server) {
-    if (server.builtin && server.id === 'tokenbank-agent-bridge') return;
-    setBusy(server.id);
-    const next = server.status === 'active' ? 'inactive' : 'active';
-    const res = await window.electronAPI.mcp.setServerStatus({ serverId: server.id, status: next });
-    setBusy('');
-    if (!res.success) alert(res.error);
-    else loadAll();
   }
 
   async function handleUninstall(server) {
@@ -1307,39 +1450,47 @@ export default function McpProvidersTab() {
   const totalCatalogCount = catalog.length;
   const managedCount = servers.length;
 
-  // 应用筛选：仅本机已纳管的应用（有残留 MCP 配置但未装的不展示）
-  const visibleAgents = agentInstallations.filter(a => a.installed);
-  /** 应用筛选：已安装 Agent + 已纳管 API 应用 */
-  const apiAppFilterItems = (() => {
-    const map = new Map();
-    for (const a of [...(gatewayInfo?.apiApps || []), ...gatewayApiApps]) {
-      if (a?.id) map.set(a.id, { id: a.id, label: a.label || a.id, kind: 'api-app' });
-    }
-    return [...map.values()];
-  })();
-  const filterAppItems = [
-    ...visibleAgents.map((a) => ({ id: a.id, label: a.label, kind: 'agent' })),
-    ...apiAppFilterItems,
-  ];
-  const activeAgent = filterAppItems.find(a => a.id === agentTab) || null;
-
-  // 按应用筛选：Agent 看写盘投射；API 应用看中转绑定，并仍列出可绑定的 stdio 以便加入
-  const filteredManagedServers = (() => {
-    if (!agentTab) return servers;
-    const isApiTab = gatewayApiApps.some((a) => a.id === agentTab)
-      || (gatewayInfo?.apiApps || []).some((a) => a.id === agentTab)
-      || String(agentTab).startsWith('app-');
-    if (isApiTab) {
-      // API 应用：已绑定的置顶，其余可绑定 stdio 也可勾选加入
-      return servers.filter((s) => {
-        if ((s.gateway_clients || []).includes(agentTab)) return true;
-        return canRouteViaGateway(s);
+  // 应用筛选：严格对齐 Gateway「应用」页 — 仅「已纳管 / 在线」
+  // Claude Desktop 与 Claude Code 复用 MCP，筛选不单独展示 Desktop
+  const filterAppItems = (() => {
+    const items = [];
+    const seen = new Set();
+    for (const app of gatewayApps) {
+      if (!isGatewayAppManaged(app)) continue;
+      const isApi = app.link_method === 'manual';
+      const id = isApi ? app.id : (app.agent_id || app.preset_id || app.id);
+      if (!id || seen.has(id)) continue;
+      if (!isApi && MCP_PROJECT_LIST_HIDDEN.has(id)) continue;
+      seen.add(id);
+      items.push({
+        id,
+        label: app.name || id,
+        kind: isApi ? 'api-app' : 'agent',
+        appId: app.id,
       });
     }
+    return items;
+  })();
+  const activeAgent = filterAppItems.find(a => a.id === agentTab) || null;
+
+  // 按应用筛选：Agent → 已投射或已中转；API 应用 → 仅已中转绑定
+  const filteredManagedServers = (() => {
+    if (!agentTab) return servers;
+    const isApiTab = activeAgent?.kind === 'api-app'
+      || gatewayApiApps.some((a) => a.id === agentTab)
+      || (gatewayInfo?.apiApps || []).some((a) => a.id === agentTab)
+      || String(agentTab).startsWith('app-');
+    // 同时匹配 agent 目标 id、别名（codex↔codex-desktop）与 Gateway app.id
+    const matchIds = expandClientMatchIds(agentTab);
+    if (activeAgent?.appId) matchIds.add(activeAgent.appId);
+    if (isApiTab) {
+      return servers.filter((s) => (s.gateway_clients || []).some((id) => matchIds.has(id)));
+    }
     return servers.filter((s) => {
-      const onAgent = (s.clientTargets || []).some((c) => c.id === agentTab && c.installed);
-      const onGateway = (s.gateway_clients || []).includes(agentTab);
-      return onAgent || onGateway;
+      const onAgent = (s.clientTargets || []).some((c) => matchIds.has(c.id) && c.installed);
+      const onGateway = (s.gateway_clients || []).some((id) => matchIds.has(id));
+      const onSync = (s.sync_clients || []).some((id) => matchIds.has(id));
+      return onAgent || onGateway || onSync;
     });
   })();
 
@@ -1380,7 +1531,7 @@ export default function McpProvidersTab() {
     return 'tb_sync';
   }
 
-  /** 本机 MCP 列表上方的应用筛选：已安装 Agent + API 应用 */
+  /** 本机 MCP 列表上方的应用筛选：对齐 Gateway「已纳管 / 在线」 */
   function renderAppFilter() {
     if (filterAppItems.length === 0) return null;
     const options = [
@@ -1458,6 +1609,42 @@ export default function McpProvidersTab() {
     ));
   }
 
+  /** 已中转的 API 应用（排除「通用」档；无品牌图标则直接显示名称） */
+  function renderGatewayClientBadges(server) {
+    const clients = serverGatewayClients(server).filter((cid) => cid !== 'api');
+    if (!clients.length) return null;
+    return clients.map((cid) => {
+      const label = gatewayProfileOptions().find((o) => o.id === cid)?.label || cid;
+      const hay = `${cid} ${label}`;
+      const hasIcon = !!resolveBrandIcon(hay) || /kimi|moonshot/i.test(hay);
+      if (!hasIcon) {
+        return (
+          <span
+            key={cid}
+            title={label}
+            className="text-[10px] text-emerald-700 dark:text-emerald-300 whitespace-nowrap"
+          >
+            {label}
+          </span>
+        );
+      }
+      return (
+        <span
+          key={cid}
+          title={label}
+          className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 ring-1 ring-emerald-200 dark:ring-emerald-700/60 shrink-0"
+        >
+          <ServiceIcon
+            id={cid}
+            name={label}
+            boxClass="w-6 h-6 !bg-transparent dark:!bg-transparent rounded-md"
+            imgClass="w-4 h-4"
+          />
+        </span>
+      );
+    });
+  }
+
   function renderManagedRow(s) {
     const canSelect = s.status === 'active' && s.id !== 'tokenbank-agent-bridge';
     const checked = selectedServerIds.includes(s.id);
@@ -1517,23 +1704,12 @@ export default function McpProvidersTab() {
             {s.id === 'tokenbank-agent-bridge' && (
               <p className="text-[10px] text-zinc-400 mt-2">{t('providers.mcp.playgroundOnly')}</p>
             )}
-            {serverGatewayClients(s).length > 0 && (
-              <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                <span className="text-[10px] text-sky-600 dark:text-sky-400">
+            {serverGatewayClients(s).some((cid) => cid !== 'api') && (
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                <span className="text-[10px] text-zinc-400 shrink-0">
                   {t('providers.mcp.gatewayBadge')}
                 </span>
-                {serverGatewayClients(s).map((cid) => {
-                  const label = gatewayProfileOptions().find((o) => o.id === cid)?.label || cid;
-                  return (
-                    <span
-                      key={cid}
-                      title={label}
-                      className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300"
-                    >
-                      {label}
-                    </span>
-                  );
-                })}
+                {renderGatewayClientBadges(s)}
               </div>
             )}
             <p className="text-xs text-zinc-500 mt-1">
@@ -1556,46 +1732,28 @@ export default function McpProvidersTab() {
         </div>
         {!(s.builtin && s.id === 'tokenbank-agent-bridge') && (
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-            {canRouteViaGateway(s) && (() => {
-              const pid = activeGatewayProfileId();
-              // 通用档仅允许绑定内置 MCP：非内置时禁用「加入」
-              const blockGeneric = pid === 'api' && !isTbBuiltinRelayMcp(s)
-                && !isGatewayBoundToProfile(s, pid);
-              return (
-              <button
-                type="button"
-                disabled={!!busy || blockGeneric}
-                onClick={() => toggleGatewayRouted(s)}
-                title={blockGeneric
-                  ? t('providers.mcp.gatewayGenericBuiltinOnly')
-                  : t('providers.mcp.gatewayToggleHint')}
-                className={`tb-press text-xs px-2.5 py-1 rounded-lg border disabled:opacity-40 ${
-                  isGatewayBoundToProfile(s, pid)
-                    ? 'border-sky-300/80 dark:border-sky-700/60 bg-sky-50/70 dark:bg-sky-900/25 text-sky-700 dark:text-sky-300'
-                    : 'border-zinc-200/80 dark:border-zinc-600 bg-white/40 dark:bg-zinc-800/40 text-zinc-600 dark:text-zinc-300 hover:bg-white/70 dark:hover:bg-zinc-700/60'
-                }`}
-              >
-                {isGatewayBoundToProfile(s, pid)
-                  ? t('providers.mcp.gatewayOn')
-                  : t('providers.mcp.gatewayOff')}
-              </button>
-              );
-            })()}
             {canSelect && (
-              <button
-                type="button"
-                data-row-install-btn
-                disabled={!!busy || (syncWritableAgents.length === 0 && gatewayApiApps.length === 0)}
-                onClick={(e) => openRowInstallMenu(s, e)}
-                className="tb-press text-xs px-2.5 py-1 rounded-lg border border-violet-200/80 dark:border-violet-700/60 bg-violet-50/60 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 disabled:opacity-40"
-              >
-                {busy === s.id ? t('providers.mcp.installing') : t('providers.mcp.installToAgent')}
-              </button>
+              <>
+                <button
+                  type="button"
+                  data-row-install-btn
+                  disabled={!!busy || !syncWritableAgents.some((t) => t.projectable)}
+                  onClick={(e) => openRowInstallMenu(s, e, 'project')}
+                  className="tb-press text-xs px-2.5 py-1 rounded-lg border border-violet-200/80 dark:border-violet-700/60 bg-violet-50/60 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 disabled:opacity-40"
+                >
+                  {busy === s.id && syncMenuMode === 'project' ? t('providers.mcp.installing') : t('providers.mcp.installToAgent')}
+                </button>
+                <button
+                  type="button"
+                  data-row-install-btn
+                  disabled={!!busy || (syncWritableAgents.length === 0 && gatewayApiApps.length === 0)}
+                  onClick={(e) => openRowInstallMenu(s, e, 'relay')}
+                  className="tb-press text-xs px-2.5 py-1 rounded-lg border border-sky-200/80 dark:border-sky-700/60 bg-sky-50/60 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-900/30 disabled:opacity-40"
+                >
+                  {busy === s.id && syncMenuMode === 'relay' ? t('providers.mcp.relaying') : t('providers.mcp.installRelay')}
+                </button>
+              </>
             )}
-            <button type="button" disabled={!!busy} onClick={() => toggleStatus(s)}
-              className="tb-press text-xs px-2.5 py-1 rounded-lg border border-zinc-200/80 dark:border-zinc-600 bg-white/40 dark:bg-zinc-800/40 hover:bg-white/70 dark:hover:bg-zinc-700/60">
-              {s.status === 'active' ? t('providers.mcp.disable') : t('providers.mcp.enable')}
-            </button>
             {!s.builtin && (
               <button type="button" disabled={!!busy} onClick={() => handleUninstall(s)}
                 className="tb-press text-xs px-2.5 py-1 rounded-lg text-red-600 border border-red-200/80 dark:border-red-900/50 bg-white/40 dark:bg-transparent hover:bg-red-50 dark:hover:bg-red-900/20">

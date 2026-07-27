@@ -365,7 +365,7 @@ function defaultUserCapabilities(h) {
     gateway_proxy: caps.has('gateway_proxy'),
     session_trace: caps.has('session_import') || caps.has('session_trace'),
     session_usage_import: caps.has('session_import'),
-    // 资源投射目标：handler 声明 resource_project 时默认开启
+    // 资源投射目标：handler 声明 resource_project = 可作为游乐场/贡献 runtime
     resource_project: caps.has('resource_project'),
   };
 }

@@ -78,11 +78,15 @@ function applyCodexProvider(configPath, opts = {}) {
     baseUrl, model, bearerToken, catalogFile = CATALOG_FILE,
   } = opts;
   const dir = path.dirname(configPath);
+  // 配置文件不存在则不新建：避免「自写 config.toml → 再判已安装」
+  if (!fs.existsSync(configPath)) {
+    return { ok: false, error: 'config-missing', path: configPath };
+  }
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const existed = fs.existsSync(configPath);
-  const original = existed ? fs.readFileSync(configPath, 'utf8') : '';
+  const existed = true;
+  const original = fs.readFileSync(configPath, 'utf8');
   const bak = configPath + '.tokenbank-bak';
-  if (existed && !fs.existsSync(bak)) fs.copyFileSync(configPath, bak);
+  if (!fs.existsSync(bak)) fs.copyFileSync(configPath, bak);
 
   const topKeys = {
     model_provider: q(providerId),

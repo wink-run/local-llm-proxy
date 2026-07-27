@@ -7,6 +7,7 @@ const {
   resolveAssistantRuntimeAgent,
   hasAssistantEnableProjection,
   ASSISTANT_RUNTIME_IDS,
+  listAvailableAssistantRuntimeIds,
 } = require('./resource-assistant');
 
 const VISIBILITIES = new Set(['public', 'circle']);
@@ -69,7 +70,8 @@ function validateAssistantEligible(resource, opts = {}) {
     config = {};
   }
   const runtimeId = resolveAssistantRuntimeAgent(config, resource.projections || []);
-  if (!runtimeId || !ASSISTANT_RUNTIME_IDS.has(runtimeId)) {
+  const runtimeOk = listAvailableAssistantRuntimeIds();
+  if (!runtimeId || !ASSISTANT_RUNTIME_IDS.has(runtimeId) || !runtimeOk.has(runtimeId)) {
     return { ok: false, reason: 'no_runtime' };
   }
   const check = opts.isRuntimeAvailable;

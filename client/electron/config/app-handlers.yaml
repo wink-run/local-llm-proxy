@@ -370,5 +370,5 @@ capability_catalog:
     label_zh: 应用用量数据支持会话导入
     label_en: Session usage data import
   resource_project:
-    label_zh: 是否可投射智能体
-    label_en: Can project assistants
+    label_zh: 可作为游乐场 / 贡献的 runtime
+    label_en: Usable as playground / contribute runtime

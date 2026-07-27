@@ -114,8 +114,12 @@ test('.agents（agents-hub）skill 纳管后默认投射到已安装 Agent', () 
   };
 
   const targets = require('../resource-agent-targets');
+  const gw = require('../mcp-gateway-targets');
   const origInstalled = targets.isAgentInstalled;
+  const origHosted = gw.listHostedAgentIds;
   targets.isAgentInstalled = (id) => id === 'cursor' || id === 'claude-code';
+  // 可投射目标 = 已纳管(hosted)：默认投射跟随纳管集
+  gw.listHostedAgentIds = () => new Set(['cursor', 'claude-code']);
 
   const projectCalls = [];
   const origProject = resourceManager.projectToAgents.bind(resourceManager);
@@ -142,6 +146,7 @@ test('.agents（agents-hub）skill 纳管后默认投射到已安装 Agent', () 
   } finally {
     resourceManager.projectToAgents = origProject;
     targets.isAgentInstalled = origInstalled;
+    gw.listHostedAgentIds = origHosted;
     scanner.scanGlobalSkills = origScanGlobal;
     localStats.close();
     fs.rmSync(statsDir, { recursive: true, force: true });

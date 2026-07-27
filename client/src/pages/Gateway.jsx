@@ -1066,8 +1066,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
     </button>
   );
 
-  return (
-    <div className="electron-no-drag fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
+  return createPortal(
+    <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/40" onClick={dismiss}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
@@ -1127,12 +1127,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
-// 手工添加面板（内联）：未被识别的应用 —— 仅给 Key + base_url，用户自行配置指向网关。
-// 与 AppSettingsPanel（弹窗，用于编辑/桌面应用托管）是两套独立组件。
+// 手工添加面板（弹层）：未被识别的应用 —— 仅给 Key + base_url，用户自行配置指向网关。
+// 与 AppSettingsPanel（编辑/桌面应用托管）是两套独立组件。
 function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onRegenKey, onSave, onCancel }) {
   const { t } = useLang();
   const [name,           setName]           = useState(app.name || '');
@@ -1185,9 +1186,13 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
     else setCliErr(r?.error === 'exists' ? t('gateway.app.cliAccountExists') : (r?.error || t('gateway.common.saveFailed')));
   }
 
-  return (
-    <div className="mb-3 tb-soft-card rounded-2xl border-blue-200/80 dark:border-blue-800/50">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-white/40 dark:border-white/[0.06]">
+  return createPortal(
+    <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+      <div
+        className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl max-h-[92vh] overflow-y-auto flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         {isAppIcon(icon) ? appIconSvg(icon, 'w-6 h-6') : <span className="text-xl">{icon}</span>}
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.app.newTitle')}</h3>
         <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-lg">✕</button>
@@ -1339,7 +1344,9 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
       </div>
       </>
       )}
-    </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2715,7 +2722,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     return pick ? encodeTierModelRoute(pick.tier, pick.id) : '';
   }
 
-  // 手工添加：未被识别的应用 → 创建 manual 应用，内联展开 ManualAddPanel
+  // 手工添加：未被识别的应用 → 创建 manual 应用，弹层编辑
+  // （原注释：内联展开 ManualAddPanel）
   // （已识别的 CLI/桌面应用都在列表里直接托管，不走此入口）
   async function addCustom() {
     // draft:true → 列表不显示这条临时条目（只在内联面板里编辑），保存时清除草稿标记才出现。
@@ -3022,8 +3030,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       {/* 用量明细弹窗（点击统计区打开）*/}
       {detailApp && <AppDetailModal app={detailApp} onClose={() => setDetailApp(null)} />}
       {/* Claude Desktop 开发者模式引导（「怎么启用」的步骤提示，非设置窗口）*/}
-      {devTipApp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setDevTipApp(null)}>
+      {devTipApp && createPortal(
+        <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={() => setDevTipApp(null)}>
           <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 shadow-xl p-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px] shrink-0 text-amber-600 dark:text-amber-400">
@@ -3064,7 +3072,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
               {devTipMsg && <span className="text-xs text-red-500">{devTipMsg}</span>}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       <div className="px-2.5 py-3">
             {/* 操作栏 */}
@@ -3084,7 +3093,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
               />
             </div>
 
-            {/* 手工添加 → 内联面板（ManualAddPanel，独立组件）*/}
+            {/* 手工添加 → 弹层（ManualAddPanel，portal 到 body，避免被应用列表卡片裁切）*/}
             {manualDraft && (
               <ManualAddPanel app={manualDraft} routes={routes} availableModels={availableModels}
                 localBase={localBase}

@@ -263,20 +263,21 @@ async function handleToolCall(name, args = {}) {
       const query = String(args.query || '').trim().toLowerCase();
       let rows = [];
 
+      // 三类资源均按投射门控:仅列出投射给当前 Agent 的资源(与 prompt/assistant 一致)
       if (type === 'assistant') {
         rows = (rm.listAssistantsForClient(cid) || []).map((r) => ({ ...r, type: 'assistant' }));
-      } else if (type === 'all') {
-        const skills = rm.listResources({ type: 'skill' }) || [];
-        const prompts = rm.listResources({ type: 'prompt' }) || [];
+      } else if (type === 'skill') {
+        rows = (rm.listSkillsForClient(cid) || []).map((r) => ({ ...r, type: 'skill' }));
+      } else if (type === 'prompt') {
+        rows = (rm.listPromptsForClient(cid) || []).map((r) => ({ ...r, type: 'prompt' }));
+      } else {
+        const skills = (rm.listSkillsForClient(cid) || []).map((r) => ({ ...r, type: 'skill' }));
+        const prompts = (rm.listPromptsForClient(cid) || []).map((r) => ({ ...r, type: 'prompt' }));
         const assistants = (rm.listAssistantsForClient(cid) || []).map((r) => ({ ...r, type: 'assistant' }));
         rows = [...assistants, ...skills, ...prompts];
-      } else {
-        const filters = { type };
-        if (query) filters.query = query;
-        rows = rm.listResources(filters) || [];
       }
 
-      if (query && (type === 'assistant' || type === 'all')) {
+      if (query) {
         rows = rows.filter((r) => {
           const blob = `${r.name || ''} ${r.display_name || ''} ${r.description || ''}`.toLowerCase();
           return blob.includes(query);
@@ -284,12 +285,9 @@ async function handleToolCall(name, args = {}) {
       }
 
       if (!rows.length) {
+        const label = type === 'assistant' ? '智能体' : (type !== 'all' ? type : '资源');
         return textResult(
-          type === 'assistant'
-            ? '（当前 Agent 暂无已投射的智能体；请先在 Token Bank「启用到」本 Agent）'
-            : (type !== 'all'
-              ? `（暂无已纳管的 ${type}；可用 tb_list_catalog 查看社区目录）`
-              : '（暂无已纳管资源；可用 tb_list_catalog 查看社区目录）'),
+          `（当前 Agent 暂无已投射的${label}；请先在 Token Bank 投射/启用到本 Agent，或用 tb_list_catalog 查看社区目录）`,
         );
       }
       const counts = { skill: 0, assistant: 0, prompt: 0 };
@@ -387,7 +385,14 @@ async function handleToolCall(name, args = {}) {
         if (mode === 'summary') return textResult(formatResourceDetail(r));
         return textResult(resolved.text || '');
       }
-      if (r.type === 'skill' || r.type === 'prompt') {
+      if (r.type === 'skill') {
+        // Skill 与 prompt/assistant 一致:未投射给当前 Agent 则不可读
+        if (!rm.isResourceProjectedToClient(r.id, cid)) {
+          return textResult(
+            `Skill 未投射给当前 Agent: ${ref}。请先在 Token Bank 投射到本 Agent，或 tb_list_resources(type=skill)。`,
+            true,
+          );
+        }
         try { rm.recordResourceHit?.(r.id, cid); } catch { /* ignore */ }
       }
       return textResult(formatResourceDetail(r));

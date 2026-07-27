@@ -16,6 +16,10 @@ const PROMPTS_SCRIPT = path.join(__dirname, 'prompt-mcp.js');
 const MODELS_SCRIPT = path.join(__dirname, 'models-mcp.js');
 const RESOURCES_SCRIPT = path.join(__dirname, 'resources-mcp.js');
 
+/** 并发 IPC（listServers + getSyncStatus）共用短缓存，避免重复读盘 */
+const SCAN_CACHE_TTL_MS = 2500;
+let _scanAllCache = null;
+
 function ensureDir(filePath) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -157,11 +161,10 @@ function loadJsonMcp(filePath) {
 
 function syncJsonClient(clientId, filePath, servers) {
   const list = Array.isArray(servers) ? servers : [];
-  // 无待写条目且目标文件尚不存在 → 不建目录、不落盘（避免未安装应用被「造」出配置）
-  if (!list.length && !fs.existsSync(filePath)) {
-    return { synced: [], keys: [], path: filePath, skipped: true };
+  // 配置尚不存在：绝不新建（避免启动自写 config → 再被判「已安装」）
+  if (!fs.existsSync(filePath)) {
+    return { synced: [], keys: [], path: filePath, skipped: true, reason: 'config-missing' };
   }
-  ensureDir(filePath);
   const prev = readState().clients[clientId]?.keys || [];
   const doc = loadJsonMcp(filePath);
   const existingKeys = new Set(Object.keys(doc.mcpServers || {}));
@@ -183,6 +186,11 @@ function syncJsonClient(clientId, filePath, servers) {
     existingKeys.add(key);
     newKeys.push(key);
     synced.push({ id: srv.id, name: srv.display_name || srv.name, clientKey: key });
+  }
+
+  // 无变更且无待清：不落盘
+  if (!newKeys.length && !prev.length) {
+    return { synced: [], keys: [], path: filePath, skipped: true };
   }
 
   fs.writeFileSync(filePath, JSON.stringify(doc, null, 2), 'utf8');
@@ -250,12 +258,11 @@ function buildCodexMcpSections(entries) {
 function syncCodexClient(clientId, filePath, servers, prevKeys) {
   const list = Array.isArray(servers) ? servers : [];
   const prev = Array.isArray(prevKeys) ? prevKeys : [];
-  // 无待写/待清条目且文件不存在 → 不创建 Codex 配置
-  if (!list.length && !prev.length && !fs.existsSync(filePath)) {
-    return { synced: [], keys: [], path: filePath, skipped: true };
+  // 配置尚不存在：绝不新建 config.toml（避免自写后再被判已安装）
+  if (!fs.existsSync(filePath)) {
+    return { synced: [], keys: [], path: filePath, skipped: true, reason: 'config-missing' };
   }
-  ensureDir(filePath);
-  const original = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+  const original = fs.readFileSync(filePath, 'utf8');
   let text = stripCodexTbMcpSections(original, prev);
 
   const entries = [];
@@ -281,7 +288,13 @@ function syncCodexClient(clientId, filePath, servers, prevKeys) {
     text = text.replace(/\n# >>> tokenbank-mcp managed >>>[\s\S]*?# <<< tokenbank-mcp managed <<<\n?/g, '\n');
   }
 
-  fs.writeFileSync(filePath, text.endsWith('\n') ? text : text + '\n', 'utf8');
+  // 内容无实质变化则不写盘
+  const next = text.endsWith('\n') ? text : text + '\n';
+  if (next === (original.endsWith('\n') ? original : original + '\n')) {
+    return { synced, keys: newKeys, path: filePath, skipped: true };
+  }
+
+  fs.writeFileSync(filePath, next, 'utf8');
   return { synced, keys: newKeys, path: filePath };
 }
 
@@ -291,16 +304,25 @@ function syncCodexClient(clientId, filePath, servers, prevKeys) {
  * @param {{ clientIds?: string[] }} options 指定 Agent；缺省仅同步本机已安装应用
  */
 function syncAll(servers, options = {}) {
-  const { listInstalledClientIds, listSyncEnabledClientIds } = require('./mcp-agent-targets');
+  const {
+    listInstalledClientIds,
+    listSyncEnabledClientIds,
+    resolveMcpSyncClientId,
+  } = require('./mcp-agent-targets');
   const state = readState();
   const results = [];
   const allSyncIds = listSyncEnabledClientIds();
   const installedIds = new Set(listInstalledClientIds());
-  // 未指定时只写已安装应用；指定时仍与已安装取交，避免误写未纳管客户端
-  const requested = Array.isArray(options.clientIds) && options.clientIds.length
-    ? options.clientIds.filter((id) => allSyncIds.includes(id))
+  const explicit = Array.isArray(options.clientIds) && options.clientIds.length > 0;
+  // 未指定：仅已安装；显式指定（UI 已按 Gateway 纳管过滤）：允许写盘，并解析别名（codex-desktop→codex）
+  const requested = explicit
+    ? [...new Set(
+      options.clientIds
+        .map((id) => resolveMcpSyncClientId(id) || id)
+        .filter((id) => allSyncIds.includes(id)),
+    )]
     : [...installedIds];
-  const clientIds = requested.filter((id) => installedIds.has(id));
+  const clientIds = explicit ? requested : requested.filter((id) => installedIds.has(id));
 
   for (const clientId of clientIds) {
     const target = CLIENT_TARGETS[clientId];
@@ -315,6 +337,22 @@ function syncAll(servers, options = {}) {
       } else if (target.format === 'toml-mcp') {
         result = syncCodexClient(clientId, filePath, clientServers, prevKeys);
       } else {
+        continue;
+      }
+
+      // 配置文件不存在：跳过，保留旧 state，绝不新建文件
+      if (result.skipped && result.reason === 'config-missing') {
+        results.push({
+          clientId,
+          label: target.label,
+          success: true,
+          skipped: true,
+          reason: 'config-missing',
+          path: result.path,
+          synced: [],
+          count: 0,
+          syncEnabled: true,
+        });
         continue;
       }
 
@@ -348,6 +386,7 @@ function syncAll(servers, options = {}) {
 
   state.lastSync = Date.now();
   writeState(state);
+  invalidateScanCache();
   return { success: results.every(r => r.success), results, state };
 }
 
@@ -685,6 +724,12 @@ function parseCodexMcpSections(text) {
 
 /** 扫描各 Agent 客户端配置文件中的 MCP 条目 */
 function scanAllClientMcps() {
+  // 短缓存：同一次页面加载会并发 listServers + getSyncStatus，避免重复读盘解析
+  const now = Date.now();
+  if (_scanAllCache && (now - _scanAllCache.at) < SCAN_CACHE_TTL_MS) {
+    return _scanAllCache.items;
+  }
+
   const results = [];
 
   for (const [clientId, target] of Object.entries(CLIENT_TARGETS)) {
@@ -712,7 +757,13 @@ function scanAllClientMcps() {
     }
   }
 
+  _scanAllCache = { at: now, items: results };
   return results;
+}
+
+/** 写盘后清扫描缓存，保证下次读到最新配置 */
+function invalidateScanCache() {
+  _scanAllCache = null;
 }
 
 function inferClientMcpDescription(entry) {
@@ -909,6 +960,7 @@ function removeRawClientMcpEntry(clientId, clientKey, { ignoreMissing = false } 
 
   // 无论文件是否已删，都清 sync-state，避免「已安装于」残留
   pruneClientSyncStateKey(clientId, key);
+  invalidateScanCache();
 
   if (removedPath) return { clientId, clientKey: key, path: removedPath };
   if (ignoreMissing) return { clientId, clientKey: key, path: null, skipped: true };
@@ -1025,6 +1077,7 @@ module.exports = {
   getClientMcpEntryForAgent,
   removeRawClientMcpEntry,
   scanAllClientMcps,
+  invalidateScanCache,
   inferClientMcpDescription,
   getServerSyncClients,
   filterServersForClient,

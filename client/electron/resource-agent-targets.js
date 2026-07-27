@@ -1,7 +1,7 @@
 // client/electron/resource-agent-targets.js
-// Agent Skill / Prompt / 智能体 投射目标
-// - prompt / skill：默认「已安装即可投射」
-// - assistant：需 handler 勾选 resource_project（是否可投射智能体）
+// Agent Skill / Prompt / 智能体 投射与 runtime 目标
+// - 投射列表：Gateway「已纳管」应用（强信号已安装）
+// - resource_project：可作为游乐场 / 贡献的 runtime（不再表示「可投射智能体」）
 'use strict';
 
 const fs = require('fs');
@@ -69,7 +69,7 @@ const AGENT_RESOURCE_TARGETS = {
   },
 };
 
-/** 从应用目录读取勾选了 resource_project（可投射智能体）的实体 id */
+/** 从应用目录读取勾选了 resource_project（可作为游乐场/贡献 runtime）的实体 id */
 function listResourceProjectableAppIds() {
   const allowed = new Set();
   try {
@@ -105,7 +105,7 @@ function macAppExists(appName) {
   return false;
 }
 
-/** Codex Desktop：嵌在 ChatGPT.app，或 Application Support / 本地配置存在 */
+/** Codex Desktop：App / Application Support / Windows userData（不用 config.toml——可被本程序自写） */
 function isCodexDesktopPresent() {
   try {
     if (fs.existsSync(path.join(os.homedir(), 'Library', 'Application Support', 'Codex'))) return true;
@@ -113,17 +113,49 @@ function isCodexDesktopPresent() {
   try {
     if (fs.existsSync('/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework')) return true;
   } catch { /* ignore */ }
-  // Desktop/CLI 共用配置；有 config.toml 即视为可投射目标
-  try {
-    if (fs.existsSync(path.join(os.homedir(), '.codex', 'config.toml'))) return true;
-  } catch { /* ignore */ }
+  if (process.platform === 'win32') {
+    for (const base of [process.env.APPDATA, process.env.LOCALAPPDATA].filter(Boolean)) {
+      try {
+        if (fs.existsSync(path.join(base, 'Codex'))) return true;
+      } catch { /* ignore */ }
+    }
+  }
   return false;
 }
 
 /**
- * 本机是否已安装该 Agent（投射目标用，比网关托管更宽）：
- * CLI 可执行 / App bundle / Desktop 信号均可。
- * 注意：agent-linker 未装时不要提前 false，需继续认 Desktop。
+ * WorkBuddy 强信号：会话痕迹或桌面 userData（不用 mcp.json / 空目录——可被本程序自建）
+ */
+function isWorkbuddyPresent() {
+  const home = os.homedir();
+  try {
+    const traces = path.join(home, '.workbuddy', 'traces');
+    if (fs.existsSync(traces)) {
+      for (const name of fs.readdirSync(traces)) {
+        if (name.startsWith('.')) continue;
+        return true;
+      }
+    }
+  } catch { /* ignore */ }
+  if (process.platform === 'darwin') {
+    try {
+      if (fs.existsSync(path.join(home, 'Library', 'Application Support', 'WorkBuddy'))) return true;
+    } catch { /* ignore */ }
+  }
+  if (process.platform === 'win32') {
+    for (const base of [process.env.APPDATA, process.env.LOCALAPPDATA].filter(Boolean)) {
+      try {
+        if (fs.existsSync(path.join(base, 'WorkBuddy'))) return true;
+      } catch { /* ignore */ }
+    }
+  }
+  return false;
+}
+
+/**
+ * 本机是否已安装该 Agent（投射目标用）：
+ * 只认 CLI / App bundle / 桌面 userData 等强信号。
+ * 禁止用「配置文件或父目录存在」反推——启动自写 config 会造成假已安装。
  */
 function isAgentInstalled(agentId) {
   const id = String(agentId || '');
@@ -148,6 +180,13 @@ function isAgentInstalled(agentId) {
         try {
           if (fs.existsSync(path.join(os.homedir(), 'Library', 'Application Support', appName))) return true;
         } catch { /* ignore */ }
+        if (process.platform === 'win32') {
+          for (const base of [process.env.APPDATA, process.env.LOCALAPPDATA].filter(Boolean)) {
+            try {
+              if (fs.existsSync(path.join(base, appName))) return true;
+            } catch { /* ignore */ }
+          }
+        }
         if (/codex/i.test(appName) && isCodexDesktopPresent()) return true;
       }
     }
@@ -156,13 +195,27 @@ function isAgentInstalled(agentId) {
   if (id === 'cursor') {
     if (macAppExists('Cursor')) return true;
     if (shimInstaller?.resolveRealCommand?.('cursor')) return true;
+    if (process.platform === 'win32') {
+      for (const base of [process.env.LOCALAPPDATA, process.env.APPDATA].filter(Boolean)) {
+        try {
+          if (fs.existsSync(path.join(base, 'Programs', 'cursor'))) return true;
+          if (fs.existsSync(path.join(base, 'Cursor'))) return true;
+        } catch { /* ignore */ }
+      }
+    }
   }
 
-  // codex CLI 未进 PATH 时，仍认 Desktop（投射目标 id 为 codex）
   if (id === 'codex' || id === 'codex-desktop') {
+    if (shimInstaller?.resolveRealCommand?.('codex')) return true;
     if (isCodexDesktopPresent()) return true;
   }
 
+  if (id === 'workbuddy') {
+    if (isWorkbuddyPresent()) return true;
+  }
+
+  // 注意：不再用「Skill 根目录非空」反推安装 —— TB 投射会往该目录写内容，
+  // 会把本程序自建的目录误判为已安装（自证循环），且与 Gateway 列表口径不一致。
   return false;
 }
 
@@ -174,38 +227,63 @@ const api = {
   AGENT_RESOURCE_TARGETS,
   listResourceProjectableAppIds,
   isAgentInstalled,
+  isCodexDesktopPresent,
+  isWorkbuddyPresent,
   getAgentTarget,
 
-  /** Skill / 通用：有 Skill 根目录且本机已安装（不看 resource_project） */
-  listSkillProjectableAgentIds() {
-    return Object.keys(AGENT_RESOURCE_TARGETS)
-      .filter(id => api.isAgentInstalled(id));
+  /**
+   * 资源投射目标（prompt / skill / 智能体共用）：与 Gateway「已纳管」列表完全一致。
+   * Gateway 列表口径 = hosted（已纳管）且本机真检测到（apps:list 会滤掉未安装记录）。
+   * 因此这里同样两个条件都要满足：
+   *   1) isAgentInstalled —— 排除「hosted 但未安装」的残留记录（如 OpenCode 只有旧配置）；
+   *   2) hosted —— 排除「装了但未纳管」（含 TB 自建 skill 目录造成的误判）。
+   * 严格模式：能读到 hosted 集（即使为空）即以它为准；仅当 hosted 彻底读不到（抛错）时，
+   * 回退为仅按安装探测，避免列表意外变空。
+   */
+  listManagedResourceAgentIds() {
+    let hosted = null;
+    try {
+      hosted = require('./mcp-gateway-targets').listHostedAgentIds();
+    } catch { /* 配置不可读：回退强信号 */ }
+    return Object.keys(AGENT_RESOURCE_TARGETS).filter((id) => {
+      if (!api.isAgentInstalled(id)) return false;
+      return hosted ? hosted.has(id) : true;
+    });
   },
 
-  /** 智能体投射：勾选 resource_project 且已安装（codex-desktop 与 codex 共用目标） */
-  listAssistantProjectableAgentIds() {
+  /** Skill 投射 → 已纳管应用 */
+  listSkillProjectableAgentIds() {
+    return api.listManagedResourceAgentIds();
+  },
+
+  /**
+   * 游乐场 / 贡献可用的 runtime 应用：
+   * handler 勾选 resource_project，且本机已安装（旧名「可投射智能体」）。
+   */
+  listAssistantRuntimeAgentIds() {
     const allowed = listResourceProjectableAppIds();
     return Object.keys(AGENT_RESOURCE_TARGETS)
-      .filter(id => {
+      .filter((id) => {
         if (!api.isAgentInstalled(id)) return false;
         if (allowed.has(id)) return true;
-        // 桌面端勾选可投射时，CLI 目标 id 一并放开
         if (id === 'codex' && allowed.has('codex-desktop')) return true;
         return false;
       });
   },
 
-  /** @deprecated 兼容旧名 → Skill 投射 */
-  listProjectableAgentIds() {
-    return api.listSkillProjectableAgentIds();
+  /** @deprecated 旧名；现表示 runtime 可用性，投射请用 listManagedResourceAgentIds */
+  listAssistantProjectableAgentIds() {
+    return api.listAssistantRuntimeAgentIds();
   },
 
-  /**
-   * prompt 投射：与 Skill 一致，本机已纳管的应用均可（不看 resource_project / sync）
-   * 实际 MCP 写入仍由 mcp-client-sync 按目标格式处理
-   */
+  /** @deprecated 兼容旧名 → 已纳管投射 */
+  listProjectableAgentIds() {
+    return api.listManagedResourceAgentIds();
+  },
+
+  /** prompt 投射 → 已纳管应用（与 Skill / 智能体一致） */
   listPromptProjectableAgentIds() {
-    return api.listSkillProjectableAgentIds();
+    return api.listManagedResourceAgentIds();
   },
 };
 

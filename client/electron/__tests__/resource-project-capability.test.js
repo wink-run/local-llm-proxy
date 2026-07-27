@@ -54,13 +54,13 @@ test('default_entities projectable set matches product defaults', () => {
       .map(e => e.id),
   );
   for (const id of ['claude-code', 'codex', 'cursor', 'kimi-code', 'opencode', 'hermes', 'openclaw']) {
-    assert.ok(allowed.has(id), `expected ${id} projectable`);
+    assert.ok(allowed.has(id), `expected ${id} as runtime-capable (resource_project)`);
     assert.ok(AGENT_RESOURCE_TARGETS[id], `expected skill target for ${id}`);
   }
   assert.equal(allowed.has('workbuddy'), false);
 });
 
-test('skill/prompt vs assistant projection filters differ', () => {
+test('managed projection vs runtime (resource_project) filters differ', () => {
   applyCloudConfig(null);
   const fallback = (loadDoc().default_entities || []).filter(e => e?.id && e?.handler);
   const rt = resolveAppsRuntime({ app_entities: fallback });
@@ -69,32 +69,84 @@ test('skill/prompt vs assistant projection filters differ', () => {
   const origExpanded = cl.appEntitiesExpanded;
   const origEntities = cl.appEntities;
   const origInstalled = targets.isAgentInstalled;
+  const gw = require('../mcp-gateway-targets');
+  const origHosted = gw.listHostedAgentIds;
   cl.appEntitiesExpanded = () => rt.entities_expanded;
   cl.appEntities = () => rt.app_entities;
   // 已装：claude-code / kimi-code / workbuddy（后者无 resource_project）
   targets.isAgentInstalled = (id) => ['claude-code', 'kimi-code', 'workbuddy'].includes(id);
+  // 已纳管(hosted)：投射目标口径；runtime 仍看 isAgentInstalled + resource_project
+  gw.listHostedAgentIds = () => new Set(['claude-code', 'kimi-code', 'workbuddy']);
   try {
-    // Skill：已安装即可（不看 resource_project）
+    // 投射（prompt/skill/智能体）：已纳管即可
     const skillIds = listSkillProjectableAgentIds();
     assert.ok(skillIds.includes('claude-code'));
     assert.ok(skillIds.includes('kimi-code'));
     assert.ok(skillIds.includes('workbuddy'));
     assert.ok(!skillIds.includes('hermes')); // 未装
+    assert.deepEqual(listPromptProjectableAgentIds(), skillIds);
+    assert.deepEqual(targets.listManagedResourceAgentIds(), skillIds);
 
-    // 智能体：需 resource_project + 已安装
-    const assistantIds = listAssistantProjectableAgentIds();
-    assert.ok(assistantIds.includes('claude-code'));
-    assert.ok(assistantIds.includes('kimi-code'));
-    assert.ok(!assistantIds.includes('workbuddy'));
-    assert.ok(!assistantIds.includes('hermes'));
-
-    // Prompt：与 Skill 一致（已安装即可）
-    const promptIds = listPromptProjectableAgentIds();
-    assert.deepEqual(promptIds, skillIds);
+    // runtime（旧「可投射智能体」）：需 resource_project + 已安装
+    const runtimeIds = listAssistantProjectableAgentIds();
+    assert.ok(runtimeIds.includes('claude-code'));
+    assert.ok(runtimeIds.includes('kimi-code'));
+    assert.ok(!runtimeIds.includes('workbuddy'));
+    assert.ok(!runtimeIds.includes('hermes'));
+    assert.deepEqual(targets.listAssistantRuntimeAgentIds(), runtimeIds);
   } finally {
     cl.appEntitiesExpanded = origExpanded;
     cl.appEntities = origEntities;
     targets.isAgentInstalled = origInstalled;
+    gw.listHostedAgentIds = origHosted;
+  }
+});
+
+test('可投射目标 = 已纳管(hosted)，未纳管的已装应用不投射', () => {
+  const targets = require('../resource-agent-targets');
+  const gw = require('../mcp-gateway-targets');
+  const origInstalled = targets.isAgentInstalled;
+  const origHosted = gw.listHostedAgentIds;
+  // 机器上装了 cursor/hermes/workbuddy，但只纳管了 cursor
+  targets.isAgentInstalled = (id) => ['cursor', 'hermes', 'workbuddy'].includes(id);
+  gw.listHostedAgentIds = () => new Set(['cursor']);
+  try {
+    const ids = targets.listManagedResourceAgentIds();
+    assert.deepEqual(ids, ['cursor']);
+  } finally {
+    targets.isAgentInstalled = origInstalled;
+    gw.listHostedAgentIds = origHosted;
+  }
+});
+
+test('严格模式：hosted 空集 → 可投射为空（未纳管即不可投射）', () => {
+  const targets = require('../resource-agent-targets');
+  const gw = require('../mcp-gateway-targets');
+  const origInstalled = targets.isAgentInstalled;
+  const origHosted = gw.listHostedAgentIds;
+  // 机器上装了 claude-code，但一个都没纳管 → 严格空
+  targets.isAgentInstalled = (id) => id === 'claude-code';
+  gw.listHostedAgentIds = () => new Set();
+  try {
+    assert.deepEqual(targets.listManagedResourceAgentIds(), []);
+  } finally {
+    targets.isAgentInstalled = origInstalled;
+    gw.listHostedAgentIds = origHosted;
+  }
+});
+
+test('hosted 状态读不到(抛错) 时才回退强信号安装探测', () => {
+  const targets = require('../resource-agent-targets');
+  const gw = require('../mcp-gateway-targets');
+  const origInstalled = targets.isAgentInstalled;
+  const origHosted = gw.listHostedAgentIds;
+  targets.isAgentInstalled = (id) => id === 'claude-code';
+  gw.listHostedAgentIds = () => { throw new Error('config unreadable'); };
+  try {
+    assert.deepEqual(targets.listManagedResourceAgentIds(), ['claude-code']);
+  } finally {
+    targets.isAgentInstalled = origInstalled;
+    gw.listHostedAgentIds = origHosted;
   }
 });
 

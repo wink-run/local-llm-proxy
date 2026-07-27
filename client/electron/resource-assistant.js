@@ -8,16 +8,28 @@ const DEFAULT_RUNTIME_AGENT = 'claude-code';
 
 /**
  * 投射到这些 Agent 后，智能体进入游乐场（Debug）可选。
- * WorkBuddy 仅标记启用；其余可作真实运行时 CLI。
+ * 与 resource_project（runtime 能力）配合；WorkBuddy 仅标记启用。
  */
 const ASSISTANT_ENABLE_AGENT_IDS = new Set([
   'claude-code', 'codex', 'cursor', 'kimi-code', 'workbuddy',
 ]);
 
-/** Debug 实际可 spawn 的运行时 CLI */
+/** Debug 实际可 spawn 的运行时 CLI（须同时具备 resource_project 才可作为贡献/游乐场 runtime） */
 const ASSISTANT_RUNTIME_IDS = new Set([
   'claude-code', 'codex', 'cursor', 'kimi-code',
 ]);
+
+/** 当前可作为游乐场/贡献 runtime 的已安装应用 */
+function listAvailableAssistantRuntimeIds() {
+  try {
+    const { listAssistantRuntimeAgentIds } = require('./resource-agent-targets');
+    return new Set(
+      listAssistantRuntimeAgentIds().filter((id) => ASSISTANT_RUNTIME_IDS.has(id)),
+    );
+  } catch {
+    return new Set(ASSISTANT_RUNTIME_IDS);
+  }
+}
 
 /** 游乐场副标题用的可读名 */
 const ASSISTANT_ENABLE_LABELS = {
@@ -28,11 +40,13 @@ const ASSISTANT_ENABLE_LABELS = {
   workbuddy: 'WorkBuddy',
 };
 
-/** 是否已投射到可启用 Debug 的目标 */
+/** 是否已投射到可启用 Debug 的目标（含 resource_project runtime） */
 function hasAssistantEnableProjection(projections = []) {
+  const runtimeOk = listAvailableAssistantRuntimeIds();
   return (projections || []).some((p) => {
     const id = p?.agentId || p?.agent_id;
-    return ASSISTANT_ENABLE_AGENT_IDS.has(id);
+    if (ASSISTANT_ENABLE_AGENT_IDS.has(id)) return true;
+    return runtimeOk.has(id);
   });
 }
 
@@ -293,6 +307,7 @@ module.exports = {
   DEFAULT_RUNTIME_AGENT,
   ASSISTANT_ENABLE_AGENT_IDS,
   ASSISTANT_RUNTIME_IDS,
+  listAvailableAssistantRuntimeIds,
   hasAssistantEnableProjection,
   resolveAssistantDisplayRuntime,
   isAssistantAgentId,

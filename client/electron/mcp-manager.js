@@ -267,6 +267,51 @@ class MCPManager {
     // 通用中转档默认只挂 Token Bank 内置 MCP
     this._ensureBuiltinGatewayApiClients();
     this._seeded = true;
+    // seeded 之后再默认投射，避免 sync→listManagedServers→init 重入未完成的 seed
+    this._ensureBuiltinDefaultProjection();
+  }
+
+  /**
+   * 内置 prompts/models/resources：未显式配置 sync_clients 时，默认投射到本机已安装可写 Agent。
+   * 用户一旦手动改过（含撤成空数组）则不再覆盖。
+   */
+  _ensureBuiltinDefaultProjection() {
+    if (this._ensuringBuiltinProjection) return { updated: [] };
+    this._ensuringBuiltinProjection = true;
+    try {
+      const { listInstalledClientIds } = require('./mcp-agent-targets');
+      const installed = listInstalledClientIds();
+      if (!installed.length) return { updated: [] };
+
+      const db = this._getDb();
+      const now = Date.now();
+      const updated = [];
+      for (const serverId of [BUILTIN_PROMPTS_ID, BUILTIN_MODELS_ID, BUILTIN_RESOURCES_ID]) {
+        const row = db.prepare('SELECT id, metadata FROM mcp_servers WHERE id = ?').get(serverId);
+        if (!row) continue;
+        const metadata = this._parseJson(row.metadata, {});
+        // 已有显式列表（含空）= 用户意图，跳过
+        if (Array.isArray(metadata.sync_clients)) continue;
+        const nextMeta = {
+          ...metadata,
+          sync_clients: [...installed],
+          builtin_default_projected_at: now,
+        };
+        db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
+          .run(JSON.stringify(nextMeta), now, serverId);
+        updated.push(serverId);
+      }
+      if (updated.length) {
+        try {
+          this.syncToClients({ clientIds: installed });
+        } catch (e) {
+          console.warn('[mcp-manager] builtin default projection sync failed:', e.message);
+        }
+      }
+      return { updated };
+    } finally {
+      this._ensuringBuiltinProjection = false;
+    }
   }
 
   /** 将内置 prompts/models/resources 默认绑到通用中转档（api）；并清掉非内置上的 api 绑定 */
@@ -1102,6 +1147,8 @@ class MCPManager {
   /** Token Bank 数据库中已纳管的 MCP（不含客户端自配） */
   listManagedServers() {
     this.init();
+    // 首次无 Agent / 后装 Agent：补齐内置 MCP 默认投射
+    this._ensureBuiltinDefaultProjection();
     const db = this._getDb();
     const rows = db.prepare(`
       SELECT id, name, display_name, type, command, args, url, env, builtin, status, metadata, created_at, updated_at
@@ -1186,7 +1233,14 @@ class MCPManager {
   syncDiscoveredMcps() {
     this.init();
     const { discoverExternalMcps } = require('./mcp-client-sync');
-    const external = discoverExternalMcps(this.listManagedServers());
+    // 仅用 DB 行做去重，避免为「发现」先 enrich（全量扫盘）再 listManagedServers 再扫一遍
+    const db = this._getDb();
+    const bare = db.prepare(`
+      SELECT id, name, display_name, type, command, args, url, env, builtin, status, metadata, created_at, updated_at
+      FROM mcp_servers
+      ORDER BY name ASC
+    `).all().map(row => this._formatServerRow(row));
+    const external = discoverExternalMcps(bare);
     let imported = 0;
     for (const ext of external) {
       const clients = ext.clientInstalls || [];

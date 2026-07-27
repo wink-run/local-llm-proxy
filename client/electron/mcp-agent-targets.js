@@ -69,7 +69,8 @@ const AGENT_MCP_TARGETS = {
     },
     format: 'json-nested',
     nestedKey: 'mcp.servers',
-    sync: true,
+    // OpenClaw 不作为 MCP 写盘投射目标（仍可纳管/扫描）
+    sync: false,
   },
   workbuddy: {
     id: 'workbuddy',
@@ -109,6 +110,45 @@ const AGENT_MCP_TARGETS = {
   },
 };
 
+/**
+ * Gateway 应用 id（preset/agent）→ 实际写盘的 MCP client id。
+ * - Codex Desktop 与 Codex CLI 共用 ~/.codex/config.toml
+ * - Claude Desktop 与 Claude Code 共用 ~/.claude.json（投射列表不单独展示 Desktop）
+ */
+const MCP_SYNC_ID_ALIASES = {
+  'codex-desktop': 'codex',
+  'claude-desktop': 'claude-code',
+};
+
+/** 投射/中转勾选列表中隐藏：与 CLI 复用写盘、无需单独一行 */
+const MCP_PROJECT_LIST_HIDDEN_IDS = new Set(['claude-desktop']);
+
+/** 解析可写盘的 sync client id；不支持写盘时返回 null */
+function resolveMcpSyncClientId(id) {
+  const raw = String(id || '').trim();
+  if (!raw) return null;
+  const mapped = MCP_SYNC_ID_ALIASES[raw] || raw;
+  const t = CLIENT_TARGETS[mapped];
+  if (!t || t.sync === false) return null;
+  return mapped;
+}
+
+/** 筛选/已投射匹配：filter id 与 sync id 互通（codex ↔ codex-desktop） */
+function expandMcpClientMatchIds(id) {
+  const raw = String(id || '').trim();
+  if (!raw) return [];
+  const ids = new Set([raw]);
+  const resolved = resolveMcpSyncClientId(raw);
+  if (resolved) ids.add(resolved);
+  for (const [from, to] of Object.entries(MCP_SYNC_ID_ALIASES)) {
+    if (from === raw || to === raw || (resolved && (from === resolved || to === resolved))) {
+      ids.add(from);
+      ids.add(to);
+    }
+  }
+  return [...ids];
+}
+
 /** 兼容旧 CLIENT_TARGETS 结构（mcp-client-sync 内部使用） */
 const CLIENT_TARGETS = Object.fromEntries(
   Object.entries(AGENT_MCP_TARGETS).map(([id, t]) => [
@@ -145,8 +185,12 @@ function listInstalledClientIds() {
 module.exports = {
   AGENT_MCP_TARGETS,
   CLIENT_TARGETS,
+  MCP_SYNC_ID_ALIASES,
+  MCP_PROJECT_LIST_HIDDEN_IDS,
   listAgentMcpTargets,
   listSyncEnabledClientIds,
   listInstalledClientIds,
+  resolveMcpSyncClientId,
+  expandMcpClientMatchIds,
   expandHome,
 };

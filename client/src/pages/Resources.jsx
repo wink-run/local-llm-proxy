@@ -305,6 +305,36 @@ function CleanupSweepMotion({ label, progress }) {
   );
 }
 
+// 交付 cid 归一：Codex Desktop 与 CLI 共用 config.toml；Claude Desktop 归 Claude Code
+const MCP_DELIVERY_ID_ALIASES = { 'codex-desktop': 'codex', 'claude-desktop': 'claude-code' };
+
+/**
+ * prompt / 智能体的投射目标 = 全部已纳管应用（与 Gateway apps:list 同源）。
+ * apps:list 已做安装过滤与去重；此处取 hosted（已纳管）行，归一到交付 cid 后再去重。
+ */
+function deriveManagedAppTargets(apps) {
+  const byId = new Map(); // deliveryId -> { label, canonical, order }
+  let order = 0;
+  for (const a of Array.isArray(apps) ? apps : []) {
+    if (!a || a.draft || !a.hosted) continue;
+    const raw = a.agent_id || a.preset_id || a.id;
+    if (!raw) continue;
+    const id = MCP_DELIVERY_ID_ALIASES[raw] || raw;
+    const canonical = raw === id; // 非别名行(如 claude-code CLI shim)优先提供展示名
+    const label = a.name || a.label || id;
+    const prev = byId.get(id);
+    if (!prev) {
+      byId.set(id, { label, canonical, order: order++ });
+    } else if (canonical && !prev.canonical) {
+      // 别名行(Claude Desktop)先占位 → 被规范行(Claude Code CLI)接管展示名，位置不变
+      byId.set(id, { label, canonical: true, order: prev.order });
+    }
+  }
+  return [...byId.entries()]
+    .sort((a, b) => a[1].order - b[1].order)
+    .map(([id, v]) => ({ id, label: v.label }));
+}
+
 /** 资产页：Prompt / Skill / Assistant 纳管与投射 */
 export default function Resources() {
   const navigate = useNavigate();
@@ -323,6 +353,8 @@ export default function Resources() {
   const [agents, setAgents] = useState([]);
   const [promptAgents, setPromptAgents] = useState([]);
   const [assistantAgents, setAssistantAgents] = useState([]);
+  // prompt / 智能体的投射目标 = 全部已纳管应用（与 Gateway 列表同源，含 Trae / API 应用）
+  const [managedAppTargets, setManagedAppTargets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
@@ -720,6 +752,33 @@ export default function Resources() {
     return () => document.removeEventListener('mousedown', onDoc);
   }, [projectMenu]);
 
+  // 滚动/缩放时跟随锚点重定位，而不是关闭（与 RouteSelect / Providers 下拉一致）
+  useEffect(() => {
+    const anchorEl = projectMenu?.anchorEl;
+    if (!anchorEl) return undefined;
+    let raf = 0;
+    const reposition = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (!anchorEl.isConnected) return;
+        const r = anchorEl.getBoundingClientRect();
+        setProjectMenu(prev => (prev ? {
+          ...prev,
+          anchor: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
+        } : null));
+      });
+    };
+    // capture=true：捕获内部滚动容器的 scroll（scroll 不冒泡）
+    document.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      document.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [projectMenu?.anchorEl]);
+
   // 按实际菜单尺寸贴齐锚点：下方不够则翻到上方，并限制在视口内
   useLayoutEffect(() => {
     if (!projectMenu?.anchor || !projectMenuRef.current) return;
@@ -742,7 +801,7 @@ export default function Resources() {
     }
     if (left === projectMenu.x && top === projectMenu.y) return;
     setProjectMenu(prev => (prev ? { ...prev, x: left, y: top } : null));
-  }, [projectMenu, agents, promptAgents, assistantAgents]);
+  }, [projectMenu, agents, promptAgents, assistantAgents, managedAppTargets]);
 
   function changeViewTab(tab) {
     setViewTab(tab);
@@ -1236,7 +1295,8 @@ export default function Resources() {
   }
 
   async function openProjectMenu(e, resourceId) {
-    const rect = e.currentTarget.getBoundingClientRect();
+    const anchorEl = e.currentTarget; // 存活引用：滚动时据此重定位（异步 await 后 e.currentTarget 会失效）
+    const rect = anchorEl.getBoundingClientRect();
     const menuWidth = 224; // w-56
     // 预估高度：标题 + 若干项 + 底栏；实际高度在 layout 后再校正
     const estimatedHeight = 260;
@@ -1256,6 +1316,7 @@ export default function Resources() {
       x,
       y,
       anchor: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
+      anchorEl,
     });
 
     // 先拉最新应用目录（服务端发布后无需重启），再刷新可投射 Agent 列表
@@ -1276,6 +1337,11 @@ export default function Resources() {
       setAgents(agentRes.agents || []);
       setPromptAgents(agentRes.promptAgents || []);
       setAssistantAgents(agentRes.assistantAgents || []);
+      // prompt / 智能体：目标 = 全部已纳管应用（与 Gateway 应用列表同源，保证一致）
+      try {
+        const apps = await window.electronAPI.apps.list();
+        setManagedAppTargets(deriveManagedAppTargets(apps));
+      } catch { /* apps 拉取失败时回退到 agents 列表 */ }
     } catch { /* ignore */ }
   }
 
@@ -1568,24 +1634,13 @@ export default function Resources() {
       ? managedCount
       : resources.filter(r => r.type !== 'skill').length + discoveredCount;
 
-  // 应用筛选：按当前类型用对应可装列表（Skill=agents / Prompt=promptAgents / 智能体=assistantAgents）
-  const installedFilterAgents = typeFilter === 'prompt'
-    ? promptAgents
-    : typeFilter === 'assistant'
-      ? assistantAgents
-      : agents;
+  // 应用筛选：prompt / skill / 智能体均按已纳管应用
+  const installedFilterAgents = agents;
   const appFilterOptions = (() => {
     const map = new Map();
     for (const a of installedFilterAgents) {
       if (!isAgentAppId(a.id)) continue;
       map.set(a.id, a.label || a.id);
-    }
-    // 「全部」视图：合并 prompt/assistant 目标，避免漏掉仅对智能体开放的主公
-    if (!typeFilter) {
-      for (const a of [...promptAgents, ...assistantAgents]) {
-        if (!isAgentAppId(a.id)) continue;
-        if (!map.has(a.id)) map.set(a.id, a.label || a.id);
-      }
     }
     return [{ id: '', label: t('resources.appFilterAll') }, ...[...map.entries()]
       .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base' }))
@@ -2365,12 +2420,11 @@ export default function Resources() {
     // 本机 Skill 行可能只在 discovered 里，需两边查找类型
     const resource = resources.find(r => r.id === projectMenu.resourceId)
       || discovered.find(i => i.resourceId === projectMenu.resourceId);
-    // prompt/skill：已安装即可；assistant：需勾选「可投射智能体」
-    const targetList = resource?.type === 'prompt'
-      ? promptAgents
-      : resource?.type === 'assistant'
-        ? assistantAgents
-        : agents;
+    // Skill 必须落盘到有 skills 目录的 agent（保持 agents）；
+    // prompt / 智能体走 MCP/中转，可投到全部已纳管应用（含 Trae / API 应用）。
+    const targetList = (resource?.type === 'prompt' || resource?.type === 'assistant')
+      ? (managedAppTargets.length ? managedAppTargets : agents)
+      : agents;
     const maxMenuH = Math.max(160, window.innerHeight - 16);
     return createPortal(
       <div
