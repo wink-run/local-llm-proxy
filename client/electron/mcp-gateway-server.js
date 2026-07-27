@@ -244,7 +244,7 @@ class StdioBackend {
     await this.request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'tokenbank-mcp-gateway', version: '0.5.3' },
+      clientInfo: { name: 'tokenbank-mcp-gateway', version: '0.5.4' },
     });
     this.notify('notifications/initialized', {});
     const listed = await this.request('tools/list', {});
@@ -421,7 +421,7 @@ async function handleMcpMessage(msg, clientId = '') {
           capabilities: { tools: { listChanged: false } },
           serverInfo: {
             name: cid ? `tokenbank-mcp-gateway-${cid}` : 'tokenbank-mcp-gateway',
-            version: '0.5.3',
+            version: '0.5.4',
           },
         },
       };
