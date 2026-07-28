@@ -8,12 +8,15 @@ const {
   extractContext, clipTraceText, msgText, sanitizeCursorText, projectLabel,
   pathFromEncodedSlug, nameFromGithubprojectsSlug, pickUsage,
   buildTraceStats, fileTimeSpan, stepTs,
+  readBoundedLines, traceCacheKey, createTraceCache, MAX_JSONL_FILE_BYTES,
 } = require('./shared');
+const { iterFileLines } = require('../jsonl-lines');
 const { extractSkillsFromCursorTool, extractSkillsFromCursorRecord } = require('../skill-signals');
 
 const AGENT_ID = 'cursor';
 const PROFILE = 'cursor-transcript';
 const ROOT = () => path.join(os.homedir(), '.cursor/projects');
+const traceCache = createTraceCache();
 
 function projectFromCursorSlug(slug) {
   const gh = nameFromGithubprojectsSlug(slug);
@@ -132,9 +135,20 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
   const parseBudget = Math.max(limit * 3, limit);
   const out = [];
   for (const c of candidates.slice(0, parseBudget)) {
+    let cSize = 0;
+    try { cSize = fs.statSync(c.cf).size; } catch {}
+    if (cSize > MAX_JSONL_FILE_BYTES) {
+      out.push({
+        session_id: c.sid, project: c.projectName, project_path: c.projectPath,
+        context: '(会话过大，跳过预览)',
+        calls: 0, tokens: 0, inTok: 0, outTok: 0, lastTs: c.lastTs, agent: AGENT_ID,
+      });
+      if (out.length >= limit) break;
+      continue;
+    }
     let context = '', calls = 0, inTok = 0, outTok = 0;
     try {
-      for (const line of fs.readFileSync(c.cf, 'utf8').split('\n')) {
+      for (const line of iterFileLines(c.cf)) {
         const s = line.trim();
         if (!s) continue;
         let data;
@@ -179,16 +193,22 @@ function trace(sessionId) {
   if (!files.length) return { error: 'not_found', steps: [], meta: {} };
 
   const cf = files[0];
+  let st;
+  try { st = fs.statSync(cf); } catch { return { error: 'not_found', steps: [], stats: {} }; }
+  const cacheKey = traceCacheKey(cf, st);
+  const cachedTrace = traceCache.get(cacheKey);
+  if (cachedTrace) return cachedTrace;
+
   const slug = cursorProjectSlugFromFile(cf);
   const { project: projectName, project_path: projectPath } = resolveCursorProject(slug, buildCursorProjectMap());
-  const rawLines = fs.readFileSync(cf, 'utf8').split('\n').filter(l => l.trim());
-  const timeSpan = fileTimeSpan(cf, rawLines.length);
+  const { lines, lineCount, truncated, rawErrorCount } = readBoundedLines(cf);
+  const timeSpan = fileTimeSpan(cf, lineCount);
   const steps = [];
   let lineIdx = 0;
   let agentTurns = 0;
 
   try {
-    for (const line of rawLines) {
+    for (const line of lines) {
       let data;
       try { data = JSON.parse(line); } catch { lineIdx++; continue; }
       if (data.type === 'turn_ended') { lineIdx++; continue; }
@@ -273,10 +293,11 @@ function trace(sessionId) {
     return { error: e.message, steps: [], stats: {} };
   }
 
-  const stats = buildTraceStats(steps, { filePath: cf, rawLines });
+  const stats = buildTraceStats(steps, { filePath: cf, rawErrorCount });
   if (agentTurns > 0) stats.turns = agentTurns;
+  if (truncated) stats.truncated = true;
 
-  return {
+  return traceCache.set(cacheKey, {
     session_id: sessionId,
     agent: AGENT_ID,
     project: projectName,
@@ -285,7 +306,7 @@ function trace(sessionId) {
     session_file: cf,
     steps,
     stats,
-  };
+  });
 }
 
 module.exports = {

@@ -7,11 +7,14 @@ const os = require('os');
 const {
   extractContext, msgText, toolResultText, resolveProjectName,
   pickUsage, buildTraceStats, fileTimeSpan, stepTs,
+  readBoundedLines, traceCacheKey, createTraceCache, MAX_JSONL_FILE_BYTES,
 } = require('./shared');
+const { iterFileLines } = require('../jsonl-lines');
 
 const AGENT_ID = 'claude-code';
 const PROFILE = 'claude-jsonl';
 const ROOT = () => path.join(os.homedir(), '.claude/projects');
+const traceCache = createTraceCache();
 
 function clientFromEntrypoint(ep) {
   if (!ep) return null;
@@ -201,7 +204,7 @@ function claudeSubagentUsage(sessionFile, sessionId) {
     const tokens = { input: 0, output: 0, cached: 0, cache_creation: 0, total: 0 };
     let model = null;
     try {
-      for (const line of fs.readFileSync(jsonlPath, 'utf8').split('\n')) {
+      for (const line of iterFileLines(jsonlPath)) {
         if (!line.trim()) continue;
         let data;
         try { data = JSON.parse(line); } catch { continue; }
@@ -311,10 +314,26 @@ function list({ limit = 50, sinceDays = 30, entrypointMatch } = {}) {
   const out = [];
 
   for (const c of candidates.slice(0, parseBudget)) {
+    // 超大文件不逐行深扫（否则 list 会卡死在一个巨型文件上）；仅出元信息占位。
+    let cSize = 0;
+    try { cSize = fs.statSync(c.full).size; } catch {}
+    if (cSize > MAX_JSONL_FILE_BYTES) {
+      const { project, project_path } = resolveProjectName({
+        projectPath: c.projectPath, sessionFile: c.full, agentId: AGENT_ID,
+      });
+      out.push({
+        session_id: c.sid, project, project_path,
+        context: '(会话过大，跳过预览)',
+        calls: 0, tokens: 0, inTok: 0, outTok: 0, lastTs: c.lastTs,
+        agent: AGENT_ID, entrypoint: null, client: null,
+      });
+      if (out.length >= limit) break;
+      continue;
+    }
     let context = '', calls = 0, inTok = 0, outTok = 0, cwdHint = null;
     const epCounts = {};
     try {
-      for (const line of fs.readFileSync(c.full, 'utf8').split('\n')) {
+      for (const line of iterFileLines(c.full)) {
         const s = line.trim();
         if (!s) continue;
         let data;
@@ -361,10 +380,17 @@ function trace(sessionId) {
   const file = findSessionFile(sessionId);
   if (!file) return { error: 'not_found', steps: [], stats: {} };
 
-  const rawLines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
-  const timeSpan = fileTimeSpan(file, rawLines.length);
-  const steps = buildClaudeStyleSteps(rawLines, timeSpan);
-  const entrypoint = dominantEntrypoint(rawLines);
+  let st;
+  try { st = fs.statSync(file); } catch { return { error: 'not_found', steps: [], stats: {} }; }
+  const cacheKey = traceCacheKey(file, st);
+  const cached = traceCache.get(cacheKey);
+  if (cached) return cached;
+
+  // 流式有界读取，避免 readFileSync + split 一次性载入超大会话。
+  const { lines, lineCount, truncated, rawErrorCount } = readBoundedLines(file);
+  const timeSpan = fileTimeSpan(file, lineCount);
+  const steps = buildClaudeStyleSteps(lines, timeSpan);
+  const entrypoint = dominantEntrypoint(lines);
   const { project, project_path } = resolveProjectName({
     projectPath: path.dirname(file),
     sessionFile: file,
@@ -372,7 +398,10 @@ function trace(sessionId) {
   });
   const delegation = claudeSubagentUsage(file, sessionId);
 
-  return {
+  const stats = buildTraceStats(steps, { filePath: file, rawErrorCount, delegation: delegation || undefined });
+  if (truncated) stats.truncated = true;
+
+  return traceCache.set(cacheKey, {
     session_id: sessionId,
     agent: AGENT_ID,
     entrypoint,
@@ -380,8 +409,8 @@ function trace(sessionId) {
     project, project_path,
     cwd: project_path,
     steps,
-    stats: buildTraceStats(steps, { filePath: file, rawLines, delegation: delegation || undefined }),
-  };
+    stats,
+  });
 }
 
 module.exports = {

@@ -19,6 +19,13 @@ const path = require('path');
 const os   = require('os');
 const { estimateCost } = require('./pricing');
 const { resolvePricingProviderId } = require('./billing-config');
+const { iterFileLines, countJsonlLines, MAX_JSONL_FILE_BYTES, STREAM_THRESHOLD_BYTES } = require('./jsonl-lines');
+
+// 大文件兜底：启动时 run() 同步扫描所有会话文件，单个文件 readFileSync 一次性载入会撑爆内存。
+// 曾有用户的 Codex rollout JSONL 达 ~1GB，0.5.4 启动首屏前就 OOM 崩溃。
+//   - 超过硬上限：直接跳过并 markDone（宁可漏这一份，也不让整个应用起不来）。
+//   - 超过流式阈值：逐行流式读取，避免 readFileSync + split('\n') 的双份整文件拷贝。
+const MAX_IMPORT_FILE_BYTES = MAX_JSONL_FILE_BYTES;
 
 // 各 Agent 默认计费类型：优先读 session_sources.billing_type（来自 handler/session-scans）
 function resolveBillingType(src) {
@@ -566,6 +573,13 @@ function importSource(localStats, src) {
     if (unchanged(localStats, file, st)) { skipped++; continue; }
     files_scanned++;
 
+    // 极端兜底：单文件超硬上限直接跳过。宁可漏这一份，也绝不让启动时 OOM 崩溃。
+    if (st.size > MAX_IMPORT_FILE_BYTES) {
+      console.warn(`[session-import] 跳过超大会话文件 ${(st.size / 1048576) | 0}MB: ${file}`);
+      markDone(localStats, file, st);
+      continue;
+    }
+
     if ((src.format || 'jsonl') === 'json') {
       let doc;
       try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -599,11 +613,21 @@ function importSource(localStats, src) {
       // 扫过即 markDone：无用量/暂写不出的历史文件也不反复重扫
       markDone(localStats, file, st);
     } else {
-      // jsonl：逐行；维护运行上下文（meta 行更新 model/session_id；accumulate 累计 prev）
-      let rawText;
-      try { rawText = fs.readFileSync(file, 'utf8'); } catch { markDone(localStats, file, st); continue; }
-      const parsedLines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
-      const lineCount = parsedLines.length;
+      // jsonl：逐行；维护运行上下文（meta 行更新 model/session_id；accumulate 累计 prev）。
+      // 大文件走流式（iterFileLines），避免 readFileSync + split 的双份整文件内存拷贝。
+      const streaming = st.size > STREAM_THRESHOLD_BYTES;
+      let lines, lineCount;
+      if (streaming) {
+        try { lineCount = countJsonlLines(file); }
+        catch { markDone(localStats, file, st); continue; }
+        lines = iterFileLines(file);
+      } else {
+        let rawText;
+        try { rawText = fs.readFileSync(file, 'utf8'); } catch { markDone(localStats, file, st); continue; }
+        lines = rawText.split('\n');
+        lineCount = 0;
+        for (const l of lines) if (l.trim()) lineCount++;
+      }
       const fileT0 = st.birthtimeMs;
       const fileSpan = Math.max(st.mtimeMs - st.birthtimeMs, lineCount * 500);
       const ctx = {
@@ -612,7 +636,9 @@ function importSource(localStats, src) {
         seq: 0, index: 0, prev: { input: 0, output: 0, cached: 0 },
       };
       let lineIdx = 0;
-      for (const s of parsedLines) {
+      for (const raw of lines) {
+        const s = raw.trim();
+        if (!s) continue;   // 空行不计入 lineIdx（与旧 filter(Boolean) 语义一致）
         let e;
         try { e = JSON.parse(s); } catch { lineIdx++; continue; }
         ctx.index = lineIdx;
@@ -698,4 +724,4 @@ function run(localStats, opts = {}) {
   return { ok: true, imported, sources };
 }
 
-module.exports = { run, importSource, emitRecord, matchFilter, getPath, recordExtras, resolveTiming, resolveBillingType, resolveDataSourceFromMap, claudeDataSourceForEntrypoint, tsSeconds };
+module.exports = { run, importSource, emitRecord, matchFilter, getPath, recordExtras, resolveTiming, resolveBillingType, resolveDataSourceFromMap, claudeDataSourceForEntrypoint, tsSeconds, iterFileLines, countJsonlLines, MAX_IMPORT_FILE_BYTES, STREAM_THRESHOLD_BYTES };

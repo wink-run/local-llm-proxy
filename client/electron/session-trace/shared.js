@@ -4,6 +4,12 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { iterFileLines, MAX_JSONL_FILE_BYTES } = require('../jsonl-lines');
+
+// trace 详情读取的兜底上限：行数或累计字节任一超限即停，绝不把整份大文件读进内存。
+// 曾有用户的会话 jsonl 达 ~1GB，打开详情时 readFileSync + split 直接 OOM。
+const MAX_TRACE_LINES = 50000;
+const MAX_TRACE_BYTES = 128 * 1024 * 1024; // 128MB
 
 function expandHome(p) {
   if (typeof p !== 'string') return p;
@@ -126,7 +132,8 @@ function isAgentStoragePath(p) {
 function readSessionCwd(sessionFile, agentId) {
   if (!sessionFile || !fs.existsSync(sessionFile)) return null;
   try {
-    for (const line of fs.readFileSync(sessionFile, 'utf8').split('\n')) {
+    // 流式逐行：cwd 通常在文件头部的 session_meta，命中即 return，无需读完整份大文件。
+    for (const line of iterFileLines(sessionFile)) {
       const s = line.trim();
       if (!s) continue;
       let data;
@@ -199,13 +206,16 @@ function formatDuration(ms) {
   return `${Math.round(ms)}ms`;
 }
 
+function isRawErrorLine(line) {
+  const low = String(line).toLowerCase();
+  if (low.includes('"is_error":true') || low.includes('"is_error": true')) return true;
+  if (low.includes('"status":"error"') || low.includes('"status": "error"')) return true;
+  return false;
+}
+
 function countRawErrors(rawLines) {
   let n = 0;
-  for (const line of rawLines || []) {
-    const low = String(line).toLowerCase();
-    if (low.includes('"is_error":true') || low.includes('"is_error": true')) n++;
-    else if (low.includes('"status":"error"') || low.includes('"status": "error"')) n++;
-  }
+  for (const line of rawLines || []) if (isRawErrorLine(line)) n++;
   return n;
 }
 
@@ -269,7 +279,7 @@ function mcpServersFromUsage(mcpUsage) {
     .sort((a, b) => b.calls - a.calls);
 }
 
-function buildTraceStats(steps, { filePath, rawLines, delegation } = {}) {
+function buildTraceStats(steps, { filePath, rawLines, rawErrorCount, delegation } = {}) {
   let tools = 0, turns = 0, reasoning = 0, artifacts = 0, toolResults = 0, skills = 0;
   let inTok = 0, outTok = 0, cached = 0;
   const toolCounts = {};
@@ -342,7 +352,8 @@ function buildTraceStats(steps, { filePath, rawLines, delegation } = {}) {
     artifacts,
     reasoning,
     turns,
-    errors: countRawErrors(rawLines),
+    // 流式路径不保留整份 rawLines，改用预先累计的 rawErrorCount。
+    errors: rawErrorCount != null ? rawErrorCount : countRawErrors(rawLines),
     duration_ms: durationMs,
     duration: formatDuration(durationMs),
     tokens: { input: inTok, output: outTok, cached },
@@ -371,6 +382,48 @@ function stepTs(timeSpan, lineIdx) {
   return t0 + Math.floor((lineIdx / Math.max(lineCount, 1)) * span);
 }
 
+// 流式读取会话 jsonl 为「有界」的非空原始行数组（替代 readFileSync().split().filter）。
+// 行数或累计字节任一超限即 break（generator 关闭 fd → 不读完整份大文件），并置 truncated。
+// 顺带累计 rawErrorCount，供 buildTraceStats 免去二次全量扫描。
+function readBoundedLines(file, { maxLines = MAX_TRACE_LINES, maxBytes = MAX_TRACE_BYTES } = {}) {
+  const lines = [];
+  let bytes = 0, truncated = false, rawErrorCount = 0;
+  try {
+    for (const line of iterFileLines(file)) {
+      if (!line.trim()) continue;
+      if (isRawErrorLine(line)) rawErrorCount++;
+      lines.push(line);
+      bytes += line.length;
+      if (lines.length >= maxLines || bytes >= maxBytes) { truncated = true; break; }
+    }
+  } catch { /* 读取中断：用已收集的行降级 */ }
+  return { lines, lineCount: lines.length, truncated, rawErrorCount };
+}
+
+function traceCacheKey(file, st) {
+  return `${file}|${st.mtimeMs}|${st.size}`;
+}
+
+// trace 结果的 LRU 缓存工厂：key=文件身份（路径|mtime|size），文件一改动即自然失活。
+// get 返回浅拷贝并克隆 stats.tokens——enrichTraceWithDb 会就地改写 tokens，避免污染缓存。
+function createTraceCache(max = 6) {
+  const map = new Map();
+  const clone = (hit) => ({ ...hit, stats: { ...hit.stats, tokens: { ...(hit.stats && hit.stats.tokens) } } });
+  return {
+    get(key) {
+      const hit = map.get(key);
+      if (!hit) return null;
+      map.delete(key); map.set(key, hit); // LRU：命中挪到队尾
+      return clone(hit);
+    },
+    set(key, value) {
+      map.set(key, value);
+      while (map.size > max) map.delete(map.keys().next().value);
+      return clone(value);
+    },
+  };
+}
+
 module.exports = {
   expandHome,
   extractContext,
@@ -385,11 +438,18 @@ module.exports = {
   readSessionCwd,
   pickUsage,
   buildTraceStats,
+  isRawErrorLine,
   mcpUsageFromToolCounts,
   skillsUsedFromCounts,
   mcpServersFromUsage,
   fileTimeSpan,
   stepTs,
+  readBoundedLines,
+  traceCacheKey,
+  createTraceCache,
+  MAX_TRACE_LINES,
+  MAX_TRACE_BYTES,
+  MAX_JSONL_FILE_BYTES,
   pathFromEncodedSlug,
   nameFromGithubprojectsSlug,
   formatDuration,

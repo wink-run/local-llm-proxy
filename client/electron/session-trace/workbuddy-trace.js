@@ -6,6 +6,7 @@ const path = require('path');
 const os = require('os');
 const {
   extractContext, toolResultText, buildTraceStats, fileTimeSpan, stepTs,
+  traceCacheKey, createTraceCache, MAX_JSONL_FILE_BYTES,
 } = require('./shared');
 const {
   extractSkillsFromWorkbuddySpan,
@@ -14,6 +15,7 @@ const {
 const AGENT_ID = 'workbuddy';
 const PROFILE = 'workbuddy-trace';
 const ROOT = () => path.join(os.homedir(), '.workbuddy/traces');
+const traceCache = createTraceCache();
 
 /** 目录扫描结果短期缓存（单次用量页会多次 find/list） */
 let _filesCache = null;
@@ -53,6 +55,8 @@ function traceBasename(sessionId) {
 }
 
 function loadTraceDoc(file) {
+  // 极端兜底：单份 trace 是整个 JSON 文档，无法逐行流式；超上限直接放弃解析（JSON.parse 会 OOM）。
+  try { if (fs.statSync(file).size > MAX_JSONL_FILE_BYTES) return null; } catch { return null; }
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
@@ -378,20 +382,27 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
 function trace(sessionId) {
   const file = findSessionFile(sessionId);
   if (!file) return { error: 'not_found', steps: [], stats: {} };
+  let st;
+  try { st = fs.statSync(file); } catch { return { error: 'not_found', steps: [], stats: {} }; }
+  if (st.size > MAX_JSONL_FILE_BYTES) return { error: 'too_large', steps: [], stats: {} };
+  const cacheKey = traceCacheKey(file, st);
+  const cached = traceCache.get(cacheKey);
+  if (cached) return cached;
+
   const doc = loadTraceDoc(file);
   const spans = Array.isArray(doc?.spans) ? doc.spans : [];
   const timeSpan = fileTimeSpan(file, Math.max(spans.length, 1));
   const steps = buildStepsFromSpans(spans, timeSpan);
   const summary = summarizeDoc(doc, file);
-  return {
+  return traceCache.set(cacheKey, {
     session_id: sessionId,
     agent: AGENT_ID,
     project: summary.project,
     project_path: summary.project_path,
     cwd: summary.project_path,
     steps,
-    stats: buildTraceStats(steps, { filePath: file, rawLines: [] }),
-  };
+    stats: buildTraceStats(steps, { filePath: file, rawErrorCount: 0 }),
+  });
 }
 
 module.exports = {

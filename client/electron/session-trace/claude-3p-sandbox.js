@@ -4,11 +4,16 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { extractContext, buildTraceStats, fileTimeSpan, pickUsage, msgText } = require('./shared');
+const {
+  extractContext, buildTraceStats, fileTimeSpan, pickUsage, msgText,
+  readBoundedLines, traceCacheKey, createTraceCache, MAX_JSONL_FILE_BYTES,
+} = require('./shared');
+const { iterFileLines } = require('../jsonl-lines');
 const { buildClaudeStyleSteps } = require('./claude-jsonl');
 
 const AGENT_ID = 'claude-3p';
 const PROFILE = 'claude-3p-sandbox';
+const traceCache = createTraceCache();
 
 function coworkSessionRoots() {
   const home = os.homedir();
@@ -61,7 +66,10 @@ function scanSessionJsonlUsage(sessionId, index) {
   let outTok = 0;
   let userChars = 0; // user 行字符数，用于 jsonl 无 input_tokens 时粗估
   try {
-    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (fs.statSync(file).size > MAX_JSONL_FILE_BYTES) return { calls: 0, inTok: 0, outTok: 0, tokens: 0 };
+  } catch {}
+  try {
+    for (const line of iterFileLines(file)) {
       const s = line.trim();
       if (!s) continue;
       let data;
@@ -145,10 +153,18 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
 function trace(sessionId) {
   const file = findSessionFile(sessionId);
   if (!file) return { error: 'not_found', steps: [], stats: {} };
-  const rawLines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
-  const timeSpan = fileTimeSpan(file, rawLines.length);
-  const steps = buildClaudeStyleSteps(rawLines, timeSpan);
-  return {
+  let st;
+  try { st = fs.statSync(file); } catch { return { error: 'not_found', steps: [], stats: {} }; }
+  const cacheKey = traceCacheKey(file, st);
+  const cached = traceCache.get(cacheKey);
+  if (cached) return cached;
+
+  const { lines, lineCount, truncated, rawErrorCount } = readBoundedLines(file);
+  const timeSpan = fileTimeSpan(file, lineCount);
+  const steps = buildClaudeStyleSteps(lines, timeSpan);
+  const stats = buildTraceStats(steps, { filePath: file, rawErrorCount });
+  if (truncated) stats.truncated = true;
+  return traceCache.set(cacheKey, {
     session_id: sessionId,
     agent: AGENT_ID,
     client: 'claude-desktop',
@@ -156,8 +172,8 @@ function trace(sessionId) {
     project_path: null,
     cwd: null,
     steps,
-    stats: buildTraceStats(steps, { filePath: file, rawLines }),
-  };
+    stats,
+  });
 }
 
 module.exports = {

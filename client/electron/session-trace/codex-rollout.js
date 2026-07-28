@@ -6,13 +6,22 @@ const path = require('path');
 const os = require('os');
 const {
   expandHome, extractContext, toolResultText, resolveProjectName,
-  readSessionCwd, buildTraceStats, fileTimeSpan, stepTs,
+  readSessionCwd, buildTraceStats, fileTimeSpan, stepTs, isRawErrorLine,
+  traceCacheKey, createTraceCache,
 } = require('./shared');
+const { iterFileLines, MAX_JSONL_FILE_BYTES } = require('../jsonl-lines');
 const { extractSkillsFromToolCall } = require('../skill-signals');
 
 const AGENT_ID = 'codex';
 const PROFILE = 'codex-rollout';
 const ROOT = () => path.join(os.homedir(), '.codex/sessions');
+
+// trace 详情最多渲染的步骤数：超大会话（曾见 ~1GB rollout）全量渲染既撑爆内存也无意义。
+// 命中上限即 break 出流式迭代 → 触发 generator 关闭 fd，因此绝不会读完整份大文件。
+const MAX_TRACE_STEPS = 20000;
+
+// trace 结果缓存（共用工厂）：key=文件身份，文件一改动即自然失活，只留最近 N 条。
+const traceCache = createTraceCache();
 
 function codexSessionIdFromFilename(name) {
   const stem = String(name).replace(/\.jsonl$/i, '');
@@ -26,7 +35,7 @@ function loadCodexThreadNames() {
   const map = {};
   const idx = path.join(os.homedir(), '.codex/session_index.jsonl');
   try {
-    for (const line of fs.readFileSync(idx, 'utf8').split('\n')) {
+    for (const line of iterFileLines(idx)) {
       if (!line.trim()) continue;
       try {
         const d = JSON.parse(line);
@@ -110,13 +119,23 @@ function parseCodexRolloutFile(filePath, threadNames = {}) {
   const sid = codexSessionIdFromFilename(path.basename(filePath));
   let context = '', cwdHint = null;
   let acc = { calls: 0, inTok: 0, outTok: 0, cached: 0 };
-  let lastTs = 0;
+  let lastTs = 0, tooLarge = false;
   try {
     const st = fs.statSync(filePath);
     lastTs = Math.floor(st.mtimeMs / 1000);
+    tooLarge = st.size > MAX_JSONL_FILE_BYTES;
   } catch {}
+  // 超大文件：列表页只需元信息，跳过逐行解析，绝不整份读入（否则 list() 会卡死在一个 1GB 文件上）。
+  if (tooLarge) {
+    if (threadNames[sid]) context = extractContext(threadNames[sid]);
+    return {
+      sid, context, cwdHint,
+      calls: 0, inTok: 0, outTok: 0, cached: 0, tokens: 0, lastTs, filePath,
+    };
+  }
   try {
-    for (const line of fs.readFileSync(filePath, 'utf8').split('\n')) {
+    // 流式逐行，避免 readFileSync + split 的双份整文件内存拷贝。
+    for (const line of iterFileLines(filePath)) {
       if (!line.trim()) continue;
       let data;
       try { data = JSON.parse(line); } catch { continue; }
@@ -241,69 +260,87 @@ function trace(sessionId) {
   const file = findSessionFile(sessionId);
   if (!file) return { error: 'not_found', steps: [], stats: {} };
 
-  const rawLines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
-  const timeSpan = fileTimeSpan(file, rawLines.length);
-  const steps = [];
-  let lineIdx = 0;
+  let st;
+  try { st = fs.statSync(file); } catch { return { error: 'not_found', steps: [], stats: {} }; }
 
-  for (const line of rawLines) {
-    let data;
-    try { data = JSON.parse(line); } catch { lineIdx++; continue; }
-    const ts = stepTs(timeSpan, lineIdx);
+  // 缓存命中（文件未变）：同一会话反复打开直接返回，不再读盘解析。
+  const cacheKey = traceCacheKey(file, st);
+  const cached = traceCache.get(cacheKey);
+  if (cached) return cached;
 
-    if (data.type === 'event_msg') {
-      const pt = data.payload?.type;
-      if (pt === 'user_message') {
-        steps.push({
-          idx: steps.length, kind: 'user', label: 'User prompt', ts,
-          text: codexUserText(data) || extractContext(String(data.payload?.message || '')),
-        });
-      } else if (pt === 'agent_message') {
-        steps.push({
-          idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
-          text: codexAssistantText(data),
-        });
-      }
-    } else if (data.type === 'response_item') {
-      const p = data.payload || {};
-      if (p.type === 'function_call') {
-        const skillHits = extractSkillsFromToolCall(p.name, p.arguments, { signalPrefix: 'codex' });
-        if (skillHits.length) {
-          for (const sk of skillHits) {
-            steps.push({
-              idx: steps.length, kind: 'tool',
-              label: `Skill · ${sk.raw}`, ts,
-              tool: p.name, skill: sk.raw, signal: sk.signal,
-              input: p.arguments,
-            });
-          }
-        } else {
+  const steps = [];        // 每步暂存 _line（原始行号），ts 在读完得到总行数后统一回填
+  let lineIdx = 0;         // 非空行序号（与旧 rawLines 索引一致）
+  let rawErrorCount = 0;
+  let truncated = false;
+
+  // 流式逐行；累计到 MAX_TRACE_STEPS 即 break（generator 关闭 fd → 不读完整份大文件）。
+  try {
+    for (const line of iterFileLines(file)) {
+      if (!line.trim()) continue;
+      if (isRawErrorLine(line)) rawErrorCount++;
+      let data;
+      try { data = JSON.parse(line); } catch { lineIdx++; continue; }
+      const at = lineIdx;
+
+      if (data.type === 'event_msg') {
+        const pt = data.payload?.type;
+        if (pt === 'user_message') {
           steps.push({
-            idx: steps.length, kind: 'tool', label: p.name || 'tool', ts,
-            tool: p.name, input: p.arguments,
+            idx: steps.length, kind: 'user', label: 'User prompt', _line: at,
+            text: codexUserText(data) || extractContext(String(data.payload?.message || '')),
+          });
+        } else if (pt === 'agent_message') {
+          steps.push({
+            idx: steps.length, kind: 'assistant', label: 'Assistant', _line: at,
+            text: codexAssistantText(data),
           });
         }
-      } else if (p.type === 'function_call_output' || p.type === 'tool_result') {
-        const out = toolResultText(p.output ?? p.content);
-        steps.push({
-          idx: steps.length, kind: 'tool_result', label: 'Tool output', ts,
-          is_error: /(\b|")error/i.test(out.slice(0, 80)), text: out.slice(0, 4000),
-        });
-      } else if (p.type === 'message' && p.role === 'user') {
-        const t = codexUserText(data);
-        if (t) steps.push({ idx: steps.length, kind: 'user', label: 'User prompt', ts, text: t });
-      } else if (p.type === 'message' && p.role === 'assistant') {
-        const t = codexAssistantText(data);
-        if (t) steps.push({ idx: steps.length, kind: 'assistant', label: 'Assistant', ts, text: t });
-      } else if (p.type === 'reasoning') {
-        steps.push({
-          idx: steps.length, kind: 'assistant', label: 'Reasoning', ts,
-          reasoning: true, text: codexAssistantText(data),
-        });
+      } else if (data.type === 'response_item') {
+        const p = data.payload || {};
+        if (p.type === 'function_call') {
+          const skillHits = extractSkillsFromToolCall(p.name, p.arguments, { signalPrefix: 'codex' });
+          if (skillHits.length) {
+            for (const sk of skillHits) {
+              steps.push({
+                idx: steps.length, kind: 'tool',
+                label: `Skill · ${sk.raw}`, _line: at,
+                tool: p.name, skill: sk.raw, signal: sk.signal,
+                input: p.arguments,
+              });
+            }
+          } else {
+            steps.push({
+              idx: steps.length, kind: 'tool', label: p.name || 'tool', _line: at,
+              tool: p.name, input: p.arguments,
+            });
+          }
+        } else if (p.type === 'function_call_output' || p.type === 'tool_result') {
+          const out = toolResultText(p.output ?? p.content);
+          steps.push({
+            idx: steps.length, kind: 'tool_result', label: 'Tool output', _line: at,
+            is_error: /(\b|")error/i.test(out.slice(0, 80)), text: out.slice(0, 4000),
+          });
+        } else if (p.type === 'message' && p.role === 'user') {
+          const t = codexUserText(data);
+          if (t) steps.push({ idx: steps.length, kind: 'user', label: 'User prompt', _line: at, text: t });
+        } else if (p.type === 'message' && p.role === 'assistant') {
+          const t = codexAssistantText(data);
+          if (t) steps.push({ idx: steps.length, kind: 'assistant', label: 'Assistant', _line: at, text: t });
+        } else if (p.type === 'reasoning') {
+          steps.push({
+            idx: steps.length, kind: 'assistant', label: 'Reasoning', _line: at,
+            reasoning: true, text: codexAssistantText(data),
+          });
+        }
       }
+      lineIdx++;
+      if (steps.length >= MAX_TRACE_STEPS) { truncated = true; break; }
     }
-    lineIdx++;
-  }
+  } catch { /* 读取中断：用已收集的步骤降级返回 */ }
+
+  // 回填时间戳：用实际读到的非空行数铺开（截断时按已读部分铺）。
+  const timeSpan = fileTimeSpan(file, Math.max(lineIdx, 1));
+  for (const s of steps) { s.ts = stepTs(timeSpan, s._line); delete s._line; }
 
   const cwdHint = readSessionCwd(file, AGENT_ID);
   const { project, project_path } = resolveProjectName({
@@ -313,14 +350,17 @@ function trace(sessionId) {
     cwdHint,
   });
 
-  return {
+  const stats = buildTraceStats(steps, { filePath: file, rawErrorCount });
+  if (truncated) stats.truncated = true;
+
+  return traceCache.set(cacheKey, {
     session_id: sessionId,
     agent: AGENT_ID,
     project, project_path,
     cwd: project_path,
     steps,
-    stats: buildTraceStats(steps, { filePath: file, rawLines }),
-  };
+    stats,
+  });
 }
 
 module.exports = {
@@ -330,4 +370,6 @@ module.exports = {
   trace,
   findSessionFile,
   codexSessionIdFromFilename,
+  parseCodexRolloutFile,
+  MAX_TRACE_STEPS,
 };

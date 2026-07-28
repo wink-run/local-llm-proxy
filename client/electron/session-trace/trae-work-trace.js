@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { extractContext, buildTraceStats, fileTimeSpan, stepTs } = require('./shared');
+const { iterFileLines } = require('../jsonl-lines');
 const { traeLogsDir, traeSessionsExportDir } = require('../trae-support');
 const { EXPORT_FILE } = require('../trae-session-sync');
 
@@ -14,7 +15,7 @@ function readUsageRows() {
   const file = path.join(traeSessionsExportDir(), EXPORT_FILE);
   if (!fs.existsSync(file)) return [];
   const bySession = new Map();
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+  for (const line of iterFileLines(file)) {
     const t = line.trim();
     if (!t) continue;
     let rec;
@@ -157,7 +158,7 @@ function findSessionFile(sessionId) {
   const file = path.join(traeSessionsExportDir(), EXPORT_FILE);
   if (!fs.existsSync(file)) return null;
   const needle = String(sessionId);
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+  for (const line of iterFileLines(file)) {
     if (line.includes(needle)) return file;
   }
   return null;

@@ -7,11 +7,14 @@ const os = require('os');
 const {
   extractContext, clipTraceText, msgText, toolResultText, projectLabel,
   buildTraceStats, fileTimeSpan, stepTs,
+  readBoundedLines, traceCacheKey, createTraceCache, MAX_JSONL_FILE_BYTES,
 } = require('./shared');
+const { iterFileLines } = require('../jsonl-lines');
 
 const AGENT_ID = 'kimi-code';
 const PROFILE = 'kimi-code-trace';
 const ROOT = () => path.join(os.homedir(), '.kimi-code', 'sessions');
+const traceCache = createTraceCache();
 
 /** Kimi usage：inputOther / output / inputCacheRead */
 function kimiUsage(u) {
@@ -100,9 +103,8 @@ function summarizeWires(wirePaths) {
   let context = '';
   let lastTs = 0;
   for (const wp of wirePaths) {
-    let text;
-    try { text = fs.readFileSync(wp, 'utf8'); } catch { continue; }
-    for (const line of text.split('\n')) {
+    try { if (fs.statSync(wp).size > MAX_JSONL_FILE_BYTES) continue; } catch { continue; }
+    for (const line of iterFileLines(wp)) {
       const s = line.trim();
       if (!s) continue;
       let o;
@@ -299,16 +301,20 @@ function trace(sessionId) {
   const wireFile = findSessionFile(sessionId);
   if (!wireFile) return { error: 'not_found', steps: [], meta: {} };
 
-  let rawText;
-  try { rawText = fs.readFileSync(wireFile, 'utf8'); }
+  let st;
+  try { st = fs.statSync(wireFile); }
   catch (e) { return { error: e.message, steps: [], stats: {} }; }
+  const cacheKey = traceCacheKey(wireFile, st);
+  const cached = traceCache.get(cacheKey);
+  if (cached) return cached;
 
-  const rawLines = rawText.split('\n').filter(l => l.trim());
-  const timeSpan = fileTimeSpan(wireFile, rawLines.length);
-  const steps = buildStepsFromWireLines(rawLines, timeSpan);
-  const stats = buildTraceStats(steps, { filePath: wireFile, rawLines });
+  const { lines, lineCount, truncated, rawErrorCount } = readBoundedLines(wireFile);
+  const timeSpan = fileTimeSpan(wireFile, lineCount);
+  const steps = buildStepsFromWireLines(lines, timeSpan);
+  const stats = buildTraceStats(steps, { filePath: wireFile, rawErrorCount });
+  if (truncated) stats.truncated = true;
 
-  return {
+  return traceCache.set(cacheKey, {
     session_id: sessionId,
     agent: AGENT_ID,
     project,
@@ -317,7 +323,7 @@ function trace(sessionId) {
     session_file: wireFile,
     steps,
     stats,
-  };
+  });
 }
 
 module.exports = {
