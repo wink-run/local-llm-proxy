@@ -1421,6 +1421,8 @@ class ResourceManager {
     if (resource.type === 'assistant') {
       this._syncAssistantRuntimeFromProjections(resourceId);
       this._syncAssistantMcpToProjections(resourceId);
+      // 无 stdio 通道的应用(Trae/API)：内置 resources+prompts 经中转交付(tb_list_resources / tb_get_resource)
+      this._ensureRelayDelivery(ids, ['tokenbank-resources', 'tokenbank-prompts']);
     }
 
     // 提示词：投射后刷新受影响 client 的 MCP 配置(下发/保持 tokenbank-prompts)
@@ -1669,6 +1671,33 @@ class ResourceManager {
       require('./mcp-manager').syncToClients({ clientIds: ids });
     } catch (e) {
       console.warn('[resource-manager] prompt MCP re-sync failed:', e.message);
+    }
+    // 无 stdio 写盘通道的应用(Trae / API)：把内置 prompts 绑到内置中转，按 cid 交付
+    this._ensureRelayDelivery(ids, ['tokenbank-prompts']);
+  }
+
+  /**
+   * 为没有 stdio 写盘通道的已纳管应用（Trae / API 应用）绑定内置 MCP 到内置中转，
+   * 使其经 HTTP 中转（/mcp/{cid}）按投射集取到 prompt / resources。stdio 应用不受影响。
+   */
+  _ensureRelayDelivery(clientIds, serverIds) {
+    try {
+      const { listSyncEnabledClientIds, resolveMcpSyncClientId } = require('./mcp-agent-targets');
+      const stdio = new Set(listSyncEnabledClientIds());
+      const relayCids = [...new Set(clientIds || [])]
+        .map((id) => resolveMcpSyncClientId(id) || id)
+        .filter((id) => id && !stdio.has(id));
+      if (!relayCids.length) return;
+      const mcp = require('./mcp-manager');
+      for (const serverId of serverIds) {
+        try {
+          mcp.setServerGatewayRouted(serverId, true, relayCids);
+        } catch (e) {
+          console.warn('[resource-manager] relay bind failed:', serverId, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[resource-manager] ensure relay delivery failed:', e.message);
     }
   }
 

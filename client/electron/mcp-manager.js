@@ -1558,17 +1558,19 @@ class MCPManager {
    * 中转网关启动配置：第三方 MCP 原样使用 command/args/env（不做 npx/env 等特判）；
    * 仅展开 Token Bank 内置的 __DYNAMIC_ELECTRON__ 占位符。
    */
-  resolveGatewaySpawnConfig(serverRow) {
+  resolveGatewaySpawnConfig(serverRow, clientId = '') {
     this.init();
     const command = String(serverRow?.command || '').trim();
     const needsBuiltinLaunch = command === '__DYNAMIC_ELECTRON__'
       || isTokenbankBuiltinRelayId(serverRow?.id)
       || serverRow?.id === BUILTIN_BRIDGE_ID;
     if (needsBuiltinLaunch) {
+      // clientId 作为 TB_CLIENT_ID：内置 prompts/resources 按「投射到该应用」的集合门控可见性。
+      // 中转网关对每个应用 cid 各起一份内置后端，故此处必须透传 cid（默认空 = 通用/全部）。
       return this._buildRuntimeServerConfig(serverRow, {
         taskId: 'gateway',
         workingDir: process.cwd(),
-        mainAgentId: '',
+        mainAgentId: String(clientId || ''),
         sessionKey: '',
         sessionInstanceId: '',
       });

@@ -174,7 +174,10 @@ function isAllowedGatewayClientId(id) {
   if (listGatewayBindClientIds().includes(id)) return true;
   // Gateway 新建的 API 应用 id 形如 app-xxxxxxxx
   if (/^app-[\w.-]+$/.test(id)) return true;
-  return listSyncEnabledClientIds().includes(id);
+  if (listSyncEnabledClientIds().includes(id)) return true;
+  // 已纳管应用（含 Trae 等会话应用）：可作内置中转的交付目标 cid
+  try { if (listManagedAppTargetIds().has(id)) return true; } catch { /* ignore */ }
+  return false;
 }
 
 module.exports = {

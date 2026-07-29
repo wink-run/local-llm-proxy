@@ -18,9 +18,27 @@ const PREFERRED_PORT = 11431;
 
 let server = null;
 let endpoint = null;
-/** @type {Map<string, StdioBackend>} */
+/** 非内置 stdio MCP：全应用共享一份后端，按 id 复用 @type {Map<string, StdioBackend>} */
 const backends = new Map();
+/** 内置 prompts/resources/models：按应用 cid 各起一份（TB_CLIENT_ID=cid 门控可见集）@type {Map<string, StdioBackend>} */
+const builtinBackends = new Map();
+/** 当前可代理的路由行（stdio + 内置），id → row */
+let routedRows = new Map();
 let getRoutedServers = () => [];
+
+/** 需按 cid 分别起后端的内置中转 MCP（其可见集随 TB_CLIENT_ID 变化） */
+const BUILTIN_RELAY_IDS = new Set([
+  'tokenbank-prompts',
+  'tokenbank-models',
+  'tokenbank-resources',
+]);
+function isBuiltinRelayId(id) {
+  return BUILTIN_RELAY_IDS.has(String(id || ''));
+}
+/** 内置后端按 (id, cid) 唯一 */
+function builtinKey(id, cid) {
+  return `${id}::${cid || ''}`;
+}
 
 function generateToken() {
   return crypto.randomBytes(24).toString('hex');
@@ -92,25 +110,21 @@ function parseClientIdFromPath(pathname) {
   return { ok: false, clientId: '' };
 }
 
-/** 某应用可见的后端（gateway_clients 含该 app） */
+/** 某应用可见的后端（gateway_clients 含该 app）；内置按 cid 各起一份 */
 function backendsForClient(clientId) {
   syncBackends();
   const cid = safeClientId(clientId);
-  if (!cid) {
-    // 未指定应用：返回全部（兼容旧 /mcp）；UI 默认按应用复制
-    return [...backends.values()];
-  }
-  return [...backends.values()].filter((b) => {
-    const clients = Array.isArray(b.row?.gateway_clients) ? b.row.gateway_clients : [];
+  const visibleRows = [...routedRows.values()].filter((row) => {
+    if (!cid) return true; // 未指定应用：返回全部（兼容旧 /mcp）
+    const clients = Array.isArray(row?.gateway_clients) ? row.gateway_clients : [];
     if (clients.length) return clients.includes(cid);
-    // 旧数据仅 gateway_routed：仅 Token Bank 内置 MCP 对「通用」档可见
-    if (!b.row?.gateway_routed) return false;
-    const id = b.row?.id || '';
-    const isBuiltin = id === 'tokenbank-prompts'
-      || id === 'tokenbank-models'
-      || id === 'tokenbank-resources';
-    return cid === 'api' && isBuiltin;
+    // 旧数据仅 gateway_routed：仅内置 MCP 对「通用」档可见
+    if (!row?.gateway_routed) return false;
+    return cid === 'api' && isBuiltinRelayId(row.id);
   });
+  return visibleRows
+    .map((row) => (isBuiltinRelayId(row.id) ? getBuiltinBackend(row, cid) : backends.get(row.id)))
+    .filter(Boolean);
 }
 
 function sendJson(res, code, obj, extraHeaders = {}) {
@@ -147,8 +161,9 @@ function safePrefix(name) {
 
 /** stdio MCP 后端：按需拉起并复用连接 */
 class StdioBackend {
-  constructor(serverRow) {
+  constructor(serverRow, clientId = '') {
     this.id = serverRow.id;
+    this.clientId = String(clientId || ''); // 内置后端按此注入 TB_CLIENT_ID
     this.name = serverRow.name || serverRow.id;
     this.prefix = safePrefix(this.name);
     this.row = serverRow;
@@ -180,7 +195,7 @@ class StdioBackend {
     try {
       const mcpManager = require('./mcp-manager');
       if (typeof mcpManager.resolveGatewaySpawnConfig === 'function') {
-        const cfg = mcpManager.resolveGatewaySpawnConfig(this.row) || {};
+        const cfg = mcpManager.resolveGatewaySpawnConfig(this.row, this.clientId) || {};
         command = String(cfg.command || '').trim();
         args = Array.isArray(cfg.args) ? cfg.args : [];
         envExtra = cfg.env && typeof cfg.env === 'object' ? cfg.env : {};
@@ -320,14 +335,17 @@ function syncBackends() {
     if (!row.command) continue;
     want.set(row.id, row);
   }
+  routedRows = want;
 
+  // 非内置：全应用共享一份，按 id 复用/重建/清理
   for (const [id, backend] of backends) {
-    if (!want.has(id)) {
+    if (!want.has(id) || isBuiltinRelayId(id)) {
       backend.stop();
       backends.delete(id);
     }
   }
   for (const [id, row] of want) {
+    if (isBuiltinRelayId(id)) continue; // 内置走 per-cid 惰性创建
     const existing = backends.get(id);
     if (!existing) {
       backends.set(id, new StdioBackend(row));
@@ -345,6 +363,30 @@ function syncBackends() {
       }
     }
   }
+
+  // 内置 per-cid：行已不再路由则回收对应的所有 cid 实例
+  for (const [key, backend] of builtinBackends) {
+    const rid = key.slice(0, key.indexOf('::'));
+    if (!want.has(rid)) {
+      backend.stop();
+      builtinBackends.delete(key);
+    } else {
+      backend.row = want.get(rid);
+    }
+  }
+}
+
+/** 取/建某应用 cid 的内置后端（TB_CLIENT_ID=cid） */
+function getBuiltinBackend(row, cid) {
+  const key = builtinKey(row.id, cid);
+  let b = builtinBackends.get(key);
+  if (!b) {
+    b = new StdioBackend(row, cid || '');
+    builtinBackends.set(key, b);
+  } else {
+    b.row = row;
+  }
+  return b;
 }
 
 async function aggregateTools(clientId = '') {
@@ -491,6 +533,7 @@ function startMcpGateway(listRoutedFn) {
       sendJson(res, 200, {
         ok: true,
         backends: [...backends.keys()],
+        builtinBackends: [...builtinBackends.keys()],
         routed: (getRoutedServers() || []).length,
       });
       return;
@@ -607,6 +650,8 @@ function reloadMcpGateway() {
 function stopMcpGateway() {
   for (const b of backends.values()) b.stop();
   backends.clear();
+  for (const b of builtinBackends.values()) b.stop();
+  builtinBackends.clear();
   if (server) {
     try { server.close(); } catch { /* ignore */ }
     server = null;
