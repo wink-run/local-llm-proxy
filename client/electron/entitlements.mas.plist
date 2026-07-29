@@ -5,19 +5,28 @@
   <!-- Mac App Store 沙箱 - 必须启用 -->
   <key>com.apple.security.app-sandbox</key>
   <true/>
-  
-  <!-- 网络访问权限 -->
+
+  <!-- 出站：拉取模型目录、调用上游 API、OAuth 等 -->
   <key>com.apple.security.network.client</key>
   <true/>
+  <!--
+    入站（必需）：应用在本机 loopback 上启动 HTTP 服务并接受连接：
+    - Local LLM / OpenAI-compatible Gateway（默认 127.0.0.1:11430）
+    - MCP Gateway（127.0.0.1，供外部 Agent/IDE 接入）
+    - Agent Dispatch HTTP（127.0.0.1，动态端口）
+    仅 network.client 无法在沙箱内 listen；自动化扫描若未识别，请在
+    App Review Information / Resolution Center 说明上述本机服务用途。
+    详见 docs/APP_REVIEW_NETWORK_SERVER.md
+  -->
   <key>com.apple.security.network.server</key>
   <true/>
-  
+
   <!-- 文件访问权限 -->
   <key>com.apple.security.files.user-selected.read-write</key>
   <true/>
   <key>com.apple.security.files.downloads.read-write</key>
   <true/>
-  
+
   <!-- 如需访问用户主目录,取消以下注释 -->
   <!-- <key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
   <array>

@@ -153,4 +153,69 @@ if (truncFixed.thinking) {
   assert.ok(truncFixed.output.includes('Hi'));
 }
 
+// 路径含「行业」时，「行」不可被当成中文回复起点而切断路径
+const {
+  findUserFacingCjkIndex,
+  findUserFacingStart,
+} = require('../inline-reasoning-split.cjs');
+const PATH_MIXED = 'The user is asking where the generated PPT is again. I already told them before. '
+  + 'Let me just confirm the file path directly. '
+  + '`/Users/ully/Desktop/tokenbank_image/储能行业发展报告_1995-2025.pptx`\n\n'
+  + '文件路径就在当前工作目录，14页，370KB。';
+assert.strictEqual(
+  findUserFacingCjkIndex(PATH_MIXED),
+  -1,
+  '不应在路径中的「行」处切开',
+);
+assert.ok(
+  !splitInlineReasoning(PATH_MIXED).some(
+    (p) => p.stepType === 'output' && p.content.startsWith('行业发展报告'),
+  ),
+  '回复不得以残缺文件名开头',
+);
+const pathParts = splitInlineReasoning(PATH_MIXED);
+const pathJoined = pathParts.map((p) => p.content).join('');
+assert.ok(
+  pathJoined.includes('/Users/ully/Desktop/tokenbank_image/储能行业发展报告_1995-2025.pptx'),
+  '完整路径必须保留',
+);
+// Markdown 反引号路径为原子单元：切点不得落在 `...` 内
+const tickPath = '`/Users/ully/Desktop/tokenbank_image/储能行业发展报告_1995-2025.pptx`';
+const tickIdx = PATH_MIXED.indexOf(tickPath);
+assert.ok(tickIdx >= 0);
+for (let i = tickIdx; i < tickIdx + tickPath.length; i += 1) {
+  assert.ok(
+    findUserFacingStart(PATH_MIXED) === 0 || findUserFacingStart(PATH_MIXED) < tickIdx || findUserFacingStart(PATH_MIXED) >= tickIdx + tickPath.length,
+    'findUserFacingStart 不得切进反引号路径',
+  );
+  break;
+}
+assert.strictEqual(
+  findUserFacingStart(PATH_MIXED),
+  0,
+  '仅含代码路径时不应产生用户可见切点',
+);
+
+// 已被错误切开的 thinking/output 对应拼回
+const pathThink = 'The user is asking where the generated PPT is again. Let me confirm. '
+  + '`/Users/ully/Desktop/tokenbank_image/储能';
+const pathOut = '行业发展报告_1995-2025.pptx`\n\n14页，370KB。直接用 PowerPoint 或 Keynote 打开即可。';
+const pathFixed = repairQuote(pathThink, pathOut);
+assert.ok(
+  pathFixed.output.includes('/Users/ully/Desktop/tokenbank_image/储能行业发展报告_1995-2025.pptx')
+    || `${pathFixed.thinking}${pathFixed.output}`.includes('/Users/ully/Desktop/tokenbank_image/储能行业发展报告_1995-2025.pptx'),
+  `路径应拼回完整，实际 thinking=${pathFixed.thinking.slice(-40)} output=${pathFixed.output.slice(0, 60)}`,
+);
+assert.ok(
+  !pathFixed.output.startsWith('行业发展报告'),
+  `回复不应以残缺文件名开头，实际: ${pathFixed.output.slice(0, 40)}`,
+);
+// 拼回后须保留成对反引号，整段仍是完整 Markdown 代码路径
+assert.ok(
+  /`\/Users\/ully\/Desktop\/tokenbank_image\/储能行业发展报告_1995-2025\.pptx`/.test(
+    `${pathFixed.thinking}${pathFixed.output}`,
+  ),
+  '拼回后应保留完整 `path` 代码片段',
+);
+
 console.log('inline-reasoning-split.test.js OK');

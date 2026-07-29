@@ -78,7 +78,7 @@ export function PathLink({ path, className, title }) {
     <code
       role="link"
       tabIndex={0}
-      title={title || '点击预览；不可预览文件将打开所在文件夹'}
+      title={title || '点击打开本地路径'}
       className={`px-1 py-0.5 rounded text-[0.9em] font-mono cursor-pointer break-all text-zinc-700 dark:text-zinc-300 hover:bg-black/[0.04] dark:hover:bg-white/[0.06] ${className || ''}`}
       onClick={(e) => {
         e.preventDefault();
@@ -175,7 +175,13 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
     if (p.type === 'bold') return <strong key={i} className="font-semibold">{p.value}</strong>;
     if (p.type === 'italic') return <em key={i}>{p.value}</em>;
     if (p.type === 'code') {
-      const { path: codePath, rest } = splitGluedLocalPath(p.value.trim());
+      const trimmed = p.value.trim();
+      // 整段已是合法路径时直接可点，避免粘连剥离误伤 .pptx 等
+      let codePath = trimmed;
+      let rest = '';
+      if (!looksLikeLocalPath(trimmed)) {
+        ({ path: codePath, rest } = splitGluedLocalPath(trimmed));
+      }
       if (looksLikeLocalPath(codePath)) {
         const gap = rest && /^[A-Za-z\u4e00-\u9fff]/.test(rest) ? ' ' : '';
         return (
@@ -193,17 +199,18 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
     }
     if (p.type === 'link') {
       const href = String(p.href || '').trim();
-      // file:/// 或裸本地路径的 markdown 链接 → 本地预览 / 所在文件夹
+      // file:/// 或裸本地路径的 markdown 链接 → 应用内预览 / 系统打开
       if (looksLikeLocalPath(href.replace(/^file:\/\//i, '')) || /^file:\/\//i.test(href)) {
         const local = href.replace(/^file:\/\//i, '');
-        const { path: localPath } = splitGluedLocalPath(local);
-        const openTarget = localPath || local;
+        const openTarget = looksLikeLocalPath(local)
+          ? local
+          : (splitGluedLocalPath(local).path || local);
         return (
           <span
             key={i}
             role="link"
             tabIndex={0}
-            title="点击预览；不可预览文件将打开所在文件夹"
+            title="点击打开本地路径"
             className={`${pathCodeCls} cursor-pointer hover:bg-black/[0.04] dark:hover:bg-white/[0.06] rounded px-0.5`}
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLocalPath(openTarget); }}
             onKeyDown={(e) => {
@@ -362,15 +369,18 @@ function renderTextBlock(text, keyPrefix, theme = 'default') {
     }
     if (b.type === 'code') {
       const trimmedCode = String(b.text || '').trim();
-      const { path: codePath } = splitGluedLocalPath(trimmedCode);
-      // 单行本地路径代码块：点击预览；不可预览文件打开所在目录
+      // 整块已是路径优先原样使用；否则再剥离粘连后缀
+      const codePath = looksLikeLocalPath(trimmedCode)
+        ? trimmedCode
+        : splitGluedLocalPath(trimmedCode).path;
+      // 单行本地路径代码块：点击即可打开
       if (looksLikeLocalPath(codePath) && !trimmedCode.includes('\n')) {
         return (
           <pre
             key={key}
             role="link"
             tabIndex={0}
-            title="点击预览；不可预览文件将打开所在文件夹"
+            title="点击打开本地路径"
             className="text-xs font-mono overflow-x-auto rounded-lg bg-zinc-900 dark:bg-zinc-950 text-zinc-200 px-3 py-2 my-1 max-h-80 overflow-y-auto whitespace-pre-wrap break-words cursor-pointer hover:bg-zinc-800"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLocalPath(codePath); }}
             onKeyDown={(e) => {

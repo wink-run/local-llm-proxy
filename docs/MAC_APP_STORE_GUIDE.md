@@ -524,6 +524,17 @@ chmod +x scripts/build-mas.sh
 
 ---
 
+## 附：常见拒审 — `com.apple.security.network.server`
+
+自动化扫描可能报：声明了 Incoming Connections（Server），但未发现匹配功能。
+
+**不要删除** `client/electron/entitlements.mas.plist` 中的 `com.apple.security.network.server`。Token Bank 启动时会在 `127.0.0.1` 上 `listen` 本地 Gateway / MCP / Agent Dispatch；沙箱下没有该权限则无法接受入站连接。
+
+处理步骤与可粘贴英文/中文说明见：**[APP_REVIEW_NETWORK_SERVER.md](./APP_REVIEW_NETWORK_SERVER.md)**  
+（填入 App Review Information，并在 Resolution Center 回复后重新提交即可，通常无需改二进制。）
+
+---
+
 **祝您上架顺利! 🎉**
 
 如有问题,欢迎在 GitHub 提 Issue: https://github.com/wink-run/local-llm-proxy/issues

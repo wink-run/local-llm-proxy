@@ -1379,7 +1379,7 @@ export default {
   'debug.preview.emptyDir': '空文件夹',
   'debug.preview.truncated': '条目过多，仅显示前一部分',
   'debug.preview.entryCount': '{n} 项',
-  'debug.preview.clickHint': '点击预览；文本/图片等直接打开，其它文件打开所在文件夹',
+  'debug.preview.clickHint': '点击打开本地路径；文本/图片等可应用内预览',
   'debug.preview.htmlRender': '渲染',
   'debug.preview.htmlSource': '源码',
   'debug.preview.resize': '拖动调整分栏宽度',

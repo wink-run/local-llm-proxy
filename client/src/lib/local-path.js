@@ -110,8 +110,8 @@ export function trimPathEdgePunct(raw) {
 
 /**
  * 剥开粘在扩展名后的单词（如 `.mp4Duration` → path + `Duration`）。
- * 在文件名段内匹配已知扩展名，且其后紧跟字母/汉字时切开。
- * （不用贪婪正则：`.mp4Duration` 会被吃成 `.mp4Duratio`+`n`）
+ * 在文件名段内先取该位点最长已知扩展名，再判断其后是否粘连。
+ * 避免 `.ppt` 误切 `.pptx`、`.doc` 误切 `.docx` 等前缀扩展名问题。
  */
 export function splitGluedLocalPath(raw) {
   const cleaned = trimPathEdgePunct(raw);
@@ -120,19 +120,26 @@ export function splitGluedLocalPath(raw) {
   const slash = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'));
   const dir = slash >= 0 ? cleaned.slice(0, slash + 1) : '';
   const name = slash >= 0 ? cleaned.slice(slash + 1) : cleaned;
-  // 长扩展名优先（.markdown 先于 .md）
+  // 长扩展名优先（.pptx 先于 .ppt，.markdown 先于 .md）
   const exts = [...KNOWN_PATH_EXTS].sort((a, b) => b.length - a.length);
 
   for (let i = 0; i < name.length; i += 1) {
     if (name[i] !== '.') continue;
+    // 当前 `.` 处只认最长匹配，防止短扩展名吃掉长扩展名的前缀
+    let matchedExt = '';
     for (const ext of exts) {
-      if (name.slice(i, i + ext.length).toLowerCase() !== ext) continue;
-      const after = name[i + ext.length];
-      if (!after || !/[A-Za-z\u4e00-\u9fff]/.test(after)) continue;
-      const path = dir + name.slice(0, i + ext.length);
-      if (looksLikeLocalPath(path)) {
-        return { path, rest: cleaned.slice(path.length) };
+      if (name.slice(i, i + ext.length).toLowerCase() === ext) {
+        matchedExt = ext;
+        break;
       }
+    }
+    if (!matchedExt) continue;
+    const after = name[i + matchedExt.length];
+    // 扩展名已完整结束 → 不是粘连，继续找更靠前的 `.`
+    if (!after || !/[A-Za-z\u4e00-\u9fff]/.test(after)) continue;
+    const path = dir + name.slice(0, i + matchedExt.length);
+    if (looksLikeLocalPath(path)) {
+      return { path, rest: cleaned.slice(path.length) };
     }
   }
 
@@ -141,36 +148,35 @@ export function splitGluedLocalPath(raw) {
 
 /**
  * 优先应用内预览：
- * - 目录 / 可预览文件 → 直接打开
- * - 其它文件（如 mp4）→ 右侧打开所在文件夹
+ * - 目录 / 可预览文件 → 应用内打开
+ * - 其它文件（pptx / mp4 等）→ 系统默认应用打开
  */
 export async function openLocalPath(filePath) {
   const target = String(filePath || '').trim().replace(/^file:\/\//i, '');
   if (!target) return;
 
-  let previewTarget = target;
-  if (looksLikeAbsoluteLocalPath(target) && !/[/\\]$/.test(target)) {
+  // 仅对可预览类型走应用内预览；Office/媒体等交给系统打开
+  const preferInAppPreview = (() => {
+    if (!looksLikeAbsoluteLocalPath(target)) return false;
+    if (/[/\\]$/.test(target)) return true;
     const m = /\.([A-Za-z0-9]{1,12})$/.exec(target);
-    if (m) {
-      const ext = `.${m[1].toLowerCase()}`;
-      // 有扩展名且不可预览 → 打开父目录
-      if (!PREVIEW_FILE_EXTS.has(ext)) {
-        previewTarget = dirnameLocalPath(target) || target;
-      }
+    if (!m) return true;
+    return PREVIEW_FILE_EXTS.has(`.${m[1].toLowerCase()}`);
+  })();
+
+  if (preferInAppPreview) {
+    try {
+      const handled = await openLocalFilePreview(target);
+      if (handled) return;
+    } catch (err) {
+      console.warn('[local-path] preview failed:', err);
     }
   }
 
-  try {
-    if (looksLikeAbsoluteLocalPath(previewTarget)) {
-      const handled = await openLocalFilePreview(previewTarget);
-      if (handled) return;
-    }
-  } catch (err) {
-    console.warn('[local-path] preview failed:', err);
-  }
   const api = typeof window !== 'undefined' ? window.electronAPI?.resource?.openPath : null;
   if (!api) return;
   try {
+    // action=open：用默认应用打开文件（聊天里点 .pptx 等）
     await api({ targetPath: target, action: 'open' });
   } catch (err) {
     console.warn('[local-path] openPath failed:', err);

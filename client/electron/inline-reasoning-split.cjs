@@ -45,8 +45,59 @@ function joinThinkingOutput(thinking, output) {
   return `${tt} ${oo}`.replace(/\s{2,}/g, ' ').trim();
 }
 
-/** 常见中文回复起句 */
-const CJK_REPLY_START = /^(我是|你好|您好|好的|当然|没问题|可以|嗯|行|抱歉|对不起)/;
+/**
+ * 常见中文回复起句。
+ * 「行」不可裸匹配：会误切路径里的「行业/银行/行程」等词。
+ */
+const CJK_REPLY_START = /^(我是|你好|您好|好的|当然|没问题|可以|嗯|行([，。！？\s]|$)|行啊|行吧|行的|抱歉|对不起)/;
+
+/** 行内/代码块内容是否像本地绝对路径 */
+function looksLikeCodePathBody(body) {
+  const t = String(body || '').trim();
+  return /^(?:file:\/\/)?(?:\/(?:Users|home|tmp|var|opt|private|Volumes)|~\/|[A-Za-z]:[\\/])/i.test(t);
+}
+
+/**
+ * 下标是否落在 Markdown 行内代码 `...` 或围栏 ```...``` 内。
+ * `` `/Users/.../储能行业发展报告.pptx` `` 整段视为不可分割路径。
+ */
+function isInsideInlineCode(text, idx) {
+  const s = String(text || '');
+  if (idx < 0 || idx >= s.length) return false;
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] !== '`') {
+      i += 1;
+      continue;
+    }
+    // 围栏代码块 ```
+    if (s.slice(i, i + 3) === '```') {
+      const end = s.indexOf('```', i + 3);
+      if (end < 0) return idx >= i;
+      if (idx >= i && idx < end + 3) return true;
+      i = end + 3;
+      continue;
+    }
+    const end = s.indexOf('`', i + 1);
+    if (end < 0) {
+      // 未闭合反引号：内容像路径则整段保护到文末
+      if (looksLikeCodePathBody(s.slice(i + 1)) && idx > i) return true;
+      return false;
+    }
+    if (idx > i && idx < end) return true;
+    i = end + 1;
+  }
+  return false;
+}
+
+/** CJK 是否落在本地绝对路径中间（含反引号包裹的完整路径、中文文件名） */
+function isCjkInsideLocalPath(text, cjkIdx) {
+  // Markdown 代码路径 `...` 内任意中文均不可切
+  if (isInsideInlineCode(text, cjkIdx)) return true;
+  const before = String(text || '').slice(0, cjkIdx);
+  // 裸路径 `/Users/...中文`（无反引号）
+  return /(?:file:\/\/)?(?:\/(?:Users|home|tmp|var|opt|private|Volumes)|~\/|[A-Za-z]:[\\/])[^\s'"<>|\n]*$/i.test(before);
+}
 
 function hasReasoningMeta(text) {
   return REASONING_META.test(String(text || ''));
@@ -131,7 +182,10 @@ function findUserFacingCjkIndex(text) {
   );
   if (metaThenCjk) {
     const idx = metaThenCjk.index + metaThenCjk[0].length;
-    if (!isCjkInsideUserQuote(raw, idx)) return idx;
+    // 不可切进 Markdown 代码路径 / 本地路径中的中文
+    if (!isCjkInsideUserQuote(raw, idx) && !isCjkInsideLocalPath(raw, idx) && !isInsideInlineCode(raw, idx)) {
+      return idx;
+    }
   }
 
   const re = /[\u4e00-\u9fff《「]/g;
@@ -140,6 +194,9 @@ function findUserFacingCjkIndex(text) {
     const idx = m.index;
     if (idx <= 6) continue;
     if (isCjkInsideUserQuote(raw, idx)) continue;
+    // `` `/path/中文名.pptx` `` 与裸路径中的中文文件名均不可当回复起点
+    if (isCjkInsideLocalPath(raw, idx)) continue;
+    if (isInsideInlineCode(raw, idx)) continue;
     const prefix = raw.slice(0, idx);
     if (!REASONING_META.test(prefix) && !looksLikeInlineReasoning(prefix)) continue;
     // 推理里夹的中文词：后面紧跟着英文 meta 续写 → 跳过
@@ -190,7 +247,10 @@ function findUserFacingEnIndex(text) {
 function findUserFacingStart(text) {
   const raw = String(text || '');
   if (!raw) return 0;
-  const candidates = [findUserFacingCjkIndex(raw), findUserFacingEnIndex(raw)].filter((n) => n > 0);
+  const candidates = [findUserFacingCjkIndex(raw), findUserFacingEnIndex(raw)]
+    .filter((n) => n > 0)
+    // Markdown 代码路径 / 围栏内禁止切开
+    .filter((n) => !isInsideInlineCode(raw, n) && !isCjkInsideLocalPath(raw, n));
   return candidates.length ? Math.min(...candidates) : 0;
 }
 
@@ -259,6 +319,34 @@ function stripReasoningLeakage(output, thinking) {
 }
 
 /**
+ * thinking 末尾停在本地路径 / Markdown 代码路径中间，output 以中文或路径续写续上
+ * 例：`…/储能` + `行业发展报告.pptx`
+ */
+function isPathSplitAcrossBoundary(thinking, output) {
+  const t = String(thinking || '').trimEnd();
+  const o = String(output || '').trimStart();
+  if (!t || !o) return false;
+
+  // 未闭合的 Markdown 代码路径：thinking 含奇数个 ` 且最后一段像路径
+  const tickCount = (t.match(/`/g) || []).length;
+  if (tickCount % 2 === 1) {
+    const afterTick = t.slice(t.lastIndexOf('`') + 1);
+    if (looksLikeCodePathBody(afterTick) || looksLikeCodePathBody(`${afterTick}${o}`)) {
+      return true;
+    }
+  }
+
+  if (!/^[\u4e00-\u9fff./~`]/.test(o)) return false;
+  // thinking 末尾已落在绝对路径段内，且以中文结尾（扩展名尚未出现）
+  if (!/(?:`|file:\/\/)?(?:\/(?:Users|home|tmp|var|opt|private|Volumes)|~\/|[A-Za-z]:[\\/])[^\s'"<>|\n]*[\u4e00-\u9fff]$/i.test(t)) {
+    return false;
+  }
+  // 拼回后应能看到常见文件扩展名，确认是路径续写而非两段无关中文
+  const joinedTail = `${t.slice(-120)}${o.slice(0, 120)}`;
+  return /\.[A-Za-z0-9]{1,12}(?:[`'"\s]|$)/.test(joinedTail);
+}
+
+/**
  * 修复 thinking 末尾与 output 开头之间的 Markdown/书名号截断
  * 例：think="…fresh one.** 《" + out="无题》 **\n诗…" → "**《无题》**\n诗…"
  */
@@ -290,6 +378,20 @@ function repairThinkingOutputBoundary(thinking, output) {
   // thinking 不应以 markdown/书名号碎片结尾
   if (/(\*\*\s*[《「]?|\*\s*[《「]?)\s*$/.test(t)) {
     t = t.replace(/(\*\*\s*[《「]?|\*\s*[《「]?)\s*$/, '').trim();
+  }
+
+  // 本地路径在中文文件名处被切开：…/储能 + 行业发展报告.pptx → 拼回
+  if (isPathSplitAcrossBoundary(t, o)) {
+    const combined = `${t}${o}`;
+    const cut = findUserFacingStart(combined);
+    if (cut > 0 && hasClearReasoningBoundary(combined)) {
+      return {
+        thinking: combined.slice(0, cut).trim(),
+        output: combined.slice(cut).trim(),
+      };
+    }
+    // 分界不清时整段当输出，避免路径继续残缺
+    return { thinking: '', output: combined.trim() };
   }
 
   // 词中/引号截断：拼回后能清晰切开才保留推理，否则整段当输出
