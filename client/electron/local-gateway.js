@@ -2329,6 +2329,32 @@ function stripUnsupportedAnthropicFields(body, provider) {
 
 // Call one provider with format conversion; throws on HTTP error.
 // provider is already resolved (base_url/token correct, models populated).
+// ── 出站 max_tokens 夹紧 ─────────────────────────────────────────────────────
+// 部分客户端（如 WorkBuddy）按模型上下文窗口（256K）直接把 max_tokens 设成 262144，
+// 但上游对「输出」另有更小的硬上限，超过直接 400（例：Kimi K2 输出上限 131072）。
+// 网关按已知模型族夹紧输出 token，仅在请求值超过已知上限时收窄；未知模型一律不动，避免误伤。
+const OUTPUT_TOKEN_CAPS = [
+  { re: /kimi|moonshot|(^|[^a-z0-9])k2(\.|[-_ ]|$)/i, cap: 131072 },  // Kimi/Moonshot K2 系列输出上限 128K
+];
+function modelOutputCap(model) {
+  const m = String(model || '');
+  for (const { re, cap } of OUTPUT_TOKEN_CAPS) if (re.test(m)) return cap;
+  return null;
+}
+// 就地夹紧（传入的应为每次尝试的浅拷贝 body）。覆盖三种字段名：
+// OpenAI(max_tokens / max_completion_tokens)、Anthropic(max_tokens)、Responses(max_output_tokens)。
+function clampOutputTokens(model, body) {
+  const cap = modelOutputCap(model);
+  if (!cap || !body || typeof body !== 'object') return body;
+  for (const f of ['max_tokens', 'max_completion_tokens', 'max_output_tokens']) {
+    if (Number.isFinite(body[f]) && body[f] > cap) {
+      debugLog('夹紧 max_tokens（超模型输出上限）', { model, field: f, from: body[f], to: cap });
+      body[f] = cap;
+    }
+  }
+  return body;
+}
+
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res, routeMeta = null) {
   // OAuth 供给源：确保 access_token 有效（必要时刷新并回写 config），附加 _oauth 模块
   provider = await oauth.prepare(provider, _getConfig, _saveConfig);
@@ -2352,12 +2378,12 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   // Codex Responses 请求：anthropic 供给源走 Responses→Anthropic 桥，否则走 Responses⇄Chat
   if (reqPath === '/v1/responses' || reqPath === '/responses') {
     const toAnthropic = providerApiFormat(provider) === 'anthropic';
-    const rb = { ...body, model: attemptModel };
+    const rb = clampOutputTokens(attemptModel, { ...body, model: attemptModel });
     return toAnthropic
       ? await proxyResponsesViaAnthropic(provider, rb, attemptModel, res)
       : await proxyResponsesViaChat(provider, rb, attemptModel, res);
   }
-  const attemptBody = { ...body, model: attemptModel };
+  const attemptBody = clampOutputTokens(attemptModel, { ...body, model: attemptModel });
   const oaiConvertOpts = { includeImages: modelSupportsVision(attemptModel, provider) };
 
   // Gemini provider（generateContent）：先把客户端请求归一成 OpenAI 体，再转 Gemini
