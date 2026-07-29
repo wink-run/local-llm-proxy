@@ -113,6 +113,44 @@ function applyCodexProvider(configPath, opts = {}) {
   return { ok: true };
 }
 
+/**
+ * 无 state 无备份时的兜底清理：按特征串删除我们写的顶层 key + tokenbank 段。
+ * 关键：removeCodexCatalog 会删掉目录文件，若此时 model_catalog_json 引用仍留在
+ * config.toml，codex 启动会 `No such file or directory (os error 2)` 直接崩（连
+ * `codex exec` 建任务都起不来）。故 revert 必须自愈——即便 state/备份都丢了。
+ * 只删归属明确的痕迹：model_catalog_json（本 key 仅本模块写）、model_provider =
+ * "<providerId>"、[model_providers.<providerId>] 段；不碰无法归属的 model 等。
+ */
+function stripCodexProviderArtifacts(configPath, providerId = 'tokenbank') {
+  let text;
+  try { text = fs.readFileSync(configPath, 'utf8'); } catch { return false; }
+  let lines = text.split(/\r?\n/);
+  const DEL = '\0DEL\0';
+  const firstTable = lines.findIndex((l) => /^\s*\[/.test(l));
+  const topEnd = firstTable < 0 ? lines.length : firstTable;
+  // 顶层区域内删 model_catalog_json（任意值）与 model_provider = "<providerId>"
+  const catRe = /^\s*model_catalog_json\s*=/;
+  const provRe = new RegExp('^\\s*model_provider\\s*=\\s*["\']' + escapeRe(providerId) + '["\']\\s*$');
+  let changed = false;
+  for (let i = 0; i < Math.min(topEnd, lines.length); i++) {
+    if (catRe.test(lines[i]) || provRe.test(lines[i])) { lines[i] = DEL; changed = true; }
+  }
+  lines = lines.filter((l) => l !== DEL);
+  // 删 [model_providers.<providerId>] 段（到下一个表头或 EOF）
+  const secHeadRe = new RegExp('^\\s*\\[model_providers\\.' + escapeRe(providerId) + '\\]\\s*$');
+  const s = lines.findIndex((l) => secHeadRe.test(l));
+  if (s >= 0) {
+    let e = s + 1;
+    while (e < lines.length && !/^\s*\[/.test(lines[e])) e++;
+    lines.splice(s, e - s);
+    changed = true;
+  }
+  if (!changed) return false;
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+  fs.writeFileSync(configPath, lines.join('\n') + '\n', 'utf8');
+  return true;
+}
+
 /** 还原：按 state 精确删除我们的顶层 key + 段、恢复旧值；失败回退整文件备份。 */
 function revertCodexProvider(configPath) {
   const sp = statePath(configPath);
@@ -121,7 +159,10 @@ function revertCodexProvider(configPath) {
   try { st = JSON.parse(fs.readFileSync(sp, 'utf8')); } catch {}
   if (!st) {
     if (fs.existsSync(bak)) { fs.copyFileSync(bak, configPath); fs.unlinkSync(bak); return { ok: true, note: 'backup' }; }
-    return { ok: true, note: 'no-state' };
+    // state 与备份都丢了：仍按特征串清掉 model_catalog_json / tokenbank 段，
+    // 否则配套的 removeCodexCatalog 删文件后会留下悬空引用，codex 直接崩。
+    const stripped = stripCodexProviderArtifacts(configPath);
+    return { ok: true, note: stripped ? 'stripped' : 'no-state' };
   }
   try {
     if (!st.existed) {
@@ -162,30 +203,54 @@ function revertCodexProvider(configPath) {
   }
 }
 
-// ── Codex model_catalog_json 生成(照抄实测 schema，缺元数据用默认值) ──
-function catalogModel(modelId, priority) {
+// ── Codex model_catalog_json 生成(对齐当前 Codex 实测 schema，缺元数据用默认值) ──
+// 关键：supported_reasoning_levels / default_reasoning_level 必须覆盖 Codex 现用的
+// low/medium/high/xhigh/max/ultra。旧版只声明 none/high，而 config 的
+// model_reasoning_effort 默认 medium —— 模型不声明 medium，Codex Desktop 无法把
+// 该自定义模型渲染出来，模型名就显示为空、回落成「自定义」。另补齐新 schema 增加的
+// tool_mode / apply_patch_tool_type / use_responses_lite 等字段，保持条目可被识别。
+function catalogModel(modelId, priority, vision = false) {
   return {
-    additional_speed_tiers: [], availability_nux: null,
+    additional_speed_tiers: [], apply_patch_tool_type: 'freeform', availability_nux: null,
     base_instructions: "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.",
-    context_window: 128000, default_reasoning_level: 'high', default_reasoning_summary: 'none',
+    comp_hash: '3000', context_window: 128000, default_reasoning_level: 'medium',
+    default_reasoning_summary: 'none', default_verbosity: 'low',
     description: modelId, display_name: modelId, effective_context_window_percent: 95,
-    experimental_supported_tools: [], input_modalities: ['text'], max_context_window: 128000,
+    experimental_supported_tools: [], include_skills_usage_instructions: false,
+    // input_modalities 跟随供给源模型的「图文」标志：图文(vision)→可附图，纯文本→仅文本。
+    input_modalities: vision ? ['text', 'image'] : ['text'], max_context_window: 128000, multi_agent_version: 'v2',
     priority, service_tiers: [], shell_type: 'shell_command', slug: modelId,
     support_verbosity: false, supported_in_api: true,
     supported_reasoning_levels: [
-      { description: 'Disable Thinking', effort: 'none' },
-      { description: 'Enabled Thinking', effort: 'high' },
+      { effort: 'low', description: 'Fast responses with lighter reasoning' },
+      { effort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
+      { effort: 'high', description: 'Greater reasoning depth for complex problems' },
+      { effort: 'xhigh', description: 'Extra high reasoning depth for complex problems' },
+      { effort: 'max', description: 'Maximum reasoning depth for the hardest problems' },
     ],
     supports_image_detail_original: false, supports_parallel_tool_calls: false,
     supports_reasoning_summaries: true, supports_search_tool: false,
-    truncation_policy: { limit: 10000, mode: 'bytes' }, upgrade: null, visibility: 'list',
+    tool_mode: 'code_mode_only',
+    truncation_policy: { limit: 10000, mode: 'tokens' }, upgrade: null,
+    use_responses_lite: true, visibility: 'list', web_search_tool_type: 'text_and_image',
   };
 }
 
-/** 生成 <codexHome>/tokenbank-codex-catalog.json，models 为模型名数组(去重、保序)。 */
+/**
+ * 生成 <codexHome>/tokenbank-codex-catalog.json。
+ * models 每项可为模型名字符串，或 { name, vision } —— vision:true 的模型写
+ * input_modalities:['text','image']，否则仅 ['text']。按 name 去重、保序。
+ */
 function writeCodexCatalog(codexHome, models, fileName = CATALOG_FILE) {
-  const uniq = [...new Set((models || []).filter(Boolean).map(String))];
-  const doc = { models: uniq.map((m, i) => catalogModel(m, 1000 + i)) };
+  const seen = new Set();
+  const uniq = [];
+  for (const m of Array.isArray(models) ? models : []) {
+    const name = typeof m === 'string' ? m : (m && m.name);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    uniq.push({ name: String(name), vision: typeof m === 'object' ? !!m.vision : false });
+  }
+  const doc = { models: uniq.map((m, i) => catalogModel(m.name, 1000 + i, m.vision)) };
   const file = path.join(codexHome, fileName);
   fs.writeFileSync(file, JSON.stringify(doc, null, 2), 'utf8');
   return { ok: true, count: uniq.length, file };

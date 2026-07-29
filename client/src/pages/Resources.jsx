@@ -1660,6 +1660,18 @@ export default function Resources() {
     [resources],
   );
 
+  /** agentId → 应用展示名：投射标签缺 label 时回退用，避免直接暴露 app-xxxx 原始 id */
+  const appNameById = useMemo(() => {
+    const map = new Map();
+    for (const a of managedAppTargets) {
+      if (a?.id && a.label) map.set(a.id, a.label);
+    }
+    for (const a of agents) {
+      if (a?.id && a.label && !map.has(a.id)) map.set(a.id, a.label);
+    }
+    return map;
+  }, [managedAppTargets, agents]);
+
   /** `${type}:${name}` → 声明绑定它的智能体列表（skill / prompt） */
   const resourceBoundByAssistants = useMemo(() => {
     const map = new Map();
@@ -2114,7 +2126,10 @@ export default function Resources() {
                 canUnproject ? 'tb-tag-blue' : 'tb-tag-muted !border-solid'
               }`}
             >
-              {p.label || p.agentId}
+              {/* p.label 对自定义应用回退成 agentId（后端无友好名），此时用 apps 列表的展示名 */}
+              {(p.label && p.label !== p.agentId)
+                ? p.label
+                : (appNameById.get(p.agentId) || p.agentId)}
               {canUnproject && (
                 <button
                   type="button"

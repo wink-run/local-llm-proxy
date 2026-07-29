@@ -283,6 +283,12 @@ function appendInputAsChatMessages(input, messages) {
         output = JSON.stringify(canonicalize(item.output));
       }
       messages.push({ role: 'tool', tool_call_id: callId, content: output });
+    } else if (type === 'additional_tools') {
+      // Codex 扩展 item：中途声明额外工具（如 custom 类型的 "exec" 编排工具），带 role
+      // 但无 content。它不是对话消息——落到下面的通用分支会产出 {role, content:null}，
+      // kimi/DeepSeek 等 chat 上游会直接 400。这里跳过（custom 工具无 JSON schema，
+      // 无法映射成 chat function tool），模型退回直接调用具名工具即可。
+      return;
     } else if (type === 'reasoning') {
       const reasoning = extractReasoningSummaryText(item);
       const r = reasoning && reasoning.trim();

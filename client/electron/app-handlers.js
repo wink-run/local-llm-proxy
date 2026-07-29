@@ -189,6 +189,21 @@ function routeModelId(routeId, routes = []) {
 }
 
 /** 应用绑定的路由 → 模型名数组（去重、保序）。供 Codex model catalog 等消费。 */
+/**
+ * 供给源模型是否为「图文」(type='vision'，支持图片输入)。扫描 providers[].models[] 按名字匹配。
+ * providers 传 readLocalConfig().providers；缺省/未匹配一律 false。兼容旧的 vision 布尔标志。
+ */
+function modelVision(modelId, providers = []) {
+  if (!modelId) return false;
+  for (const p of Array.isArray(providers) ? providers : []) {
+    for (const m of (p && Array.isArray(p.models) ? p.models : [])) {
+      const id = typeof m === 'string' ? m : (m && (m.name || m.id));
+      if (id === modelId) return typeof m === 'object' && (m.type === 'vision' || (m.type === 'chat' && !!m.vision));
+    }
+  }
+  return false;
+}
+
 function getRouteModels(app, routes = []) {
   const ids = Array.isArray(app?.route_ids) && app.route_ids.length
     ? app.route_ids
@@ -215,8 +230,13 @@ function patchRouteWorkbuddyModels(patch, cfg, ctx) {
 
   const providerName = cfg.provider_name || ctx.marker || 'tokenbank';
   const routes = ctx.routes || [];
+  const providers = ctx.providers || [];
   const models = routeIds
-    .map(rid => ({ ...template, id: routeModelId(rid, routes), name: providerName }))
+    .map(rid => {
+      const id = routeModelId(rid, routes);
+      // supportsImages 跟随供给源「图文」标志；template 已带默认值，按模型覆盖
+      return { ...template, id, name: providerName, supportsImages: modelVision(id, providers) };
+    })
     .filter(m => m.id);
 
   const out = { ...patch, [modelsKey]: models };
@@ -580,6 +600,7 @@ module.exports = {
   resolveHandlerId,
   routeModelId,
   getRouteModels,
+  modelVision,
   routeLabelFor,
   handlerHasPatchRoute,
   resolveRouteMultiSelect,

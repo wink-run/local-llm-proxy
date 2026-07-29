@@ -1038,17 +1038,21 @@ export default function McpProvidersTab() {
           })}
         </div>
         <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-zinc-100 dark:border-zinc-700 bg-zinc-50/80 dark:bg-zinc-900/40 shrink-0">
-          <button
-            type="button"
-            onClick={() => setSyncSelectedIds(
-              isRelay
-                ? [...gatewayApiApps.map((a) => a.id), ...syncWritableAgents.map((t) => t.id)]
-                : syncWritableAgents.filter((t) => t.projectable).map((t) => t.id),
-            )}
-            className="text-[10px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-          >
-            {t('providers.mcp.selectAll')}
-          </button>
+          {(() => {
+            const allIds = isRelay
+              ? [...gatewayApiApps.map((a) => a.id), ...syncWritableAgents.map((t) => t.id)]
+              : syncWritableAgents.filter((t) => t.projectable).map((t) => t.id);
+            const allSelected = allIds.length > 0 && allIds.every((id) => syncSelectedIds.includes(id));
+            return (
+              <button
+                type="button"
+                onClick={() => setSyncSelectedIds(allSelected ? [] : allIds)}
+                className="text-[10px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+              >
+                {allSelected ? t('providers.mcp.deselectAll') : t('providers.mcp.selectAll')}
+              </button>
+            );
+          })()}
           <button
             type="button"
             disabled={!!busy || (!installMenuServerId && syncSelectedIds.length === 0)}

@@ -162,6 +162,17 @@ function providerModelType(model, provider) {
 }
 
 function modelSupportsVision(model, provider) {
+  // 优先用供给源模型条目的显式模态：type='vision'(图文)→支持；'chat'(文本)/'embedding'→不支持
+  const list = provider?.models;
+  if (Array.isArray(list)) {
+    for (const m of list) {
+      const id = typeof m === 'string' ? m : (m.name || m.id);
+      if (id === model && typeof m === 'object') {
+        if (m.type === 'vision' || (m.type === 'chat' && m.vision)) return true;
+        if (m.type === 'chat' || m.type === 'text' || m.type === 'embedding') return false;
+      }
+    }
+  }
   const t = providerModelType(model, provider);
   if (t === 'image') return true;
   if (t === 'chat') return false;
@@ -2606,7 +2617,8 @@ function buildStrategyCandidates(strategyName, filters, reqPath, skipP2P, rrKey)
     if (filters && filters.provider && p.id !== filters.provider) continue;
     for (const m of (p.models || [])) {
       const name = typeof m === 'string' ? m : (m && m.name);
-      const mtype = typeof m === 'string' ? 'chat' : (m.type || 'chat');
+      let mtype = typeof m === 'string' ? 'chat' : (m.type || 'chat');
+      if (mtype === 'vision' || mtype === 'text') mtype = 'chat';   // 图文/文本对路由都算 chat 模态
       if (!name || mtype !== modality) continue;
       if (personalSet && !personalSet.has(name)) continue;           // 来源=个人：模型须在个人源集
       if (filters && filters.model && name !== filters.model) continue;
@@ -3301,7 +3313,8 @@ function buildDefaultModelList() {
       object: 'model',
       created: 0,
       owned_by: ob,
-      ...(modelType && modelType !== 'chat' ? { model_type: modelType } : {}),
+      // vision(图文) 对 API 仍是 chat completions 模型，/v1/models 不额外标注（只有 image/embedding 影响路由）
+      ...(modelType && modelType !== 'chat' && modelType !== 'vision' ? { model_type: modelType } : {}),
     });
   };
   if (isCommunityP2pEnabled()) {

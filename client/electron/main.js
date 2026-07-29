@@ -4560,6 +4560,9 @@ function registerIPC() {
         resolvedPatch = applyRouteToProxyPatch(handlerId, resolvedPatch, {
           routeIds,
           routes: readLocalConfig().scene_routes || [],
+          // 供给源模型（含 type=vision 图文标志）存于 agent config（~/.llm-agent/config.json，
+          // 与网关同源），不在 userData/local-config.json —— 供 workbuddy supportsImages 取值
+          providers: (readAgentConfig() || {}).providers || [],
           marker: def?.marker || appRec?.marker,
           claudeName,
           // 多路由时每条按 claude_models 列表依次分配独立 name（与 keyScene 绑定顺序一致）
@@ -4571,7 +4574,7 @@ function registerIPC() {
       // 并保留 auth.json 官方登录态(Desktop 门控放行自定义模型的前提)。
       if (handlerId === 'codex-desktop-api') {
         const codexCfg = require('./codex-config');
-        const { getRouteModels } = require('./app-handlers');
+        const { getRouteModels, modelVision } = require('./app-handlers');
         const codexHome = path.dirname(file);
         // config.toml 不存在则不新建（避免自写后再被判已安装）
         if (!fs.existsSync(file)) {
@@ -4580,7 +4583,11 @@ function registerIPC() {
         const baseUrl = resolvedPatch['model_providers.tokenbank.base_url'] || `${patchCtx.base}/v1`;
         const models = getRouteModels(appRec, readLocalConfig().scene_routes || []);
         const model = resolvedPatch['model'] || models[0] || '';
-        codexCfg.writeCodexCatalog(codexHome, models);
+        // 按供给源「图文」标志给每个模型标注 vision，驱动 catalog 的 input_modalities。
+        // 供给源模型存于 agent config（与网关同源），不在 userData/local-config.json。
+        const providersCfg = (readAgentConfig() || {}).providers || [];
+        const catalogModels = models.map(name => ({ name, vision: modelVision(name, providersCfg) }));
+        codexCfg.writeCodexCatalog(codexHome, catalogModels);
         const applied = codexCfg.applyCodexProvider(file, {
           providerId: 'tokenbank', name: 'Tokenbank',
           baseUrl, model, bearerToken: appRec?.api_key || '', catalogFile: codexCfg.CATALOG_FILE,

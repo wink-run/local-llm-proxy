@@ -3298,7 +3298,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         const ts = testState[app.id];
                         return (
                           <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isGatewayRouted}
-                            className={`text-xs px-1.5 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
+                            className={`text-[11px] px-1.5 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
                               ? 'border-zinc-300 dark:border-zinc-600 text-zinc-400 opacity-60 cursor-wait'
                               : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-200 disabled:hover:text-zinc-500`}>
                             {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
@@ -3307,7 +3307,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       })()}
                       {!app._virtual_apikey ? (
                         <button onClick={() => openAppSettings(app)}
-                          className="text-xs px-1.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
+                          className="text-[11px] px-1.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
                           {t('gateway.common.settings')}
                         </button>
                       ) : null}
@@ -3315,30 +3315,30 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         tracked ? (
                           <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
                             title={t('gateway.apps.revertTitle')}
-                            className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                            className="text-[11px] px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                             {busyId === app.id ? '…' : t('gateway.common.revert')}
                           </button>
                         ) : (
                           <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                            className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                             {busyId === app.id ? '…' : t('gateway.common.manage')}
                           </button>
                         )
                       ) : app.link_method === 'shim' ? (
                         tracked ? (
                           <button onClick={() => setTracked(app, false)} disabled={busyId === app.agent_id || busyId === app.id}
-                            className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                            className="text-[11px] px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                             {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.revert')}
                           </button>
                         ) : (
                           <button onClick={() => setTracked(app, true)} disabled={busyId === app.agent_id || busyId === app.id}
-                            className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                             {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.manage')}
                           </button>
                         )
                       ) : app._virtual_apikey ? (
                         <button onClick={() => addApiKeyApp(app)} disabled={busyId === app.id}
-                          className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                          className="text-[11px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                           {busyId === app.id ? '…' : t('gateway.common.manage')}
                         </button>
                       ) : app.host_method === 'config-file' ? (
@@ -3346,23 +3346,23 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                           // 开发者模式未就绪：弹出「如何启用」的步骤提示（非设置窗口），绝不显示危险的「删除」
                           <button onClick={() => { setDevTipMsg(''); setDevTipApp(app); }}
                             title={t('gateway.app.devModeTitle')}
-                            className="text-xs px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-700/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors shrink-0 font-medium">
+                            className="text-[11px] px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-700/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors shrink-0 font-medium">
                             {t('gateway.apps.enableDevMode')}
                           </button>
                         ) : tracked ? (
                           <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
-                            className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                            className="text-[11px] px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                             {busyId === app.id ? '…' : t('gateway.common.revert')}
                           </button>
                         ) : (
                           <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                            className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                             {busyId === app.id ? '…' : t('gateway.common.manage')}
                           </button>
                         )
                       ) : (
                         <button onClick={() => handleDeleteApp(app.id)}
-                          className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0">
+                          className="text-[11px] px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0">
                           {t('gateway.common.delete')}
                         </button>
                       )}

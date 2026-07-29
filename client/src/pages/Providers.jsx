@@ -1738,10 +1738,13 @@ function sanitizeProviderModels(list) {
   });
 }
 
-// Normalize a model entry to {name, type} — handles both string and object formats
+// Normalize a model entry to {name, type} — handles both string and object formats.
+// 模态四类：chat(文本) / vision(图文) / image(生图) / embedding(嵌入)。
 function normModel(m) {
-  const raw = typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' };
-  return isValidModelName(raw.name) ? raw : { name: '', type: 'chat' };
+  if (typeof m === 'string') return { name: isValidModelName(m) ? m : '', type: 'chat' };
+  let type = m.type || 'chat';
+  if (type === 'chat' && m.vision) type = 'vision';   // 迁移旧的 vision 标志 → 独立 vision 类型
+  return { name: isValidModelName(m.name) ? m.name : '', type };
 }
 
 /** 以 catalog 为准裁剪本地已配置模型（去掉服务端已下线的；不自动填入 catalog 全量） */
@@ -1853,8 +1856,9 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
 
   function remove(name)     { onChange(normalized.filter(m => m.name !== name)); }
   function toggleType(name) {
-    const cycle = { chat: 'image', image: 'embedding', embedding: 'chat' };
-    onChange(normalized.map(m => m.name === name ? { ...m, type: cycle[m.type] || 'chat' } : m));
+    // 单徽章循环：文本(chat) → 图文(vision) → 生图(image) → 嵌入(embedding) → 文本
+    const cycle = { chat: 'vision', vision: 'image', image: 'embedding', embedding: 'chat' };
+    onChange(normalized.map(m => m.name === name ? { name, type: cycle[m.type] || 'vision' } : m));
   }
 
   function handleInputKeyDown(e) {
@@ -1922,9 +1926,14 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
                       ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/60'
                       : m.type === 'embedding'
                         ? 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 hover:bg-teal-100 dark:hover:bg-teal-900/40'
-                        : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40'
+                        : m.type === 'vision'
+                          ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/40'
+                          : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40'
                   }`}>
-                  {m.type === 'image' ? t('providers.models.typeImage') : m.type === 'embedding' ? t('providers.models.typeEmbedding') : t('providers.models.typeText')}
+                  {m.type === 'image' ? t('providers.models.typeImage')
+                    : m.type === 'embedding' ? t('providers.models.typeEmbedding')
+                      : m.type === 'vision' ? t('providers.models.typeVision')
+                        : t('providers.models.typeText')}
                 </button>
                 <button onClick={() => remove(m.name)} className="px-1.5 py-0.5 border-l border-zinc-300 dark:border-zinc-700 text-zinc-400 hover:text-red-500 dark:hover:text-red-400 leading-none">×</button>
               </span>
@@ -1953,9 +1962,10 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
         </div>
         <select value={inputType} onChange={e => setInputType(e.target.value)}
           className="shrink-0 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:border-blue-500">
-          <option value="chat">{t('providers.models.chat')}</option>
-          <option value="image">{t('providers.models.image')}</option>
-          <option value="embedding">{t('providers.models.embedding')}</option>
+          <option value="chat">{t('providers.models.typeText')}</option>
+          <option value="vision">{t('providers.models.typeVision')}</option>
+          <option value="image">{t('providers.models.typeImage')}</option>
+          <option value="embedding">{t('providers.models.typeEmbedding')}</option>
         </select>
         <button
           onClick={() => add()}
@@ -2182,13 +2192,14 @@ function ProviderCardBillingSection({
   }
 
   async function toggleModelType(name) {
-    const cycle = { chat: 'image', image: 'embedding', embedding: 'chat' };
+    // 文本(chat) → 图文(vision) → 生图(image) → 嵌入(embedding) → 文本
+    const cycle = { chat: 'vision', vision: 'image', image: 'embedding', embedding: 'chat' };
     const cur = (provider.models || []).map(normModel);
     const hit = cur.find(m => m.name === name);
     const prevType = hit?.type || modelTypeMap[name] || 'chat';
-    const nextType = cycle[prevType] || 'chat';
+    const nextType = cycle[prevType] || 'vision';
     const next = hit
-      ? cur.map(m => (m.name === name ? { ...m, type: nextType } : m))
+      ? cur.map(m => (m.name === name ? { name, type: nextType } : m))
       : [...cur, { name, type: nextType }];
     await persistModels(next);
     // 切换模态时重置该模型刊例价字段结构

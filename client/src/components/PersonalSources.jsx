@@ -103,6 +103,7 @@ export function priceFieldLabel(field, type, t) {
 export function modelTypeLabel(type, t) {
   if (type === 'image') return t('providers.models.typeImage');
   if (type === 'embedding') return t('providers.models.typeEmbedding');
+  if (type === 'vision') return t('providers.models.typeVision');
   return t('providers.models.typeText');
 }
 
@@ -112,6 +113,9 @@ export function modelTypeBtnClass(type) {
   }
   if (type === 'embedding') {
     return 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 hover:bg-teal-100 dark:hover:bg-teal-900/40';
+  }
+  if (type === 'vision') {
+    return 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/40';
   }
   return 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40';
 }
@@ -195,9 +199,10 @@ export function PricingTable({
                 className="flex-1 min-w-[8rem] text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 font-mono" />
               <select value={inputType} onChange={e => setInputType(e.target.value)}
                 className="shrink-0 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 text-zinc-700 dark:text-zinc-300">
-                <option value="chat">{t('providers.models.chat')}</option>
-                <option value="image">{t('providers.models.image')}</option>
-                <option value="embedding">{t('providers.models.embedding')}</option>
+                <option value="chat">{t('providers.models.typeText')}</option>
+                <option value="vision">{t('providers.models.typeVision')}</option>
+                <option value="image">{t('providers.models.typeImage')}</option>
+                <option value="embedding">{t('providers.models.typeEmbedding')}</option>
               </select>
               <button type="button" disabled={!newModel.trim()}
                 onClick={() => {
