@@ -40,6 +40,12 @@ test('buildClaudeStreamFlags uses stream-json without partial messages', () => {
   assert.ok(!buildClaudeStreamFlags().includes('--include-partial-messages'));
 });
 
+test('buildClaudeStreamFlags multimodal adds input-format stream-json', () => {
+  const flags = buildClaudeStreamFlags({ multimodalInput: true });
+  assert.ok(flags.includes('--input-format'));
+  assert.equal(flags[flags.indexOf('--input-format') + 1], 'stream-json');
+});
+
 test('buildClaudeCodeArgs streams instead of sync json', () => {
   const args = buildClaudeCodeArgs('hello', { continueSession: false });
   assert.ok(args.includes('--output-format'));
@@ -50,9 +56,40 @@ test('buildClaudeCodeArgs streams instead of sync json', () => {
   assert.ok(String(args[i + 1]).includes('产物交付'));
 });
 
+test('buildClaudeCodeArgs multimodal omits argv prompt (stdin carries images)', () => {
+  const args = buildClaudeCodeArgs('hello', { continueSession: false, multimodalInput: true });
+  assert.ok(args.includes('--input-format'));
+  assert.ok(!args.includes('hello'));
+});
+
 test('buildClaudeCodeArgs includes resume before print flags', () => {
   const args = buildClaudeCodeArgs('hello', { continueSession: true, cliSessionId: VALID_SID });
   assert.deepEqual(args.slice(0, 2), ['--resume', VALID_SID]);
   assert.ok(args.includes('--append-system-prompt'));
   assert.equal(args[args.length - 1], 'hello');
+});
+
+test('buildClaudeMultimodalStdin embeds image blocks', () => {
+  const {
+    buildClaudeMultimodalStdin,
+    ensureClaudeMultimodalArgs,
+    detectImageMime,
+  } = require('../agent-executor');
+  const line = buildClaudeMultimodalStdin('看图', [
+    { mediaType: 'image/png', data: 'AAA' },
+  ]);
+  const msg = JSON.parse(line.trim());
+  assert.equal(msg.type, 'user');
+  assert.equal(msg.message.content[0].type, 'text');
+  assert.equal(msg.message.content[1].type, 'image');
+  assert.equal(msg.message.content[1].source.media_type, 'image/png');
+
+  const stripped = ensureClaudeMultimodalArgs([
+    '-p', '--output-format', 'stream-json', 'user prompt text',
+  ]);
+  assert.ok(stripped.includes('--input-format'));
+  assert.ok(!stripped.includes('user prompt text'));
+
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  assert.equal(detectImageMime(jpeg), 'image/jpeg');
 });

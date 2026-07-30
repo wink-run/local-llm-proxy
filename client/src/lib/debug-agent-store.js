@@ -27,6 +27,8 @@ export function emptyAgentSession() {
   return {
     agentPrompt: '',
     currentUserPrompt: '',
+    /** 本轮用户附图 dataURL（仅内存；落历史时会省略大 base64） */
+    currentUserImages: [],
     currentTask: null,
     taskSteps: [],
     taskResult: null,
@@ -339,6 +341,7 @@ export function syncDelegatedMirrorToAgentTab(agentKey, agents = []) {
     patchStoreSession(agentKey, {
       executing: false,
       currentUserPrompt: '',
+      currentUserImages: [],
       taskSteps: [],
       taskResult: null,
       conversationTurns: after.conversationTurns,
@@ -436,6 +439,7 @@ export function mergeTaskIntoStore(status) {
         patchStoreSession(agentKey, {
           executing: false,
           currentUserPrompt: '',
+          currentUserImages: [],
           taskSteps: [],
           taskResult: null,
           conversationTurns: after.conversationTurns,
@@ -456,6 +460,9 @@ export function mergeTaskIntoStore(status) {
     patchStoreSession(key, {
       conversationTurns: turns,
       currentUserPrompt: status.prompt || prev.currentUserPrompt || fromArchive?.user || '',
+      currentUserImages: (prev.currentUserImages || []).length
+        ? prev.currentUserImages
+        : (fromArchive?.images || []),
       currentTask: { ...status, status: 'running' },
       taskSteps: restoredSteps,
       executing: true,
@@ -467,15 +474,17 @@ export function mergeTaskIntoStore(status) {
 
   patchStoreSession(key, {
     currentUserPrompt: '',
+    currentUserImages: [],
     currentTask: status,
     taskSteps: preferRicherSteps(steps, prev.taskSteps || []),
     executing: false,
     taskResult: status.result || null,
   });
 
-  if (status.prompt) {
+  if (status.prompt || (prev.currentUserImages || []).length) {
     archiveCompletedTurn(key, {
-      user: status.prompt,
+      user: status.prompt || prev.currentUserPrompt || uiT('debug.agent.imageOnlyPrompt'),
+      images: prev.currentUserImages || [],
       steps: preferRicherSteps(steps, prev.taskSteps || []),
       result: status.result || null,
       status: status.status,
@@ -488,6 +497,7 @@ export function mergeTaskIntoStore(status) {
     patchStoreSession(key, {
       executing: false,
       currentUserPrompt: '',
+      currentUserImages: [],
       taskSteps: [],
       taskResult: null,
       conversationTurns: afterArchive.conversationTurns,
@@ -569,6 +579,7 @@ export function clearSessionTaskState(sessionKey) {
   patchStoreSession(sessionKey, {
     agentPrompt: '',
     currentUserPrompt: '',
+    currentUserImages: [],
     currentTask: null,
     taskSteps: [],
     taskResult: null,
@@ -689,6 +700,7 @@ export function archiveCompletedTurn(sessionKey, turn) {
   const turns = [...(s.conversationTurns || [])];
   const existingIdx = turn.taskId ? turns.findIndex(t => t.taskId === turn.taskId) : -1;
   const incomingSteps = finalizeStepsForArchive(turn.steps || [], turn.status);
+  const images = Array.isArray(turn.images) ? turn.images : undefined;
 
   if (existingIdx >= 0) {
     const prev = turns[existingIdx];
@@ -708,6 +720,8 @@ export function archiveCompletedTurn(sessionKey, turn) {
       result: richer ? mergedResult : (prev.result || mergedResult),
       status: turn.status || prev.status,
       timestamp: turn.timestamp || prev.timestamp,
+      // 保留先到的附图；新归档有图则覆盖
+      images: (images && images.length) ? images : prev.images,
     };
   } else {
     turns.push({
@@ -718,6 +732,7 @@ export function archiveCompletedTurn(sessionKey, turn) {
       status: turn.status || 'completed',
       taskId: turn.taskId || null,
       timestamp: turn.timestamp || Date.now(),
+      ...(images && images.length ? { images } : {}),
     });
   }
 

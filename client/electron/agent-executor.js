@@ -6,12 +6,139 @@ const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const localStats = require('./local-stats');
 
 /** 短随机 id（不用 nanoid：该包在 Vite 树里是 devDep，打进 asar 会缺模块导致打包版起不来） */
 function nanoid(size = 8) {
   return crypto.randomBytes(Math.ceil(size / 2)).toString('hex').slice(0, size);
+}
+
+/** data URL / mime → 文件扩展名 */
+function mimeToImageExt(mime) {
+  const m = String(mime || '').toLowerCase();
+  if (m.includes('jpeg') || m.includes('jpg')) return '.jpg';
+  if (m.includes('webp')) return '.webp';
+  if (m.includes('gif')) return '.gif';
+  return '.png';
+}
+
+/** 用魔数判定图片 MIME（勿只信扩展名，避免 vision API 400） */
+function detectImageMime(buf, fallback = 'image/png') {
+  if (!buf || buf.length < 12) return fallback;
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+    && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
+    return 'image/webp';
+  }
+  return fallback;
+}
+
+/**
+ * 将游乐场附图落盘，并解析出可注入多模态消息的 base64 块。
+ * - Claude Code：优先走 stdin image block（Read 工具读图不可靠，易幻觉）
+ * - 其它 CLI：把路径写进 prompt，文件落在工作目录内便于沙箱读取
+ */
+function materializeAttachedImages(images, { taskId, workingDir } = {}) {
+  const list = Array.isArray(images) ? images : [];
+  if (!list.length) return { paths: [], mediaParts: [], suffix: '', uploadDir: '' };
+
+  const id = String(taskId || nanoid(8));
+  const baseDir = workingDir && fs.existsSync(workingDir)
+    ? path.join(path.resolve(workingDir), '.tokenbank-uploads', id)
+    : path.join(os.tmpdir(), 'tokenbank-agent-uploads', id);
+  fs.mkdirSync(baseDir, { recursive: true });
+
+  const paths = [];
+  const mediaParts = [];
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
+    const dataUrl = typeof item === 'string' ? item : (item?.dataUrl || '');
+    const mm = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl || ''));
+    if (!mm) continue;
+    let buf;
+    try {
+      buf = Buffer.from(mm[2], 'base64');
+    } catch {
+      continue;
+    }
+    if (!buf.length) continue;
+    const declared = String(mm[1] || '').toLowerCase();
+    const mediaType = detectImageMime(buf, declared.startsWith('image/') ? declared : 'image/png');
+    const rawName = (typeof item === 'object' && item?.name) ? String(item.name) : '';
+    const base = path.basename(rawName || `image-${i + 1}`).replace(/[^\w.\u4e00-\u9fff-]+/g, '_') || `image-${i + 1}`;
+    const ext = path.extname(base) || mimeToImageExt(mediaType);
+    const stem = path.basename(base, path.extname(base)) || `image-${i + 1}`;
+    const fp = path.join(baseDir, `${stem}-${i + 1}${ext}`);
+    try {
+      fs.writeFileSync(fp, buf);
+      paths.push(fp);
+      mediaParts.push({ mediaType, data: buf.toString('base64'), path: fp });
+    } catch (e) {
+      console.warn('[AgentExecutor] attach image write failed:', e.message);
+    }
+  }
+  if (!paths.length) return { paths: [], mediaParts: [], suffix: '', uploadDir: baseDir };
+
+  const lines = paths.map((p, i) => `${i + 1}. ${p}`).join('\n');
+  return {
+    paths,
+    mediaParts,
+    uploadDir: baseDir,
+    // 非 Claude：靠路径提示；明确要求视觉查看，禁止臆测
+    suffix: `\n\n[Attached image files — you MUST visually inspect these image files (vision). Do NOT guess from filenames or prior chat.]\n${lines}\n`,
+  };
+}
+
+/** Claude Code：把图作为首条 user message 的 image block（需 --input-format stream-json） */
+function buildClaudeMultimodalStdin(prompt, mediaParts = []) {
+  const content = [];
+  const text = String(prompt || '').trim() || 'Please visually inspect the attached image(s).';
+  content.push({ type: 'text', text });
+  for (const p of mediaParts) {
+    if (!p?.data) continue;
+    content.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: p.mediaType || 'image/png',
+        data: p.data,
+      },
+    });
+  }
+  return `${JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content },
+    parent_tool_use_id: null,
+  })}\n`;
+}
+
+/** 给已有 Claude 参数补上 stream-json 输入（去掉尾部文本 prompt） */
+function ensureClaudeMultimodalArgs(args) {
+  const out = Array.isArray(args) ? [...args] : [];
+  const valueFlags = new Set([
+    '--append-system-prompt', '--output-format', '--input-format', '--resume',
+    '--settings', '--mcp-config', '--model', '--agents', '--agent',
+    '--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools',
+    '--add-dir', '--fallback-model', '--effort', '--betas', '--debug', '--debug-file',
+    '--system-prompt', '--system-prompt-file', '--append-system-prompt-file',
+    '--plugin-dir', '--file', '--json-schema',
+  ]);
+  // 先去掉末尾用户 prompt，再补 --input-format（避免 prompt 夹在中间）
+  if (out.length) {
+    const last = out[out.length - 1];
+    const prev = out.length >= 2 ? out[out.length - 2] : '';
+    if (typeof last === 'string' && !last.startsWith('-') && !valueFlags.has(prev)) {
+      out.pop();
+    }
+  }
+  if (!out.includes('--input-format')) {
+    out.push('--input-format', 'stream-json');
+  }
+  return out;
 }
 const { STATS_DIR } = require('../shared/telemetry');
 let shim = null;
@@ -160,20 +287,25 @@ function injectCodexResumeArgs(extraArgs, { continueSession, cliSessionId } = {}
 }
 
 /** Claude Code 非交互启动公共参数:stream-json 按块推送(不用 partial,降低半截文本解析复杂度) */
-function buildClaudeStreamFlags() {
-  return [
+function buildClaudeStreamFlags({ multimodalInput = false } = {}) {
+  const flags = [
     '-p', '--dangerously-skip-permissions',
     '--output-format', 'stream-json',
     '--verbose',
   ];
+  // 附图时用 stdin 注入 image content block（纯 -p 文本无法真看图）
+  if (multimodalInput) flags.push('--input-format', 'stream-json');
+  return flags;
 }
 
-function buildClaudeCodeArgs(prompt, { continueSession, cliSessionId } = {}) {
-  return [
+function buildClaudeCodeArgs(prompt, { continueSession, cliSessionId, multimodalInput } = {}) {
+  const args = [
     ...buildClaudeContinueArgs({ continueSession, cliSessionId }),
-    ...withClaudeDeliverySystemArgs(buildClaudeStreamFlags()),
-    prompt,
+    ...withClaudeDeliverySystemArgs(buildClaudeStreamFlags({ multimodalInput: !!multimodalInput })),
   ];
+  // 多模态：prompt 走 stdin，不再作为 argv 尾参
+  if (!multimodalInput) args.push(prompt);
+  return args;
 }
 
 function invalidateAgentListCache() {
@@ -786,8 +918,23 @@ class AgentExecutor extends EventEmitter {
         return;
       }
 
-      const { agentId: effectiveAgentId, assistant } = this._resolveAssistant(agentId);
+      // 本地 CLI：附图落盘；Claude 走多模态 stdin，其它 Agent 拼路径进 prompt
       const { mode = 'direct', workingDir = process.cwd(), mcpProfile, continueSession, cliSessionId } = options;
+      const imgInfo = options.images?.length
+        ? materializeAttachedImages(options.images, { taskId, workingDir })
+        : { paths: [], mediaParts: [], suffix: '', uploadDir: '' };
+
+      const { agentId: effectiveAgentId, assistant } = this._resolveAssistant(agentId);
+      const claudeMultimodal = imgInfo.mediaParts.length > 0 && (
+        effectiveAgentId === 'claude-code'
+        || !!(assistant?.launch?.claudeExtraArgs)
+      );
+
+      let userPrompt = prompt;
+      // 非 Claude：路径后缀；Claude：图在 stdin，勿再让它靠 Read（易空结果幻觉）
+      if (imgInfo.suffix && !claudeMultimodal) {
+        userPrompt = `${prompt}${imgInfo.suffix}`;
+      }
 
       if (assistant && mode === 'orchestrator') {
         throw new Error('自定义 Assistant 请在其标签页直调使用，聚合入口请选 CLI Agent');
@@ -801,8 +948,9 @@ class AgentExecutor extends EventEmitter {
         throw new Error(`${cfg.name} CLI 未安装（命令: ${cfg.detectCommand}）`);
       }
 
-      let execPrompt = prompt;
+      let execPrompt = userPrompt;
       let args;
+      let stdinPayload = null;
 
       if (mode === 'orchestrator') {
         if (!mcpManager.supportsOrchestrator(effectiveAgentId)) {
@@ -818,14 +966,19 @@ class AgentExecutor extends EventEmitter {
           sessionInstanceId: options.sessionInstanceId || null,
         });
         orchestratorCleanup = orch.cleanup;
-        if (orch.promptPrefix) execPrompt = orch.promptPrefix + prompt;
+        if (orch.promptPrefix) execPrompt = orch.promptPrefix + userPrompt;
         if (effectiveAgentId === 'claude-code') {
           args = [
             ...launch.argPrefix,
             ...buildClaudeContinueArgs({ continueSession, cliSessionId }),
             ...orch.extraArgs,
-            execPrompt,
           ];
+          if (claudeMultimodal) {
+            args = ensureClaudeMultimodalArgs(args);
+            stdinPayload = buildClaudeMultimodalStdin(execPrompt, imgInfo.mediaParts);
+          } else {
+            args.push(execPrompt);
+          }
         } else if (effectiveAgentId === 'codex') {
           args = [
             ...launch.argPrefix,
@@ -842,11 +995,16 @@ class AgentExecutor extends EventEmitter {
             ...launch.argPrefix,
             ...buildClaudeContinueArgs({ continueSession, cliSessionId }),
             ...asstLaunch.claudeExtraArgs,
-            prompt,
           ];
+          if (claudeMultimodal) {
+            args = ensureClaudeMultimodalArgs(args);
+            stdinPayload = buildClaudeMultimodalStdin(userPrompt, imgInfo.mediaParts);
+          } else {
+            args.push(userPrompt);
+          }
         } else {
           // Codex / Cursor：soul 作前缀；续聊与模型经 buildArgs
-          execPrompt = (asstLaunch.promptPrefix || '') + prompt;
+          execPrompt = (asstLaunch.promptPrefix || '') + userPrompt;
           args = [...launch.argPrefix, ...cfg.buildArgs(execPrompt, {
             workingDir,
             continueSession,
@@ -854,14 +1012,25 @@ class AgentExecutor extends EventEmitter {
             model: asstLaunch.model || assistant.config?.model,
           })];
         }
+      } else if (effectiveAgentId === 'claude-code' && claudeMultimodal) {
+        args = [...launch.argPrefix, ...cfg.buildArgs(userPrompt, {
+          workingDir, continueSession, cliSessionId, multimodalInput: true,
+        })];
+        stdinPayload = buildClaudeMultimodalStdin(userPrompt, imgInfo.mediaParts);
       } else {
-        args = [...launch.argPrefix, ...cfg.buildArgs(prompt, { workingDir, continueSession, cliSessionId })];
+        args = [...launch.argPrefix, ...cfg.buildArgs(userPrompt, { workingDir, continueSession, cliSessionId })];
+      }
+
+      // 允许 Claude 访问附图目录（多模态之外的兜底）
+      if (claudeMultimodal && imgInfo.uploadDir && !args.includes(imgInfo.uploadDir)) {
+        args.push('--add-dir', imgInfo.uploadDir);
       }
 
       const result = await this._runAgentProcess(taskId, effectiveAgentId, launch.executable, args, {
         ...options,
         workingDir,
         onCleanup: orchestratorCleanup,
+        stdinPayload,
         virtualAgentId: agentId,
         gatewayAgentId: effectiveAgentId,
         sessionKey: options.sessionKey || null,
@@ -997,6 +1166,7 @@ class AgentExecutor extends EventEmitter {
       parentTaskId = null,
       sessionKey = null,
       sessionInstanceId = null,
+      stdinPayload = null,
     } = options;
 
     const cliCfg = AGENT_CLI[gatewayAgentId] || {};
@@ -1053,10 +1223,20 @@ class AgentExecutor extends EventEmitter {
         shell: process.platform === 'win32',
         // Unix：独立进程组，停止时可一并杀掉 MCP 子进程
         detached: process.platform !== 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
+        // 多模态附图：stdin 写入 stream-json user message
+        stdio: [stdinPayload ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       });
       if (process.platform !== 'win32' && proc.pid) {
         try { proc.unref(); } catch {}
+      }
+
+      if (stdinPayload && proc.stdin) {
+        try {
+          proc.stdin.write(stdinPayload);
+          proc.stdin.end();
+        } catch (e) {
+          console.warn('[AgentExecutor] stdin write failed:', e.message);
+        }
       }
 
       let stdout = '';
@@ -1590,3 +1770,7 @@ module.exports.buildClaudeContinueArgs = buildClaudeContinueArgs;
 module.exports.buildClaudeStreamFlags = buildClaudeStreamFlags;
 module.exports.buildCursorAgentArgs = buildCursorAgentArgs;
 module.exports.buildKimiCodeArgs = buildKimiCodeArgs;
+module.exports.materializeAttachedImages = materializeAttachedImages;
+module.exports.buildClaudeMultimodalStdin = buildClaudeMultimodalStdin;
+module.exports.ensureClaudeMultimodalArgs = ensureClaudeMultimodalArgs;
+module.exports.detectImageMime = detectImageMime;

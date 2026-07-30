@@ -70,13 +70,18 @@ function validateAssistantEligible(resource, opts = {}) {
     config = {};
   }
   const runtimeId = resolveAssistantRuntimeAgent(config, resource.projections || []);
-  const runtimeOk = listAvailableAssistantRuntimeIds();
-  if (!runtimeId || !ASSISTANT_RUNTIME_IDS.has(runtimeId) || !runtimeOk.has(runtimeId)) {
+  // 静态白名单：须是可 spawn 的 runtime 族
+  if (!runtimeId || !ASSISTANT_RUNTIME_IDS.has(runtimeId)) {
     return { ok: false, reason: 'no_runtime' };
   }
+  // 安装探测：调用方传入 isRuntimeAvailable 时以其为准（CI 可 stub）；否则查本机已装 runtime
   const check = opts.isRuntimeAvailable;
-  if (typeof check === 'function' && !check(runtimeId)) {
-    return { ok: false, reason: 'runtime_unavailable', runtime: runtimeId };
+  if (typeof check === 'function') {
+    if (!check(runtimeId)) {
+      return { ok: false, reason: 'runtime_unavailable', runtime: runtimeId };
+    }
+  } else if (!listAvailableAssistantRuntimeIds().has(runtimeId)) {
+    return { ok: false, reason: 'no_runtime' };
   }
   return { ok: true, runtime: runtimeId };
 }

@@ -1,6 +1,6 @@
 'use strict';
 // 智能体在 Debug 的可见性由「运行时投射」门控：投射即出现，取消投射即消失。
-// CI 无 Codex Desktop/CLI，须 stub 安装探测与可投射目录，避免误依赖本机环境。
+// CI 无 Codex Desktop/CLI，须 stub 安装探测与可投射目标，避免误依赖本机环境。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -10,7 +10,7 @@ const path = require('path');
 const rm = require('../resource-manager');
 const ae = require('../agent-executor');
 const targets = require('../resource-agent-targets');
-const cl = require('../config-loader');
+const gw = require('../mcp-gateway-targets');
 const localStats = require('../local-stats');
 
 const NAME = 'zzz-debug-gate';
@@ -33,14 +33,10 @@ test('智能体 Debug 可见性由运行时投射门控', async () => {
   cleanup();
 
   const origInstalled = targets.isAgentInstalled;
-  const origExpanded = cl.appEntitiesExpanded;
-  // 模拟：本机已装 codex，且勾选「可投射智能体」
+  const origManaged = gw.listManagedAppTargetIds;
+  // 模拟：本机已装 codex，且已在纳管投射白名单中
   targets.isAgentInstalled = (id) => id === RUNTIME;
-  cl.appEntitiesExpanded = () => [{
-    id: RUNTIME,
-    resource_project: true,
-    capabilities: { resource_project: true },
-  }];
+  gw.listManagedAppTargetIds = () => new Set([RUNTIME]);
 
   try {
     rm.saveResource({
@@ -65,7 +61,7 @@ test('智能体 Debug 可见性由运行时投射门控', async () => {
     assert.equal(await shows(), false, '取消投射后应从 Debug 消失');
   } finally {
     targets.isAgentInstalled = origInstalled;
-    cl.appEntitiesExpanded = origExpanded;
+    gw.listManagedAppTargetIds = origManaged;
     cleanup();
     localStats.close();
     try { fs.rmSync(statsDir, { recursive: true, force: true }); } catch {}

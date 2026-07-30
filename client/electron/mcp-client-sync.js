@@ -410,15 +410,17 @@ function filterServersForClient(servers, clientId) {
   return (servers || []).filter(s => {
     if (s.status !== 'active' || s.source === 'client') return false;
     if (s.id === BUILTIN_BRIDGE_ID) return false;
-    // 须在该 Agent 的同步分配列表中（取消勾选 = 不再下发）
-    if (!getServerSyncClients(s).includes(clientId)) return false;
+
+    // prompts：显式 sync_clients 按下发名单；未配置则懒下发（仅已有 prompt 投射的 Agent）
     if (s.id === BUILTIN_PROMPTS_ID) {
-      // 用户已在「投射到应用」里显式勾选 → 直接下发（否则无法先投射 MCP 再投射资源）
-      if (Array.isArray(s.metadata?.sync_clients)) return true;
-      // 未显式配置时：懒下发，仅对已有 prompt 投射的 Agent 写入
+      const explicit = Array.isArray(s.sync_clients) || Array.isArray(s.metadata?.sync_clients);
+      if (explicit) return getServerSyncClients(s).includes(clientId);
       try { return require('./resource-manager').hasPromptProjections(clientId); }
       catch { return false; }
     }
+
+    // 其它 MCP：须在该 Agent 的同步分配列表中（取消勾选 = 不再下发）
+    if (!getServerSyncClients(s).includes(clientId)) return false;
     return true;
   });
 }

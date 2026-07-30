@@ -158,10 +158,11 @@ function stripLeakedAssistantsWhenThinking(items) {
 }
 
 /** 合并连续 output / thinking 步骤，减少碎片化 */
-function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}) {
+function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}, userImages = []) {
   const items = [];
-  if (userPrompt) {
-    items.push({ kind: 'user', content: userPrompt });
+  const imgs = Array.isArray(userImages) ? userImages.filter(Boolean) : [];
+  if (userPrompt || imgs.length) {
+    items.push({ kind: 'user', content: userPrompt || '', images: imgs });
   }
 
   let outputBuf = [];
@@ -555,7 +556,7 @@ function buildTurnTimeline(turn, delegations = {}, agentNames = {}, t) {
         : (t?.('debug.agent.noResult') || '未收到结果'),
     )
     : rawSteps;
-  let items = buildTimeline(turn.user, steps, delegations, agentNames);
+  let items = buildTimeline(turn.user, steps, delegations, agentNames, turn.images);
   const hasCleanAssistant = items.some(
     it => it.kind === 'assistant' && it.content?.trim() && !looksLikeLeakedReasoning(it.content),
   );
@@ -1460,6 +1461,7 @@ function DelegationCard({ item }) {
 export default function ExecutionLog({
   conversationTurns = [],
   userPrompt,
+  userImages = [],
   steps,
   status,
   result,
@@ -1467,11 +1469,12 @@ export default function ExecutionLog({
   agentName,
   delegations = {},
   agentNames = {},
+  onPreviewImage,
 }) {
   const { t } = useLang();
   const endRef = useRef(null);
   // 本轮用户消息变化时重新钉住底部（刚发送应看到最新输出）
-  const pinKey = `${conversationTurns.length}|${String(userPrompt || '')}`;
+  const pinKey = `${conversationTurns.length}|${String(userPrompt || '')}|${(userImages || []).length}`;
 
   /** 合并历史轮次 + 当前轮次；currentStart 之后才是本轮（呼吸光标只挂这里） */
   const { timeline, currentStart } = useMemo(() => {
@@ -1480,7 +1483,7 @@ export default function ExecutionLog({
       items.push(...buildTurnTimeline(turn, turn.delegations || {}, agentNames, t));
     }
     const currentStart = items.length;
-    items.push(...buildTimeline(userPrompt, steps, delegations, agentNames));
+    items.push(...buildTimeline(userPrompt, steps, delegations, agentNames, userImages));
     // 当前轮已完成但 steps 无干净回复时，用 result 摘要补全（跳过泄漏推理）
     if (status === 'completed' && result) {
       const currentSlice = items.slice(currentStart);
@@ -1495,7 +1498,7 @@ export default function ExecutionLog({
       }
     }
     return { timeline: items, currentStart };
-  }, [conversationTurns, userPrompt, steps, delegations, agentNames, status, result, task?.completed_at, t]);
+  }, [conversationTurns, userPrompt, userImages, steps, delegations, agentNames, status, result, task?.completed_at, t]);
 
   // 仅在本轮内找「正在流式」的气泡，避免光标粘在历史回复上
   const lastAssistantIdx = useMemo(() => {
@@ -1514,7 +1517,8 @@ export default function ExecutionLog({
   }, [timeline, currentStart]);
   // 本轮尚无任何过程气泡时，用空回复承载呼吸光标
   const waitingForReply = useMemo(() => {
-    if (status !== 'running' || !String(userPrompt || '').trim()) return false;
+    if (status !== 'running') return false;
+    if (!String(userPrompt || '').trim() && !(userImages || []).length) return false;
     for (let i = currentStart; i < timeline.length; i++) {
       const k = timeline[i].kind;
       if (k === 'assistant' || k === 'thinking_group' || k === 'tool_group'
@@ -1524,7 +1528,7 @@ export default function ExecutionLog({
       }
     }
     return true;
-  }, [status, userPrompt, timeline, currentStart]);
+  }, [status, userPrompt, userImages, timeline, currentStart]);
 
   usePinBottomScroll(
     endRef,
@@ -1533,7 +1537,7 @@ export default function ExecutionLog({
     { forcePinKey: pinKey },
   );
 
-  const empty = !conversationTurns.length && !userPrompt && timeline.length === 0;
+  const empty = !conversationTurns.length && !userPrompt && !(userImages || []).length && timeline.length === 0;
 
   if (empty) {
     return (
@@ -1554,13 +1558,39 @@ export default function ExecutionLog({
     <div className="space-y-4 pb-4">
       {timeline.map((item, i) => {
         if (item.kind === 'user') {
+          const imgs = Array.isArray(item.images) ? item.images : [];
+          const text = normalizeDisplayText(item.content);
           return (
             <div key={`u-${i}`} className="flex justify-end">
-              <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-sm bg-blue-600">
-                <MarkdownContent
-                  content={normalizeDisplayText(item.content)}
-                  theme="inverted"
-                />
+              <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-sm bg-blue-600 text-white">
+                {imgs.length > 0 && (
+                  <div className={`flex flex-wrap gap-1.5 ${text ? 'mb-2' : ''}`}>
+                    {imgs.map((src, j) => {
+                      if (!src || src === '__b64_omitted__') {
+                        return (
+                          <span key={j} className="text-[11px] opacity-80 px-1.5 py-1 rounded bg-white/15">
+                            {t('debug.imageNotRestored')}
+                          </span>
+                        );
+                      }
+                      const imgSrc = src.startsWith('data:') || src.startsWith('http') || src.startsWith('file:')
+                        ? src
+                        : `data:image/png;base64,${src}`;
+                      return (
+                        <img
+                          key={j}
+                          src={imgSrc}
+                          alt={`attach-${j}`}
+                          className="h-20 max-w-[12rem] object-cover rounded-lg cursor-zoom-in border border-white/20"
+                          onClick={() => (onPreviewImage ? onPreviewImage(imgSrc) : undefined)}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+                {text ? (
+                  <MarkdownContent content={text} theme="inverted" />
+                ) : null}
               </div>
             </div>
           );

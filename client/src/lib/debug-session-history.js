@@ -76,12 +76,15 @@ export function buildSessionTitle(turns = []) {
   return s.length > 52 ? `${s.slice(0, 52)}…` : s;
 }
 
-/** LLM 对话：用首条用户消息作标题 */
+/** LLM 对话：用首条用户消息作标题（纯图时用占位） */
 export function buildLlmSessionTitle(conversation = []) {
-  const first = conversation.find(m => m?.role === 'user' && String(m.content || '').trim());
+  const first = conversation.find(m =>
+    m?.role === 'user' && (String(m.content || '').trim() || (Array.isArray(m.images) && m.images.length > 0))
+  );
   if (!first) return uiT('debug.history.untitledSession');
-  const s = String(first.content).trim().replace(/\s+/g, ' ');
-  return s.length > 52 ? `${s.slice(0, 52)}…` : s;
+  const text = String(first.content || '').trim().replace(/\s+/g, ' ');
+  if (!text) return uiT('debug.history.imageOnlyTitle');
+  return text.length > 52 ? `${text.slice(0, 52)}…` : text;
 }
 
 function fingerprintTurns(turns = []) {
@@ -108,10 +111,26 @@ function fingerprintLlmConversation(conversation = []) {
     .join('|') || 'empty';
 }
 
+function serializeTurnImages(images) {
+  if (!Array.isArray(images)) return undefined;
+  return images.map(src => {
+    if (!src || src === B64_OMITTED) return B64_OMITTED;
+    if (String(src).startsWith('http')) return src;
+    return B64_OMITTED;
+  });
+}
+
+function serializeAgentTurn(turn) {
+  if (!turn || typeof turn !== 'object') return turn;
+  const images = serializeTurnImages(turn.images);
+  if (!images) return turn;
+  return { ...turn, images };
+}
+
 /** 保存当前标签页会话快照（有已完成轮次时） */
 export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
   if (!agentKey) return null;
-  const turns = snapshot.conversationTurns || [];
+  const turns = (snapshot.conversationTurns || []).map(serializeAgentTurn);
   if (!turns.length) return null;
 
   const store = readStore();
@@ -180,7 +199,9 @@ export function saveLlmSessionSnapshot(snapshot = {}) {
     .filter(m => m && (m.role === 'user' || m.role === 'assistant'))
     .slice(-LLM_CHAT_MAX)
     .map(serializeLlmMessage);
-  if (!conversation.some(m => m.role === 'user' && String(m.content || '').trim())) return null;
+  if (!conversation.some(m =>
+    m.role === 'user' && (String(m.content || '').trim() || (Array.isArray(m.images) && m.images.length > 0))
+  )) return null;
 
   const store = readLlmStore();
   const fp = fingerprintLlmConversation(conversation);

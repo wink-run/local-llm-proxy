@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { getConfig, getLocalConfig, getGateway } from '../api/adapter';
 import { loadGatewayAvailableModels, resolveGatewayModelType, resolveLocalGatewayBase } from '../api/gatewayModels';
@@ -268,6 +269,62 @@ function buildImageUrl(base) {
   return base.replace(/\/+$/, '') + '/v1/images/generations';
 }
 
+/** 附图上限：张数 / 单文件大小 */
+const ATTACH_MAX_COUNT = 4;
+const ATTACH_MAX_BYTES = 5 * 1024 * 1024;
+const ATTACH_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp';
+/** 持久化时过大 base64 的占位（提前定义，供多模态组装过滤） */
+const B64_OMITTED = '__b64_omitted__';
+
+/** File → data URL（供 image_url 使用） */
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * 组装 OpenAI 多模态 content：无图保持 string；有图则 parts 数组。
+ * images 为 data:/http URL 列表。
+ */
+function buildMultimodalContent(text, images = []) {
+  const urls = (images || []).filter(u => u && u !== B64_OMITTED);
+  const trimmed = String(text || '').trim();
+  if (!urls.length) return trimmed;
+  const parts = [];
+  if (trimmed) parts.push({ type: 'text', text: trimmed });
+  for (const url of urls) parts.push({ type: 'image_url', image_url: { url } });
+  return parts;
+}
+
+/** OpenAI image_url part → Anthropic image block（对齐网关 oaiImagePartToAnth） */
+function oaiImagePartToAnth(part) {
+  const url = part?.image_url?.url || '';
+  const mm = /^data:([^;]+);base64,(.*)$/s.exec(url);
+  if (mm) return { type: 'image', source: { type: 'base64', media_type: mm[1], data: mm[2] } };
+  if (url) return { type: 'image', source: { type: 'url', url } };
+  return null;
+}
+
+/** OAI content（string | parts）→ Anthropic content */
+function oaiContentToAnth(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return String(content || '');
+  const blocks = [];
+  for (const p of content) {
+    if (!p) continue;
+    if (p.type === 'text' && p.text != null) blocks.push({ type: 'text', text: String(p.text) });
+    else if (p.type === 'image_url') {
+      const im = oaiImagePartToAnth(p);
+      if (im) blocks.push(im);
+    }
+  }
+  return blocks.length ? blocks : '';
+}
+
 function toAnthropicBody(messages, model, stream) {
   const sys = messages.find(m => m.role === 'system');
   const sysText = !sys ? undefined
@@ -275,7 +332,11 @@ function toAnthropicBody(messages, model, stream) {
     : Array.isArray(sys.content) ? sys.content.map(b => b.text || '').join('') : '';
   return {
     model, max_tokens: 8096, stream: !!stream,
-    messages: messages.filter(m => m.role !== 'system'),
+    // 多模态：把 OAI image_url 转成 Anthropic image，直连 Anthropic 才能看图
+    messages: messages.filter(m => m.role !== 'system').map(m => ({
+      ...m,
+      content: oaiContentToAnth(m.content),
+    })),
     ...(sysText ? { system: sysText } : {}),
   };
 }
@@ -489,7 +550,6 @@ const defaultPanel = () => ({ conversation: [], input: '', systemPrompt: '', sho
 /** localStorage 键：调试页聊天记录（切换页面/重启后恢复） */
 const DEBUG_CHAT_KEY = 'tokenbank.debug.chat';
 const DEBUG_CHAT_MAX = 200;
-const B64_OMITTED = '__b64_omitted__';
 
 /** 底部对话栏输入框高度（拖中间框线调整） */
 const COMPOSER_H_KEY = 'tokenbank.debug.composerTextH';
@@ -627,6 +687,10 @@ export default function Debug() {
   const [sending,        setSending]       = useState(false);
   const [lightbox,       setLightbox]      = useState(null);
   const [copiedMsgIdx,   setCopiedMsgIdx]  = useState(null);
+  // 对话模式待发附图（dataURL）；不进 panel 持久化
+  const [pendingImages,  setPendingImages] = useState([]);
+  const [attachError,    setAttachError]   = useState('');
+  const fileInputRef = useRef(null);
   // LLM 模式：从资产加载的提示词列表，选中后填入 System
   const [promptList,     setPromptList]    = useState([]);
   const [selectedPromptId, setSelectedPromptId] = useState('');
@@ -639,6 +703,7 @@ export default function Debug() {
   const [agentWorkingDir, setAgentWorkingDir] = useState(() => loadAgentWorkingDir());
   const [dirError, setDirError] = useState('');
   const [currentUserPrompt, setCurrentUserPrompt] = useState('');
+  const [currentUserImages, setCurrentUserImages] = useState([]);
   const [currentTask, setCurrentTask] = useState(null);
   const [taskSteps, setTaskSteps] = useState([]);
   const [taskResult, setTaskResult] = useState(null);
@@ -689,6 +754,7 @@ export default function Debug() {
     patchSession(execKey, {
       conversationTurns: snapshot.conversationTurns || [],
       currentUserPrompt: '',
+      currentUserImages: [],
       taskSteps: [],
       taskResult: null,
       currentTask: null,
@@ -931,6 +997,7 @@ export default function Debug() {
       setAgentPrompt(saved.agentPrompt || '');
     }
     setCurrentUserPrompt(saved.currentUserPrompt || '');
+    setCurrentUserImages(Array.isArray(saved.currentUserImages) ? saved.currentUserImages : []);
     setCurrentTask(saved.currentTask || null);
     setTaskSteps(saved.taskSteps || []);
     setTaskResult(saved.taskResult || null);
@@ -993,6 +1060,7 @@ export default function Debug() {
       );
       archiveCompletedTurn(resolvedKey, {
         user: patch.currentUserPrompt || sess.currentUserPrompt,
+        images: sess.currentUserImages || [],
         steps: archiveSteps,
         delegations: sess.delegations || {},
         result: patch.taskResult || sess.taskResult || null,
@@ -1012,6 +1080,7 @@ export default function Debug() {
         executing: false,
         // 已归档到 conversationTurns，避免与当前轮重复展示
         currentUserPrompt: '',
+        currentUserImages: [],
         taskSteps: [],
         taskResult: null,
         delegations: {},
@@ -1743,7 +1812,11 @@ export default function Debug() {
 
   // Execute agent task（promptOverride 供「继续」一键续接，避免等 setState）
   async function executeAgent(promptOverride) {
-    const prompt = String(promptOverride != null ? promptOverride : agentPrompt).trim();
+    const text = String(promptOverride != null ? promptOverride : agentPrompt).trim();
+    const attachList = promptOverride != null ? [] : pendingImages;
+    const attachPayload = attachList.map(p => ({ dataUrl: p.dataUrl, name: p.name }));
+    // 纯图时给默认提示，否则 CLI 无任务描述
+    const prompt = text || (attachPayload.length ? t('debug.agent.imageOnlyPrompt') : '');
     if (!activeAgent || !prompt || !window.electronAPI?.agent) {
       return;
     }
@@ -1763,6 +1836,9 @@ export default function Debug() {
     }
 
     setDirError('');
+    // 气泡展示原文；附图单独存 currentUserImages 缩略图渲染
+    const displayPrompt = text || (attachPayload.length ? t('debug.agent.imageOnlyPrompt') : '');
+    const displayImages = attachPayload.map(p => p.dataUrl).filter(Boolean);
     setAgentPrompt(prompt);
     const execKey = agentSessionKey(selectedAgent);
     const workDir = normalizeWorkingDir(agentWorkingDir.trim());
@@ -1782,7 +1858,8 @@ export default function Debug() {
     const instanceId = beginSessionInstance(execKey);
 
     patchSession(execKey, {
-      currentUserPrompt: prompt,
+      currentUserPrompt: displayPrompt,
+      currentUserImages: displayImages,
       agentPrompt: '',
       executing: true,
       taskSteps: [],
@@ -1794,6 +1871,8 @@ export default function Debug() {
       // 续接时保留 id，避免新一轮开始前被清空
       cliSessionId: resumeCliSessionId || sess.cliSessionId || null,
     });
+    setPendingImages([]);
+    setAttachError('');
 
     // 聚合入口 = 主 Agent 编排；Agent tab = 直调
     const execMode = isHubMode ? 'orchestrator' : 'direct';
@@ -1811,13 +1890,15 @@ export default function Debug() {
           sessionInstanceId: instanceId,
           continueSession,
           cliSessionId: resumeCliSessionId,
+          images: attachPayload.length ? attachPayload : undefined,
         },
       });
 
       if (result.success) {
         routeTask(result.taskId, execKey, instanceId);
         patchSession(execKey, {
-          currentUserPrompt: prompt,
+          currentUserPrompt: displayPrompt,
+          currentUserImages: displayImages,
           executing: true,
           taskSteps: [],
           taskResult: null,
@@ -1892,9 +1973,10 @@ export default function Debug() {
       cancelled: true,
     };
     // 有用户输入时归档本轮；保留 cliSessionId 供下一轮 --resume
-    if (snap.currentUserPrompt) {
+    if (snap.currentUserPrompt || (snap.currentUserImages || []).length) {
       archiveCompletedTurn(execKey, {
-        user: snap.currentUserPrompt,
+        user: snap.currentUserPrompt || t('debug.agent.imageOnlyPrompt'),
+        images: snap.currentUserImages || [],
         steps: closedSteps,
         delegations: snap.delegations || {},
         result: resultWithSession,
@@ -1908,6 +1990,7 @@ export default function Debug() {
         executing: false,
         currentTask: task,
         currentUserPrompt: '',
+        currentUserImages: [],
         taskSteps: [],
         taskResult: null,
         delegations: {},
@@ -2040,6 +2123,30 @@ export default function Debug() {
     }
   }, [imageMode]);
 
+  // 切到文生图时清空待发附图
+  useEffect(() => {
+    if (imageMode) {
+      setPendingImages([]);
+      setAttachError('');
+    }
+  }, [imageMode]);
+
+  // Esc 关闭全屏预览
+  useEffect(() => {
+    if (!lightbox) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setLightbox(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightbox]);
+
+  // LLM ↔ Agent 切换时清空待发附图（两边共用 pendingImages）
+  useEffect(() => {
+    setPendingImages([]);
+    setAttachError('');
+  }, [mode]);
+
   // 切换对话/图像时，清空与当前模式不符的提示词选中（保留已填入的正文）
   useEffect(() => {
     if (!selectedPromptId) return;
@@ -2061,14 +2168,23 @@ export default function Debug() {
   function handleClearChat() {
     if (!window.confirm(t('debug.clearConfirm'))) return;
     setPanel({ conversation: [], input: '' });
+    setPendingImages([]);
+    setAttachError('');
     clearDebugPanelStorage();
+  }
+
+  /** 用户消息是否可归档（有文字或附图） */
+  function hasLlmUserTurn(msgs) {
+    return (msgs || []).some(m =>
+      m.role === 'user' && (String(m.content || '').trim() || (Array.isArray(m.images) && m.images.length > 0))
+    );
   }
 
   /** 归档当前对话后开新会话 */
   function startNewLlmSession() {
     if (sending) return;
     const msgs = conversation || [];
-    if (msgs.some(m => m.role === 'user' && String(m.content || '').trim())) {
+    if (hasLlmUserTurn(msgs)) {
       saveLlmSessionSnapshot({
         conversation: msgs,
         systemPrompt,
@@ -2076,6 +2192,8 @@ export default function Debug() {
       });
     }
     setPanel({ conversation: [], input: '' });
+    setPendingImages([]);
+    setAttachError('');
     clearDebugPanelStorage();
   }
 
@@ -2083,7 +2201,7 @@ export default function Debug() {
   function restoreLlmSession(snapshot) {
     if (sending) return;
     const msgs = conversation || [];
-    if (msgs.some(m => m.role === 'user' && String(m.content || '').trim())) {
+    if (hasLlmUserTurn(msgs)) {
       saveLlmSessionSnapshot({
         conversation: msgs,
         systemPrompt,
@@ -2102,6 +2220,8 @@ export default function Debug() {
       imageMode: snapshot.imageMode != null ? !!snapshot.imageMode : imageMode,
       showSystem: !!(snapshot.systemPrompt && String(snapshot.systemPrompt).trim()),
     });
+    setPendingImages([]);
+    setAttachError('');
   }
 
   const effectiveBase = selectedId === '__custom__' ? manualBaseUrl : (provOpts.find(o => o.id === selectedId)?.base_url || '');
@@ -2110,7 +2230,10 @@ export default function Debug() {
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || !model || !effectiveBase || sending) return;
+    const attachUrls = pendingImages.map(p => p.dataUrl).filter(Boolean);
+    // 对话模式：有文字或附图即可；文生图仍要求文字
+    if (!model || !effectiveBase || sending) return;
+    if (imageMode ? !text : (!text && !attachUrls.length)) return;
 
     if (imageMode) {
       const idx = conversation.length + 1;
@@ -2145,17 +2268,24 @@ export default function Debug() {
 
     const apiMessages = [];
     if (systemPrompt.trim()) apiMessages.push({ role: 'system', content: systemPrompt.trim() });
-    // 跳过空/失败的 assistant，避免上游报 messages.content 为空
+    // 跳过空/失败的 assistant，避免上游报 messages.content 为空；历史用户附图一并带上
     conversation.forEach(m => {
-      if (m.role === 'user') apiMessages.push({ role: 'user', content: m.content });
-      else if (m.role === 'assistant' && !m.error && String(m.content || '').trim()) {
+      if (m.role === 'user') {
+        const histImgs = Array.isArray(m.images) ? m.images.filter(u => u && u !== B64_OMITTED) : [];
+        apiMessages.push({ role: 'user', content: buildMultimodalContent(m.content, histImgs) });
+      } else if (m.role === 'assistant' && !m.error && String(m.content || '').trim()) {
         apiMessages.push({ role: 'assistant', content: m.content });
       }
     });
-    apiMessages.push({ role: 'user', content: text });
+    apiMessages.push({ role: 'user', content: buildMultimodalContent(text, attachUrls) });
 
+    const userMsg = attachUrls.length
+      ? { role: 'user', content: text, images: attachUrls }
+      : { role: 'user', content: text };
     const assistantIdx = conversation.length + 1;
-    setPanel({ input: '', conversation: [...conversation, { role: 'user', content: text }, { role: 'assistant', content: '', streaming: true }] });
+    setPanel({ input: '', conversation: [...conversation, userMsg, { role: 'assistant', content: '', streaming: true }] });
+    setPendingImages([]);
+    setAttachError('');
     setSending(true);
 
     await doStreamChat({
@@ -2190,6 +2320,61 @@ export default function Debug() {
   function handleKeyDown(e) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); } }
   function handleInputChange(e) {
     setPanel({ input: e.target.value });
+  }
+
+  /** 校验并加入待发附图 */
+  async function addAttachFiles(fileList) {
+    const files = Array.from(fileList || []).filter(f => f && f.type.startsWith('image/'));
+    if (!files.length) return;
+    setAttachError('');
+    const room = ATTACH_MAX_COUNT - pendingImages.length;
+    if (room <= 0) {
+      setAttachError(t('debug.attachLimit', { n: ATTACH_MAX_COUNT }));
+      return;
+    }
+    const take = files.slice(0, room);
+    if (files.length > room) setAttachError(t('debug.attachLimit', { n: ATTACH_MAX_COUNT }));
+    const next = [...pendingImages];
+    for (const file of take) {
+      if (file.size > ATTACH_MAX_BYTES) {
+        setAttachError(t('debug.attachSizeError'));
+        continue;
+      }
+      try {
+        const dataUrl = await fileToDataUrl(file);
+        if (!dataUrl) continue;
+        next.push({
+          id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          dataUrl,
+          name: file.name || 'image',
+        });
+      } catch {
+        setAttachError(t('debug.attachSizeError'));
+      }
+    }
+    setPendingImages(next.slice(0, ATTACH_MAX_COUNT));
+  }
+
+  function handleComposerPaste(e) {
+    // 文生图模式不附图；Agent / LLM 对话均可粘贴
+    if (mode === 'llm' && imageMode) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles = [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const f = item.getAsFile();
+        if (f) imageFiles.push(f);
+      }
+    }
+    if (!imageFiles.length) return;
+    e.preventDefault();
+    addAttachFiles(imageFiles);
+  }
+
+  function removePendingImage(id) {
+    setPendingImages(prev => prev.filter(p => p.id !== id));
+    setAttachError('');
   }
 
   // 共用：分段控件 — 轨道略深，选中白片才够对比（避免与浅色顶栏糊成一片）
@@ -2436,7 +2621,33 @@ export default function Debug() {
                       )}
                     </>
                   ) : (
-                    msg.content
+                    <>
+                      {/* 用户附图缩略图（持久化后可能为占位） */}
+                      {Array.isArray(msg.images) && msg.images.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mb-1.5">
+                          {msg.images.map((src, j) => {
+                            if (!src || src === B64_OMITTED) {
+                              return (
+                                <span key={j} className="text-[11px] opacity-80 px-1.5 py-1 rounded bg-white/15">
+                                  {t('debug.imageNotRestored')}
+                                </span>
+                              );
+                            }
+                            const imgSrc = src.startsWith('data:') || src.startsWith('http') ? src : `data:image/png;base64,${src}`;
+                            return (
+                              <img
+                                key={j}
+                                src={imgSrc}
+                                alt={`attach-${j}`}
+                                className="h-16 w-16 object-cover rounded-lg cursor-zoom-in border border-white/20"
+                                onClick={() => setLightbox(imgSrc)}
+                              />
+                            );
+                          })}
+                        </div>
+                      )}
+                      {msg.content || null}
+                    </>
                   )}
                 </div>
               )}
@@ -2461,7 +2672,7 @@ export default function Debug() {
                 <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500">
                   <p className="text-sm">{t('debug.agent.noAgents')}</p>
                 </div>
-              ) : !conversationTurns.length && !currentUserPrompt && !taskSteps.length && !executing ? (
+              ) : !conversationTurns.length && !currentUserPrompt && !currentUserImages.length && !taskSteps.length && !executing ? (
                 <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500 px-6">
                   <div className="max-w-md">
                     <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('debug.tabs.hub')}</p>
@@ -2490,6 +2701,7 @@ export default function Debug() {
                 <ExecutionLog
                   conversationTurns={conversationTurns}
                   userPrompt={currentUserPrompt}
+                  userImages={currentUserImages}
                   steps={taskSteps}
                   status={displayTaskStatus()}
                   result={taskResult}
@@ -2497,17 +2709,20 @@ export default function Debug() {
                   agentName={t('debug.agent.mainSuffix', { name: mainAgent.name })}
                   delegations={delegations}
                   agentNames={agentNameMap}
+                  onPreviewImage={setLightbox}
                 />
               )
             ) : (
               <ExecutionLog
                 conversationTurns={conversationTurns}
                 userPrompt={currentUserPrompt}
+                userImages={currentUserImages}
                 steps={taskSteps}
                 status={displayTaskStatus()}
                 result={taskResult}
                 task={currentTask}
                 agentName={selectedAgent?.name}
+                onPreviewImage={setLightbox}
               />
             )}
           </div>
@@ -2573,14 +2788,81 @@ export default function Debug() {
                 )}
               </div>
             </div>
+            {/* 待发附图缩略图（仅对话模式） */}
+            {!imageMode && pendingImages.length > 0 && (
+              <div className="flex flex-wrap gap-2 items-center">
+                {pendingImages.map(p => (
+                  <div key={p.id} className="relative group">
+                    <img
+                      src={p.dataUrl}
+                      alt={p.name}
+                      className="h-14 w-14 object-cover rounded-lg border border-zinc-200 dark:border-zinc-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePendingImage(p.id)}
+                      title={t('debug.removeImage')}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-800 text-white text-xs leading-none opacity-80 hover:opacity-100"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {attachError && !imageMode && (
+              <p className="text-xs text-red-500 dark:text-red-400">{attachError}</p>
+            )}
             <div className="flex gap-2 items-end">
-              <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown}
+              {!imageMode && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ATTACH_ACCEPT}
+                    multiple
+                    className="hidden"
+                    onChange={e => {
+                      addAttachFiles(e.target.files);
+                      e.target.value = '';
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={sending || pendingImages.length >= ATTACH_MAX_COUNT}
+                    title={t('debug.attachImage')}
+                    className={`${ghostBtn} w-9 h-9 shrink-0 flex items-center justify-center`}
+                  >
+                    {/* 回形针图标：选图附图 */}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                    </svg>
+                  </button>
+                </>
+              )}
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onPaste={handleComposerPaste}
                 placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
                 rows={2}
                 style={{ resize: 'none', height: composerTextH, minHeight: COMPOSER_H_MIN }}
-                className={composerField} />
-              <button type="button" onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}
-                className={`${primaryBtn} w-9 h-9`}>
+                className={composerField}
+              />
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={
+                  sending
+                  || !model
+                  || !effectiveBase
+                  || (imageMode ? !input.trim() : (!input.trim() && pendingImages.length === 0))
+                }
+                className={`${primaryBtn} w-9 h-9`}
+              >
                 {sending
                   ? <span className="w-3.5 h-3.5 rounded-sm bg-white/70 animate-pulse" />
                   : <span className="text-white text-sm">↑</span>}
@@ -2621,7 +2903,7 @@ export default function Debug() {
               <button type="button" onClick={() => setHistoryOpen(true)} className={ghostBtn}>
                 {t('debug.agent.history')}
               </button>
-              {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing || taskCanStop) && (
+              {(conversationTurns.length > 0 || currentUserPrompt || currentUserImages.length > 0 || taskSteps.length > 0 || executing || taskCanStop) && (
                 <button type="button" onClick={startNewAgentSession} className={ghostBtn}>
                   {t('debug.agent.newSession')}
                 </button>
@@ -2629,15 +2911,64 @@ export default function Debug() {
             </div>
             {dirError && <p className="text-xs text-red-500 dark:text-red-400">{dirError}</p>}
 
+            {/* 待发附图缩略图 */}
+            {pendingImages.length > 0 && (
+              <div className="flex flex-wrap gap-2 items-center">
+                {pendingImages.map(p => (
+                  <div key={p.id} className="relative group">
+                    <img
+                      src={p.dataUrl}
+                      alt={p.name}
+                      className="h-14 w-14 object-cover rounded-lg border border-zinc-200 dark:border-zinc-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePendingImage(p.id)}
+                      title={t('debug.removeImage')}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-800 text-white text-xs leading-none opacity-80 hover:opacity-100"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {attachError && (
+              <p className="text-xs text-red-500 dark:text-red-400">{attachError}</p>
+            )}
+
             <div className="flex gap-2 items-end">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ATTACH_ACCEPT}
+                multiple
+                className="hidden"
+                onChange={e => {
+                  addAttachFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!activeAgent || taskCanStop || pendingImages.length >= ATTACH_MAX_COUNT}
+                title={t('debug.attachImage')}
+                className={`${ghostBtn} w-9 h-9 shrink-0 flex items-center justify-center`}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+              </button>
               <textarea
                 ref={agentTextareaRef}
                 value={agentPrompt}
                 onChange={e => setAgentPrompt(e.target.value)}
+                onPaste={handleComposerPaste}
                 onKeyDown={e => {
                   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
-                    if (!taskCanStop && activeAgent && agentPrompt.trim()) executeAgent();
+                    if (!taskCanStop && activeAgent && (agentPrompt.trim() || pendingImages.length > 0)) executeAgent();
                   }
                 }}
                 disabled={!activeAgent}
@@ -2664,8 +2995,12 @@ export default function Debug() {
                   <span className="text-sm">{t('debug.agent.continue')}</span>
                 </button>
               ) : (
-                <button type="button" onClick={() => executeAgent()} disabled={!activeAgent || !agentPrompt.trim()}
-                  className={`${primaryBtn} px-4 h-9`}>
+                <button
+                  type="button"
+                  onClick={() => executeAgent()}
+                  disabled={!activeAgent || (!agentPrompt.trim() && pendingImages.length === 0)}
+                  className={`${primaryBtn} px-4 h-9`}
+                >
                   <span className="text-sm">{t('debug.agent.execute')}</span>
                 </button>
               )}
@@ -2694,12 +3029,34 @@ export default function Debug() {
         onRestore={restoreHistorySession}
       />
 
-      {/* ── Lightbox ── */}
-      {lightbox && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center" onClick={() => setLightbox(null)}>
-          <img src={lightbox} alt="preview" className="max-w-full max-h-full object-contain" onClick={e => e.stopPropagation()} />
-          <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl leading-none">✕</button>
-        </div>
+      {/* 全屏预览挂到 body；须 electron-no-drag，否则顶部拖拽条会吞掉关闭点击 */}
+      {lightbox && createPortal(
+        <div className="electron-no-drag fixed inset-0 z-[9999]" role="dialog" aria-modal="true">
+          {/* 独立遮罩层：整屏可点关闭 */}
+          <button
+            type="button"
+            className="electron-no-drag absolute inset-0 bg-black/85 border-0 cursor-default"
+            onClick={() => setLightbox(null)}
+            aria-label={t('debug.preview.close')}
+          />
+          {/* 关闭钮避开顶部 h-11 拖拽热区（App.jsx electron-drag） */}
+          <button
+            type="button"
+            onClick={() => setLightbox(null)}
+            className="electron-no-drag fixed top-12 right-4 z-[10001] w-11 h-11 rounded-full bg-zinc-900/80 text-white text-xl leading-none flex items-center justify-center hover:bg-zinc-800 border border-white/20 shadow-lg"
+            aria-label={t('debug.preview.close')}
+          >
+            ✕
+          </button>
+          <div className="relative z-[10000] flex h-full w-full items-center justify-center p-6 pt-16 pointer-events-none">
+            <img
+              src={lightbox}
+              alt="preview"
+              className="max-w-full max-h-full object-contain pointer-events-auto shadow-2xl"
+            />
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
