@@ -6,11 +6,20 @@ const path = require('path');
 
 const resourceManager = require('../resource-manager');
 const sync = require('../mcp-client-sync');
+const mcpTargets = require('../mcp-agent-targets');
 
 const promptsRow = {
   id: 'tokenbank-prompts', name: 'tokenbank-prompts', status: 'active',
   command: '__DYNAMIC_ELECTRON__', args: '[]', env: '{"ELECTRON_RUN_AS_NODE":"1"}', builtin: 1,
 };
+
+/** CI 无本机 Agent 安装时，getServerSyncClients 会把 sync_clients 滤空；测试里 stub 已装列表 */
+function withInstalledClients(ids, fn) {
+  const orig = mcpTargets.listInstalledClientIds;
+  mcpTargets.listInstalledClientIds = () => [...ids];
+  try { return fn(); }
+  finally { mcpTargets.listInstalledClientIds = orig; }
+}
 
 test('serverToEntry: prompts server 物化为 shell launcher（内嵌 ELECTRON_RUN_AS_NODE）', () => {
   const entry = sync.serverToEntry(promptsRow, 'claude-code');
@@ -85,13 +94,15 @@ test('filterServersForClient: 显式 sync_clients 时即使无投射也下发 pr
   const orig = resourceManager.hasPromptProjections;
   resourceManager.hasPromptProjections = () => false;
   try {
-    const row = {
-      ...promptsRow,
-      sync_clients: ['workbuddy'],
-      metadata: { sync_clients: ['workbuddy'] },
-    };
-    assert.equal(sync.filterServersForClient([row], 'workbuddy').length, 1);
-    assert.equal(sync.filterServersForClient([row], 'cursor').length, 0);
+    withInstalledClients(['workbuddy', 'cursor'], () => {
+      const row = {
+        ...promptsRow,
+        sync_clients: ['workbuddy'],
+        metadata: { sync_clients: ['workbuddy'] },
+      };
+      assert.equal(sync.filterServersForClient([row], 'workbuddy').length, 1);
+      assert.equal(sync.filterServersForClient([row], 'cursor').length, 0);
+    });
   } finally { resourceManager.hasPromptProjections = orig; }
 });
 
@@ -99,12 +110,14 @@ test('filterServersForClient: 取消 sync_clients 勾选后不下发 prompts（�
   const orig = resourceManager.hasPromptProjections;
   resourceManager.hasPromptProjections = () => true;
   try {
-    const row = {
-      ...promptsRow,
-      sync_clients: ['cursor', 'codex'],
-      metadata: { sync_clients: ['cursor', 'codex'] },
-    };
-    assert.equal(sync.filterServersForClient([row], 'cursor').length, 1);
-    assert.equal(sync.filterServersForClient([row], 'workbuddy').length, 0);
+    withInstalledClients(['cursor', 'codex', 'workbuddy'], () => {
+      const row = {
+        ...promptsRow,
+        sync_clients: ['cursor', 'codex'],
+        metadata: { sync_clients: ['cursor', 'codex'] },
+      };
+      assert.equal(sync.filterServersForClient([row], 'cursor').length, 1);
+      assert.equal(sync.filterServersForClient([row], 'workbuddy').length, 0);
+    });
   } finally { resourceManager.hasPromptProjections = orig; }
 });
