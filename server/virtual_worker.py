@@ -472,15 +472,68 @@ class VirtualWorkerConnection:
         payload = data.get("payload", {})
         if not req_id:
             return
-        # 防御：虚拟 worker 只转发 chat 端点，未实现图像生成。若收到图像请求，
-        # 明确报错而非误发到 /chat/completions（正常路径已在 dispatch_image 提前排除虚拟 worker）。
+        # 文生图：OpenAI 兼容上游转发 /images/generations
         if data.get("type") == "image_request":
-            entry = self.pending.get(req_id)
-            if entry:
-                await entry["queue"].put(("error", "virtual worker does not support image generation"))
+            # handle_image 已 +1 active_requests；此处只异步转发，finally 里 -1
+            asyncio.create_task(self._dispatch_image(req_id, payload))
             return
         self.active_requests += 1
         asyncio.create_task(self._dispatch(req_id, payload))
+
+    def _image_gen_url(self) -> str:
+        """与 agent-worker imageGenPath 对齐：base 已含 /vN 则只拼 images/generations。"""
+        base = (self.base_url or "").rstrip("/")
+        if re.search(r"/v\d+(/|$)", base):
+            return f"{base}/images/generations"
+        return f"{base}/v1/images/generations"
+
+    async def _dispatch_image(self, req_id: str, payload: dict) -> None:
+        """转发文生图到上游 OpenAI 兼容接口；结果写入 pending queue。"""
+        entry = self.pending.get(req_id)
+        if not entry:
+            return
+        q = entry["queue"]
+        model = (payload or {}).get("model", "")
+        try:
+            # 仅 OpenAI 兼容源支持；其余风格明确报错
+            style = (self.api_style or "openai").strip().lower()
+            if style not in ("openai", "openai_compatible", ""):
+                await q.put(("error", f"virtual worker api_style={style} does not support image generation"))
+                return
+
+            url = self._image_gen_url()
+            body = dict(payload or {})
+            # 统一要 b64，由 dispatch_image 再转 url/缓存
+            body["response_format"] = "b64_json"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            }
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(url, json=body, headers=headers)
+                raw = resp.text or ""
+                if resp.status_code >= 400:
+                    await q.put(("error", f"HTTP {resp.status_code}: {raw[:300]}"))
+                    return
+                data = resp.json()
+                images = []
+                for item in (data.get("data") or []):
+                    if not isinstance(item, dict):
+                        continue
+                    images.append({
+                        "b64": item.get("b64_json") or "",
+                        "revised_prompt": item.get("revised_prompt"),
+                    })
+                if not images:
+                    await q.put(("error", "upstream returned no images"))
+                    return
+                await q.put(("done", images))
+        except Exception as e:
+            await q.put(("error", str(e)))
+        finally:
+            # 替代真实 worker 的 image_done WS 清理
+            self.pending.pop(req_id, None)
+            self.active_requests = max(0, self.active_requests - 1)
 
     async def _dispatch(self, req_id: str, payload: dict) -> None:
         entry = self.pending.get(req_id)

@@ -97,10 +97,10 @@ const TYPE_OPTIONS = [
 function readViewTab() {
   try {
     const v = localStorage.getItem(VIEW_TAB_KEY);
-    // 默认「为你推荐」：场景货架优先于库存墙（反笔记陷阱）
-    // 旧的 'discovered' / 'agents' 归并到 'managed'；'catalog' 并入推荐
-    if (v === 'catalog') return 'recommend';
+    // 默认「为你推荐」；旧 portrait 并入 recommend
+    if (v === 'catalog' || v === 'portrait') return 'recommend';
     if (v === 'managed' || v === 'recommend') return v;
+    if (v === 'discovered' || v === 'agents') return 'managed';
     return 'recommend';
   } catch { return 'recommend'; }
 }
@@ -699,7 +699,6 @@ export default function Resources() {
       upsertResourceLocally(resource);
       if (meta.catalogId) markCatalogInstalled(meta.catalogId, resource);
     }
-    // 级联技能等依赖异步刷入
     refreshAfterAdopt();
   }, [refreshAfterAdopt]);
 
@@ -2814,7 +2813,7 @@ export default function Resources() {
           renderLocalList()
         ) : viewTab === 'recommend' ? (
           <div className="space-y-6">
-            {/* 上半:个性化挖掘(按类型分流)*/}
+            {/* 画像挖掘 + 基于画像推荐（同一板块） */}
             <PersonalizedRecommend
               typeFilter={typeFilter}
               purposeFilter={tagFilter}
@@ -2825,7 +2824,7 @@ export default function Resources() {
               onAdopted={handleRecoAdopted}
               onItemsChange={() => setRecoPurposeRev((n) => n + 1)}
             />
-            {/* 下半:原社区推荐 */}
+            {/* 下半:社区目录 */}
             <div className="space-y-2 border-t border-zinc-200/80 dark:border-zinc-800 pt-4">
               <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{t('resources.catalogSection')}</p>
               {filteredCatalog.length === 0 ? (

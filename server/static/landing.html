@@ -83,8 +83,8 @@
         <a href="#hub" data-i18n="nav.hub" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Hub</a>
         <a href="#onboarding" data-i18n="nav.connect" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Connect</a>
         <a href="#routing" data-i18n="nav.routing" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Routing</a>
-        <a href="#network" data-i18n="nav.network" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Network</a>
-        <a href="#circles" data-i18n="nav.circles" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Circles</a>
+        <a href="/network" data-i18n="nav.network" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Network</a>
+        <a href="/circles" data-i18n="nav.circles" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Circles</a>
         <a href="#faq" data-i18n="nav.faq" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">FAQ</a>
       </nav>
       <div style="display:flex;gap:10px;align-items:center;">
@@ -632,6 +632,9 @@
         <div data-reveal data-i18n="nw.kicker" style="display:inline-block;background:#FFD055;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:22px;">Community compute · share & exchange · earn from idle</div>
         <h2 data-reveal data-reveal-delay="60" data-i18n="nw.title" style="margin:0 auto 14px;max-width:780px;font-family:'Playfair Display','Noto Serif SC',serif;font-weight:400;font-size:46px;line-height:1.22;letter-spacing:-0.01em;color:#000;">Personal and community compute, scheduled as one.</h2>
         <p data-reveal data-reveal-delay="120" data-i18n="nw.sub" style="margin:0 auto;max-width:600px;font-size:16px;line-height:1.55;color:#333;">Use your own free tiers, subscriptions and metered accounts first; tap community shared compute only when needed — both switch transparently inside one gateway.</p>
+        <div data-reveal data-reveal-delay="160" style="margin-top:28px;">
+          <a href="/network" data-i18n="nw.cta" style="display:inline-block;background:#000;color:#fff;border-radius:12px;padding:12px 22px;font-size:14px;font-weight:600;text-decoration:none;">Open live network →</a>
+        </div>
       </div>
 
       <!-- two sources -->
@@ -744,7 +747,7 @@
               </div>
             </div>
           </div>
-          <a href="/app" data-reveal data-reveal-delay="200" data-i18n="cr.cta" style="display:inline-flex;margin-top:28px;text-decoration:none;background:#000;color:#fff;font-size:14px;font-weight:500;padding:12px 22px;border-radius:10px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">Sign in to explore circles →</a>
+          <a href="/circles" data-reveal data-reveal-delay="200" data-i18n="cr.cta" style="display:inline-flex;margin-top:28px;text-decoration:none;background:#000;color:#fff;font-size:14px;font-weight:500;padding:12px 22px;border-radius:10px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">Explore circles →</a>
         </div>
 
         <!-- 圈子预览卡片（纯 CSS 示意） -->
@@ -900,7 +903,7 @@
             <a href="#hub" data-i18n="ft.lHub" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Agent hub</a>
             <a href="#onboarding" data-i18n="ft.l2" style="text-decoration:none;color:#9a9a9a;font-size:14px;">One-click connect</a>
             <a href="#routing" data-i18n="ft.l3" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Smart routing</a>
-            <a href="#network" data-i18n="ft.l4" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Community sharing</a>
+            <a href="/network" data-i18n="ft.l4" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Community sharing</a>
             <a href="#circles" data-i18n="ft.l5" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Circles</a>
           </div>
         </div>
@@ -1016,6 +1019,7 @@ class Component extends DCLogic {
     'nw.kicker': '社区算力 · 交流分享 · 闲置赚钱',
     'nw.title': '个人算力与社区算力，统一调度。',
     'nw.sub': '优先用你自己的免费额度、订阅与按量账户；需要时再调用社区共享算力——二者在同一网关内透明切换。',
+    'nw.cta': '打开实时全球网络 →',
     'nw.p1.h': '个人算力', 'nw.p1.b': '挂在你名下的供应：本地 Ollama、厂商免费额度、应用 / API 订阅，以及按 list 价计费的按量账户。',
     'nw.p1.t1': '免费额度', 'nw.p1.t2': '订阅', 'nw.p1.t3': '按量付费',
     'nw.p2.h': '社区算力', 'nw.p2.b': '成员贡献闲置额度，通过积分网络共享。消耗积分即可调用别人供给的模型，往往比官方更省。',
@@ -1035,7 +1039,7 @@ class Component extends DCLogic {
     'cr.s1.h': '创建或加入', 'cr.s1.b': '自建圈子，或通过邀请码 / 链接加入 — 圈主与成员角色清晰，圈友列表一目了然。',
     'cr.s2.h': '圈内共享模型', 'cr.s2.b': '贡献算力时可指定面向哪些圈子。圈友经同一网关调用共享模型，路由全程透明。',
     'cr.s3.h': '邀请同好，积分互得', 'cr.s3.b': '分享邀请链接 — 好友加入后双方获得积分奖励。圈内可发帖、回复，与圈友交流协作。',
-    'cr.cta': '登录体验圈子 →',
+    'cr.cta': '浏览圈子 →',
     'cr.card.name': 'AI 同好圈', 'cr.card.meta': '12 位圈友 · 你是圈主',
     'cr.card.invite': '邀请同好', 'cr.card.members': '圈友', 'cr.card.models': '共享模型',
     'cr.card.online': '● 在线', 'cr.card.feed': '消息',

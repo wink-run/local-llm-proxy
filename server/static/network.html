@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>全球网络 · Token Bank</title>
+<meta name="description" content="在线节点、可用模型与智能体；点模型/智能体试用，点用户查看贡献">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="/static/vue.global.prod.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#fff;--bg-muted:#f5f2f0;--bg-subtle:#faf9f5;
+  --text:#000;--text-muted:#7b7b7b;--text-faint:#bcbcbc;
+  --border:#e7e4e1;--accent:#f1ccff;--primary:#000;--primary-fg:#fff;
+  --ok:#16a34a;--link:#2563eb;
+  --radius:10px;--radius-lg:18px;
+  --font:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'Space Mono',ui-monospace,monospace;
+}
+body{font-family:var(--font);background:var(--bg-subtle);color:var(--text);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.shell{max-width:1100px;margin:0 auto;padding:24px 16px 48px}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600}
+.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center}
+.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
+.lang-btn,.ghost-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;color:var(--text-muted)}
+.lang-btn:hover,.ghost-btn:hover{color:var(--text)}
+.h1{font-size:22px;font-weight:700;letter-spacing:-.02em}
+.sub{color:var(--text-muted);font-size:13px;margin-top:4px}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:20px 0}
+.stat{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px}
+.stat .k{font-size:11px;color:var(--text-muted)}
+.stat .v{font-size:22px;font-weight:700;margin-top:4px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:800px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;min-height:120px}
+.panel-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.panel-h h2{font-size:13px;font-weight:600}
+.panel-h .meta{font-size:11px;color:var(--text-muted)}
+.list{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto}
+.row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--bg-muted);border:1px solid transparent;cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
+.row:hover{border-color:var(--border);background:#fff}
+.row.disabled{cursor:default;opacity:.7}
+.row.disabled:hover{border-color:transparent;background:var(--bg-muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0}
+.name{font-size:12px;font-weight:500;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.desc{font-size:11px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side{margin-left:auto;text-align:right;flex-shrink:0;font-size:11px;color:var(--text-muted)}
+.side b{display:block;color:var(--text);font-weight:600;font-size:12px}
+.avatar{width:28px;height:28px;border-radius:9px;background:#dbeafe;color:#2563eb;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.rank.top{color:#d97706}
+.state{text-align:center;padding:32px;color:var(--text-muted);font-size:13px}
+.footer{margin-top:28px;text-align:center;color:var(--text-faint);font-size:12px}
+.link{color:var(--link);font-size:11px}
+</style>
+</head>
+<body>
+<div id="app" class="shell">
+  <header>
+    <a class="brand" href="/">
+      <span class="brand-mark"></span>
+      <span>Token Bank</span>
+    </a>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="lang-btn" type="button" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中文' }}</button>
+      <a class="ghost-btn" href="/circles">{{ T.circlesNav }}</a>
+      <a class="ghost-btn" href="/app">{{ T.app }}</a>
+    </div>
+  </header>
+
+  <div class="h1">{{ T.title }}</div>
+  <p class="sub">{{ T.subtitle }}</p>
+
+  <div v-if="loading" class="state">{{ T.loading }}</div>
+  <div v-else-if="fatal" class="state">{{ fatal }}</div>
+  <template v-else>
+    <div class="stats">
+      <div class="stat"><div class="k">{{ T.nodes }}</div><div class="v">{{ summary.online_workers ?? 0 }}</div></div>
+      <div class="stat"><div class="k">{{ T.models }}</div><div class="v">{{ models.length }}</div></div>
+      <div class="stat"><div class="k">{{ T.agents }}</div><div class="v">{{ agents.length }}</div></div>
+      <div class="stat"><div class="k">{{ T.circles }}</div><div class="v">{{ summary.circle_count ?? circles.length }}</div></div>
+      <div class="stat"><div class="k">{{ T.tokens }}</div><div class="v">{{ fmtTok(summary.contrib_tokens) }}</div></div>
+      <div class="stat"><div class="k">{{ T.users }}</div><div class="v">{{ summary.active_users ?? 0 }}</div></div>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-h">
+          <h2>{{ T.modelsTitle }}</h2>
+          <span class="meta">{{ T.tryHint }}</span>
+        </div>
+        <div class="list" v-if="models.length">
+          <a v-for="m in models" :key="m.name" class="row" :href="m.mtype === 'embedding' ? undefined : ('/m/' + encodeURIComponent(m.name))" :style="m.mtype === 'embedding' ? {cursor:'default',opacity:0.85} : undefined" @click="m.mtype === 'embedding' && $event.preventDefault()">
+            <span class="dot"></span>
+            <div style="min-width:0;flex:1">
+              <div class="name">{{ m.name }}</div>
+              <div class="desc">{{ T.nodesN.replace('{n}', String(m.nodes)) }} · {{ typeLabel(m.mtype) }}</div>
+            </div>
+            <div class="side"><b>{{ m.avgMs ? m.avgMs + ' ms' : '—' }}</b>{{ tryLabel(m.mtype) }}</div>
+          </a>
+        </div>
+        <div v-else class="state">{{ T.emptyModels }}</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">
+          <h2>{{ T.agentsTitle }}</h2>
+          <span class="meta">{{ T.tryHint }}</span>
+        </div>
+        <div class="list" v-if="agents.length">
+          <a v-for="a in agents" :key="a.id + '@' + (a.worker_id||'')" class="row" :href="'/a/' + encodeURIComponent(a.id)">
+            <span class="dot"></span>
+            <div style="min-width:0;flex:1">
+              <div class="name">{{ a.display_name || a.name || a.id }}</div>
+              <div class="desc">{{ a.description || T.noDesc }}</div>
+            </div>
+            <div class="side"><b>{{ a.owner_nickname || '—' }}</b>{{ T.tryAgent }}</div>
+          </a>
+        </div>
+        <div v-else class="state">{{ T.emptyAgents }}</div>
+      </div>
+
+      <div class="panel" style="grid-column:1 / -1">
+        <div class="panel-h">
+          <h2>{{ T.circlesTitle }}</h2>
+          <a class="meta link" href="/circles">{{ T.circlesMore }}</a>
+        </div>
+        <div class="list" v-if="circles.length">
+          <button
+            v-for="c in circles"
+            :key="c.id"
+            type="button"
+            class="row"
+            :disabled="circleBusyId === c.id"
+            @click="onCircleClick(c)"
+          >
+            <span class="avatar">{{ (c.name || '?').slice(0, 1) }}</span>
+            <div style="min-width:0;flex:1">
+              <div class="name" style="font-family:inherit">{{ c.name }}</div>
+              <div class="desc">{{ c.description || T.noDesc }}</div>
+            </div>
+            <div class="side">
+              <b>{{ T.membersN.replace('{n}', String(c.member_count ?? 0)) }}</b>
+              {{ circleStatus(c) }}
+            </div>
+          </button>
+        </div>
+        <div v-else class="state">{{ T.emptyCircles }}</div>
+      </div>
+
+      <div class="panel" style="grid-column:1 / -1">
+        <div class="panel-h">
+          <h2>{{ T.leaderboard }}</h2>
+          <span class="meta">{{ T.leaderboardHint }}</span>
+        </div>
+        <div class="list" v-if="topWorkers.length">
+          <component
+            :is="w.sharer ? 'a' : 'div'"
+            v-for="(w, i) in topWorkers"
+            :key="w.sharer || w.worker_id || w.name"
+            class="row"
+            :class="{ disabled: !w.sharer }"
+            :href="w.sharer ? '/u/' + encodeURIComponent(w.sharer) : undefined"
+          >
+            <span class="rank" :class="{ top: i < 3 }">#{{ i + 1 }}</span>
+            <div style="min-width:0;flex:1">
+              <div class="name" style="font-family:inherit">{{ w.name }}</div>
+              <div class="desc">{{ offerText(w) }}</div>
+            </div>
+            <div class="side">
+              <b>{{ fmtTok(w.period_tokens) }} tok</b>
+              {{ w.avg_latency_ms || 0 }} ms
+            </div>
+          </component>
+        </div>
+        <div v-else class="state">{{ T.emptyRank }}</div>
+      </div>
+    </div>
+  </template>
+
+  <div class="footer">Token Bank · {{ T.footer }} · <a class="link" href="/">{{ T.home }}</a></div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue
+
+createApp({
+  setup() {
+    const lang = ref((localStorage.getItem('tb_lang') || ((navigator.language || '').startsWith('zh') ? 'zh' : 'en')))
+    const i18n = {
+      zh: {
+        title: '全球网络', subtitle: '点模型或智能体试用；点用户查看贡献者主页与其分享的模型',
+        loading: '加载中…', app: '账户', home: '首页', footer: '实时公开供给',
+        nodes: '在线节点', models: '可用模型', agents: '智能体', circles: '圈子', tokens: '贡献 Token', users: '活跃用户',
+        modelsTitle: '可用模型', agentsTitle: '可用智能体', circlesTitle: '圈子列表', leaderboard: '供给排行',
+        leaderboardHint: '按 Token / 接单量 · 点用户进主页', tryHint: '点击试用',
+        tryModel: '对话 →', tryImage: '生图 →', tryEmbed: '嵌入', tryAgent: '试用 →', nodesN: '{n} 节点', noDesc: '暂无简介',
+        typeChat: '文本', typeVision: '图文', typeImage: '生图', typeEmbedding: '嵌入',
+        membersN: '{n} 人', circleOpen: '可申请', circleFull: '已满', circleJoined: '已加入', circlePending: '已申请',
+        circlesNav: '圈子', circlesMore: '管理圈子 →', emptyCircles: '暂无公开圈子',
+        circleApplyConfirm: '是否申请加入「{name}」？',
+        circleApplySent: '已向「{name}」发送入圈申请',
+        circlePendingHint: '已申请，等待圈主通过',
+        circleNeedLogin: '请先登录后再申请加入圈子，是否前往登录？',
+        emptyModels: '暂无在线模型', emptyAgents: '暂无在线智能体', emptyRank: '暂无供给数据',
+      },
+      en: {
+        title: 'Global network', subtitle: 'Try models or agents; open a contributor profile for shared offers',
+        loading: 'Loading…', app: 'Account', home: 'Home', footer: 'Live public supply',
+        nodes: 'Online nodes', models: 'Models', agents: 'Agents', circles: 'Circles', tokens: 'Tokens', users: 'Active users',
+        modelsTitle: 'Available models', agentsTitle: 'Available agents', circlesTitle: 'Circles', leaderboard: 'Offer leaderboard',
+        leaderboardHint: 'By tokens / jobs · tap user for profile', tryHint: 'Click to try',
+        tryModel: 'Chat →', tryImage: 'Image →', tryEmbed: 'Embed', tryAgent: 'Try →', nodesN: '{n} nodes', noDesc: 'No description',
+        typeChat: 'Text', typeVision: 'Vision', typeImage: 'Image', typeEmbedding: 'Embedding',
+        membersN: '{n} members', circleOpen: 'Open', circleFull: 'Full', circleJoined: 'Joined', circlePending: 'Pending',
+        circlesNav: 'Circles', circlesMore: 'Manage circles →', emptyCircles: 'No public circles yet',
+        circleApplyConfirm: 'Apply to join “{name}”?',
+        circleApplySent: 'Join request sent to “{name}”',
+        circlePendingHint: 'Request pending owner approval',
+        circleNeedLogin: 'Sign in to apply for circles. Go to login?',
+        emptyModels: 'No online models', emptyAgents: 'No online agents', emptyRank: 'No data yet',
+      },
+    }
+    const T = computed(() => i18n[lang.value] || i18n.zh)
+    function toggleLang() {
+      lang.value = lang.value === 'zh' ? 'en' : 'zh'
+      localStorage.setItem('tb_lang', lang.value)
+      document.documentElement.lang = lang.value === 'zh' ? 'zh-CN' : 'en'
+    }
+
+    const loading = ref(true)
+    const fatal = ref('')
+    const summary = ref({})
+    const workers = ref([])
+    const availableModels = ref([])
+    const availableModelTypes = ref({})
+    const agents = ref([])
+    const circles = ref([])
+    const circleBusyId = ref(null)
+
+    function getToken() {
+      try { return localStorage.getItem('user_token') || '' } catch { return '' }
+    }
+
+    function circleStatus(c) {
+      if (circleBusyId.value === c.id) return lang.value === 'zh' ? '申请中…' : 'Applying…'
+      if (c.join_status === 'member') return T.value.circleJoined
+      if (c.join_status === 'pending') return T.value.circlePending
+      if (c.full) return T.value.circleFull
+      return T.value.circleOpen
+    }
+
+    async function onCircleClick(c) {
+      const tok = getToken()
+      if (!tok) {
+        if (confirm(T.value.circleNeedLogin)) location.href = '/circles'
+        return
+      }
+      if (c.join_status === 'member') {
+        location.href = '/c/' + encodeURIComponent(c.id)
+        return
+      }
+      if (c.join_status === 'pending') {
+        alert(T.value.circlePendingHint)
+        return
+      }
+      if (c.full) {
+        alert(T.value.circleFull)
+        return
+      }
+      if (!confirm(T.value.circleApplyConfirm.replace('{name}', c.name || ''))) return
+      circleBusyId.value = c.id
+      try {
+        const r = await fetch('/user/circles/' + encodeURIComponent(c.id) + '/apply', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + tok,
+          },
+          body: JSON.stringify({ message: '' }),
+        })
+        let data = null
+        try { data = await r.json() } catch { data = null }
+        if (r.status === 401) {
+          alert(T.value.circleNeedLogin)
+          location.href = '/circles'
+          return
+        }
+        if (!r.ok) {
+          const msg = typeof data?.detail === 'string' ? data.detail : (lang.value === 'zh' ? '申请失败' : 'Apply failed')
+          alert(msg)
+          return
+        }
+        if (data?.already_member) {
+          c.join_status = 'member'
+          location.href = '/c/' + encodeURIComponent(c.id)
+          return
+        }
+        if (data?.full) {
+          c.full = true
+          alert(T.value.circleFull)
+          return
+        }
+        c.join_status = 'pending'
+        alert(T.value.circleApplySent.replace('{name}', c.name || ''))
+      } catch {
+        alert(lang.value === 'zh' ? '网络错误' : 'Network error')
+      } finally {
+        circleBusyId.value = null
+      }
+    }
+
+    function fmtTok(n) {
+      const v = Number(n) || 0
+      if (v >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
+      if (v >= 1e3) return (v / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'
+      return String(v)
+    }
+
+    function offerText(w) {
+      const models = (w.models || []).map(m => typeof m === 'string' ? m : m?.name).filter(Boolean)
+      const ag = Array.isArray(w.agents) ? w.agents.map(a => typeof a === 'string' ? a : a?.display_name || a?.name).filter(Boolean) : []
+      const parts = [...models.slice(0, 3), ...ag.slice(0, 2)]
+      return parts.join(' · ') || '—'
+    }
+
+    const models = computed(() => {
+      const typeMap = availableModelTypes.value || {}
+      const ids = availableModels.value.length
+        ? availableModels.value
+        : [...new Set(workers.value.flatMap(w => (w.models || []).map(m => typeof m === 'string' ? m : m?.name).filter(Boolean)))]
+      return ids.map(name => {
+        const nodes = workers.value.filter(w => (w.models || []).some(m => (typeof m === 'string' ? m : m?.name) === name)).length
+        let sum = 0, n = 0
+        for (const w of workers.value) {
+          const ml = w.model_latency && w.model_latency[name]
+          if (ml && ml.avg_ttft_ms != null) { sum += ml.avg_ttft_ms; n++ }
+        }
+        const rawType = typeMap[name]
+        // 四类：chat / vision / image / embedding（名称启发式纠偏）
+        let mtype = ['chat', 'vision', 'image', 'embedding'].includes(rawType) ? rawType : 'chat'
+        const low = String(name).toLowerCase()
+        if (/(?:^|[\-_/])image(?:[\-_/]|$|\d)|gpt-image|dall-e|dalle|stable-diffusion|flux-|midjourney|sdxl/.test(low)) mtype = 'image'
+        else if (/embed|text-embedding|bge-|e5-/.test(low)) mtype = 'embedding'
+        return { name, nodes, avgMs: n ? Math.round(sum / n) : (null), mtype }
+      }).sort((a, b) => b.nodes - a.nodes || a.name.localeCompare(b.name))
+    })
+
+    function typeLabel(t) {
+      if (t === 'image') return T.value.typeImage
+      if (t === 'vision') return T.value.typeVision
+      if (t === 'embedding') return T.value.typeEmbedding
+      return T.value.typeChat
+    }
+    function tryLabel(t) {
+      if (t === 'image') return T.value.tryImage
+      if (t === 'embedding') return T.value.tryEmbed
+      return T.value.tryModel
+    }
+
+    const topWorkers = computed(() => {
+      const map = new Map()
+      for (const w of workers.value) {
+        const key = w.sharer || w.worker_id || w.name
+        if (!key) continue
+        const prev = map.get(key)
+        const toks = Number(w.period_tokens) || 0
+        const jobs = Number(w.period_agent_jobs) || 0
+        if (!prev) {
+          map.set(key, {
+            ...w,
+            period_tokens: toks,
+            period_agent_jobs: jobs,
+            models: [...(w.models || [])],
+            agents: [...(w.agents || [])],
+          })
+          continue
+        }
+        prev.period_tokens += toks
+        prev.period_agent_jobs += jobs
+        if (toks > (Number(prev._nameToks) || 0)) {
+          prev.name = w.name
+          prev._nameToks = toks
+        }
+      }
+      return [...map.values()]
+        .sort((a, b) => (b.period_tokens - a.period_tokens) || (b.period_agent_jobs - a.period_agent_jobs))
+        .slice(0, 20)
+    })
+
+    async function load() {
+      try {
+        const headers = {}
+        const tok = getToken()
+        if (tok) headers.Authorization = 'Bearer ' + tok
+        const r = await fetch('/public/network', { headers })
+        const data = await r.json()
+        if (!r.ok) throw new Error('fail')
+        summary.value = data.summary || {}
+        workers.value = Array.isArray(data.workers) ? data.workers : []
+        availableModels.value = Array.isArray(data.available_models) ? data.available_models : []
+        availableModelTypes.value = (data.available_model_types && typeof data.available_model_types === 'object')
+          ? data.available_model_types : {}
+        agents.value = Array.isArray(data.available_agents) ? data.available_agents : []
+        circles.value = Array.isArray(data.available_circles) ? data.available_circles : []
+        fatal.value = ''
+      } catch {
+        fatal.value = lang.value === 'zh' ? '无法连接服务器' : 'Cannot reach server'
+      } finally {
+        loading.value = false
+      }
+    }
+
+    onMounted(() => {
+      load()
+      setInterval(load, 20000)
+    })
+
+    return {
+      lang, T, toggleLang, loading, fatal, summary, models, agents, circles, circleBusyId,
+      topWorkers, fmtTok, offerText, typeLabel, tryLabel, circleStatus, onCircleClick,
+    }
+  }
+}).mount('#app')
+</script>
+</body>
+</html>

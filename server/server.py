@@ -48,6 +48,15 @@ from worker_pool import (
 )
 from geo_ip import client_ip_from_ws, resolve_client_ip, resolve_ip_geo, virtual_worker_geo
 from contrib_display import apply_contrib_display
+from web_public import (
+    aggregate_sharer_profile,
+    extract_assistant_text,
+    guest_trial_allowed,
+    infer_model_type,
+    validate_guest_web_chat_messages,
+    validate_web_chat_body,
+    validate_web_image_body,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("server")
@@ -200,10 +209,52 @@ async def wall_page():
     return FileResponse("static/wall.html")
 
 
+@app.get("/network")
+async def network_page():
+    """公开：全球网络页（模型/智能体可试用，用户可看贡献者主页）"""
+    return FileResponse("static/network.html")
+
+
+@app.get("/circles")
+@app.get("/circles/browse")
+async def circles_web_page():
+    """网页版圈子：我的圈子 / 浏览公开圈子"""
+    return FileResponse("static/circles.html")
+
+
+@app.get("/c/{circle_id}")
+async def circle_detail_web_page(circle_id: int):
+    """网页版圈子主页"""
+    _ = circle_id
+    return FileResponse("static/circles.html")
+
+
+@app.get("/m/{model_name:path}")
+async def model_landing_page(model_name: str):
+    """公开：模型网页试用落地页"""
+    _ = (model_name or "").strip()
+    return FileResponse("static/model-landing.html")
+
+
+@app.get("/u/{sharer}")
+async def sharer_landing_page(sharer: str):
+    """公开：贡献者主页（分享的模型与智能体）"""
+    _ = (sharer or "").strip()
+    return FileResponse("static/sharer-landing.html")
+
+
 @app.get("/privacy")
 async def privacy_policy():
     """App Store / 公开可访问的隐私政策页"""
     return FileResponse("static/privacy.html")
+
+
+@app.get("/a/{assistant_id}")
+async def agent_landing_page(assistant_id: str):
+    """已分享智能体的网页版落地页（全球 / 圈子共用同一入口）"""
+    # assistant_id 仅用于前端路由解析；静态页本身不依赖路径参数
+    _ = (assistant_id or "").strip()
+    return FileResponse("static/agent-landing.html")
 
 
 @app.get("/api/catalog")
@@ -332,9 +383,11 @@ def _worker_row(w) -> dict:
         label = bare_agent_name(raw, owner_nick) or str(c.get("id") or "").strip()
         if label and label not in agent_labels:
             agent_labels.append(label)
+    # 排行/大屏展示账号名（昵称），不用客户端上报的主机名（如 Mac.local）
+    display_name = owner_nick or (getattr(w, "name", None) or "")
     row = {
         "worker_id": w.worker_id,
-        "name": _mask_name(w.name),
+        "name": _mask_name(display_name),
         "models": w.models,
         "agents": agent_labels,
         "active_requests": w.active_requests,
@@ -375,23 +428,96 @@ async def workers_wall():
 
 
 @app.get("/public/network")
-async def public_network():
-    """公开：全局运营统计 + 在线 Worker 列表（脱敏）"""
+async def public_network(request: Request):
+    """公开：全局运营统计 + 在线 Worker 列表（脱敏）。
+    若带 JWT/API Key，圈子列表附带 join_status。
+    """
+    uid: Optional[int] = None
+    auth = (request.headers.get("authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        raw = auth[7:].strip()
+        if raw:
+            try:
+                info = await db.verify_key(raw)
+                if info and info.get("user_id"):
+                    uid = int(info["user_id"])
+                else:
+                    from auth import decode_token
+                    decoded = decode_token(raw)
+                    if decoded:
+                        uid = int(decoded)
+            except Exception:
+                uid = None
+
     all_ws = pool.all_workers()   # capture once
     workers_data, contrib = apply_contrib_display([_worker_row(w) for w in all_ws])
     distinct_users = len({w.user_id for w in all_ws if w.user_id})
     # 与匿名 /v1/models 同源：公开 worker 模型（不含圈子限定）
     public_models = pool.models_for_user(owner_user_id=None, user_circle_ids=set())
+    circle_count = await db.count_public_circles()
+    # 已登录：带入圈状态，便于「进主页 / 申请加入」
+    if uid is not None:
+        browsable = await db.list_browsable_circles(uid)
+        public_circles = [{
+            "id": c["id"],
+            "name": c.get("name") or "",
+            "description": c.get("description") or "",
+            "max_members": c.get("max_members"),
+            "member_count": int(c.get("member_count") or 0),
+            "full": bool(c.get("full")),
+            "join_status": c.get("join_status") or "none",
+            "code": c.get("code"),
+        } for c in browsable[:50]]
+    else:
+        public_circles = await db.list_public_circles(50)
+        for row in public_circles:
+            row["join_status"] = "none"
     return {
         "summary": {
             "online_workers": len(workers_data),
             "active_users": distinct_users,
+            "circle_count": circle_count,
             **contrib,
         },
         "workers": workers_data,
         "available_models": sorted(public_models.keys()),
+        # id → chat|vision|image|embedding
+        "available_model_types": {
+            m: infer_model_type(m, public_models) for m in public_models
+        },
         "available_agents": await _list_public_agents(),
+        "available_circles": public_circles,
     }
+
+
+@app.get("/public/sharers/{sharer}")
+async def public_sharer_profile(sharer: str):
+    """公开：某分享者当前在线贡献（模型 + 公开智能体）"""
+    handle = (sharer or "").strip()
+    if not handle:
+        raise HTTPException(400, "missing sharer")
+    await backfill_worker_owner_labels()
+    workers = pool.all_workers()
+    profile = aggregate_sharer_profile(
+        workers,
+        handle,
+        mask_name=_mask_name,
+        worker_sharer_fn=worker_sharer,
+    )
+    if not profile:
+        raise HTTPException(404, "sharer offline or not found")
+    # 附带一句话画像（若用户已同步）
+    from worker_pool import worker_owner_id
+    uid = next(
+        (worker_owner_id(w) for w in workers if worker_sharer(w) == handle and worker_owner_id(w) is not None),
+        None,
+    )
+    if uid is not None:
+        user = await db.get_user_by_id(uid)
+        persona = str((user or {}).get("persona") or "").strip()
+        if persona:
+            profile["persona"] = persona
+    return {"sharer": profile}
 
 
 async def backfill_worker_owner_labels() -> None:
@@ -433,6 +559,19 @@ async def public_agents():
     return {"agents": await _list_public_agents()}
 
 
+@app.get("/public/agents/{assistant_id}")
+async def public_agent_detail(assistant_id: str):
+    """全球公开智能体单条名片（匿名可读）"""
+    await backfill_worker_owner_labels()
+    aid = (assistant_id or "").strip()
+    if not aid:
+        raise HTTPException(400, "missing assistant_id")
+    card = pool.get_agent_for_user(aid, public_only=True)
+    if not card:
+        raise HTTPException(404, "agent not found or offline")
+    return {"agent": card, "credits_per_task": AGENT_TASK_CREDITS}
+
+
 async def auth_api_key_or_jwt(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> int:
@@ -450,6 +589,164 @@ async def auth_api_key_or_jwt(
     return int(uid)
 
 
+async def optional_auth_api_key_or_jwt(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> Optional[int]:
+    """可选鉴权：无 token 返回 None（访客）；有 token 则与 auth_api_key_or_jwt 相同。"""
+    if not creds or not (creds.credentials or "").strip():
+        return None
+    return await auth_api_key_or_jwt(creds)
+
+
+def _client_ip(request: Request) -> str:
+    """取访客限流用 IP（优先 X-Forwarded-For）。"""
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if xff:
+        return xff
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+class WebChatBody(BaseModel):
+    model: str
+    messages: list
+    sharer: Optional[str] = None
+
+
+@app.post("/api/web-chat")
+async def web_chat(
+    body: WebChatBody,
+    request: Request,
+    uid: Optional[int] = Depends(optional_auth_api_key_or_jwt),
+):
+    """网页模型短试用。
+    - 已登录：多轮对话，按正常积分扣费
+    - 未登录：仅允许单轮（一条 user），按 IP 限流
+    """
+    try:
+        cleaned = validate_web_chat_body(body.model, body.messages, body.sharer)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    public_types = pool.models_for_user(owner_user_id=None, user_circle_ids=set())
+    if infer_model_type(cleaned["model"], public_types) == "image":
+        raise HTTPException(400, "image model: use /api/web-image")
+    if infer_model_type(cleaned["model"], public_types) == "embedding":
+        raise HTTPException(400, "embedding model not supported on web chat")
+
+    guest = uid is None
+    if guest:
+        try:
+            validate_guest_web_chat_messages(cleaned["messages"])
+        except ValueError as e:
+            raise HTTPException(401, str(e)) from e
+        if not guest_trial_allowed(_client_ip(request)):
+            raise HTTPException(429, "guest trial limit reached — sign in to continue")
+
+    chat_body = {
+        "model": cleaned["model"],
+        "messages": cleaned["messages"],
+        "stream": False,
+    }
+    try:
+        resp = await handle_chat(
+            chat_body,
+            consumer_user_id=uid,
+            strategy="auto",
+            sharer=cleaned["sharer"] if not guest else None,
+        )
+    except DispatchError as e:
+        raise HTTPException(
+            e.status_code,
+            detail={"error": e.message, "type": getattr(e, "error_type", None)},
+        ) from e
+
+    payload = None
+    worker_id = None
+    if isinstance(resp, JSONResponse):
+        worker_id = resp.headers.get("X-TB-Worker")
+        try:
+            raw = resp.body
+            if isinstance(raw, (bytes, bytearray)):
+                payload = json.loads(raw.decode("utf-8"))
+            else:
+                payload = json.loads(raw)
+        except Exception:
+            payload = None
+    elif isinstance(resp, dict):
+        payload = resp
+
+    text = extract_assistant_text(payload)
+    if not text and payload is None:
+        raise HTTPException(502, "empty response")
+    return {
+        "ok": True,
+        "model": cleaned["model"],
+        "output": text,
+        "worker_id": worker_id,
+        "sharer": cleaned["sharer"] if not guest else None,
+        "guest": guest,
+        "need_login_to_continue": guest,
+    }
+
+
+class WebImageBody(BaseModel):
+    model: str
+    prompt: str
+    n: int = 1
+    sharer: Optional[str] = None
+
+
+@app.post("/api/web-image")
+async def web_image(body: WebImageBody, uid: int = Depends(auth_api_key_or_jwt)):
+    """网页文生图试用（JWT/API Key）；返回 url / b64。"""
+    try:
+        cleaned = validate_web_image_body(body.model, body.prompt, body.n)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    public_types = pool.models_for_user(owner_user_id=None, user_circle_ids=set())
+    if infer_model_type(cleaned["model"], public_types) != "image":
+        raise HTTPException(400, "chat model: use /api/web-chat")
+
+    sh = str(body.sharer or "").strip() or None
+    if sh and not (sh.startswith("s_") and len(sh) >= 4):
+        raise HTTPException(400, "invalid sharer")
+
+    img_body = {
+        "model": cleaned["model"],
+        "prompt": cleaned["prompt"],
+        "n": cleaned["n"],
+        "response_format": "url",
+    }
+    try:
+        result = await handle_image(img_body, consumer_user_id=uid, sharer=sh)
+    except DispatchError as e:
+        raise HTTPException(
+            e.status_code,
+            detail={"error": e.message, "type": getattr(e, "error_type", None)},
+        ) from e
+
+    data = result.get("data") if isinstance(result, dict) else None
+    urls = []
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            if item.get("url"):
+                urls.append(item["url"])
+            elif item.get("b64_json"):
+                urls.append(f"data:image/png;base64,{item['b64_json']}")
+    return {
+        "ok": True,
+        "model": cleaned["model"],
+        "images": urls,
+        "created": result.get("created") if isinstance(result, dict) else None,
+        "sharer": sh,
+    }
+
+
 @app.get("/api/agents")
 async def api_agents(uid: int = Depends(auth_api_key_or_jwt)):
     """可见智能体：公开 + 所属圈子（鉴权与模型一致：API Key 或 JWT）"""
@@ -459,6 +756,20 @@ async def api_agents(uid: int = Depends(auth_api_key_or_jwt)):
         "agents": pool.list_agents_for_user(user_circle_ids=circles),
         "credits_per_task": AGENT_TASK_CREDITS,
     }
+
+
+@app.get("/api/agents/{assistant_id}")
+async def api_agent_detail(assistant_id: str, uid: int = Depends(auth_api_key_or_jwt)):
+    """当前用户可见的单条名片（全球公开 ∪ 所属圈子）"""
+    await backfill_worker_owner_labels()
+    aid = (assistant_id or "").strip()
+    if not aid:
+        raise HTTPException(400, "missing assistant_id")
+    circles = set(await db.get_user_circle_ids(uid))
+    card = pool.get_agent_for_user(aid, user_circle_ids=circles)
+    if not card:
+        raise HTTPException(404, "agent not found, offline, or not visible")
+    return {"agent": card, "credits_per_task": AGENT_TASK_CREDITS}
 
 
 class AgentHireBody(BaseModel):
@@ -484,8 +795,26 @@ class AgentTaskBody(BaseModel):
 
 
 @app.post("/api/agent-tasks")
-async def create_agent_task(body: AgentTaskBody, uid: int = Depends(auth_api_key_or_jwt)):
-    """发起远程武将任务（鉴权与模型一致：API Key 或 JWT）"""
+async def create_agent_task(
+    body: AgentTaskBody,
+    request: Request,
+    uid: Optional[int] = Depends(optional_auth_api_key_or_jwt),
+):
+    """发起远程武将任务。
+    - 已登录：JWT/API Key，按固定积分扣费
+    - 未登录：公开智能体单轮试用，按 IP 限流
+    """
+    guest = uid is None
+    if guest:
+        text = (body.prompt or "").strip()
+        if not text:
+            raise HTTPException(400, "prompt required")
+        # 访客禁止带历史（前端多轮会包装 Conversation so far）
+        if text.startswith("Conversation so far:"):
+            raise HTTPException(401, "guest trial: one turn only — sign in to continue")
+        if not guest_trial_allowed(_client_ip(request)):
+            raise HTTPException(429, "guest trial limit reached — sign in to continue")
+
     result = await handle_agent_task(
         assistant_id=body.assistant_id,
         prompt=body.prompt,
@@ -501,6 +830,8 @@ async def create_agent_task(body: AgentTaskBody, uid: int = Depends(auth_api_key
         if status == "timeout":
             code = 504
         raise HTTPException(code, detail=result)
+    result["guest"] = guest
+    result["need_login_to_continue"] = guest
     return result
 
 
@@ -616,13 +947,15 @@ async def worker_ws(ws: WebSocket):
                 model_name = entry.strip()
                 if model_name:
                     models.append(model_name)
-                    model_types[model_name] = "chat"
+                    model_types[model_name] = infer_model_type(model_name, {model_name: "chat"})
             elif isinstance(entry, dict):
                 model_name = (entry.get("name") or "").strip()
                 mtype = entry.get("type", "chat")
-                if model_name and mtype in ("chat", "image"):
+                # 与客户端对齐：chat / vision / image / embedding
+                if model_name and mtype in ("chat", "vision", "image", "embedding",
+                                             "text", "vl", "vlm", "embed", "embeddings"):
                     models.append(model_name)
-                    model_types[model_name] = mtype
+                    model_types[model_name] = infer_model_type(model_name, {model_name: mtype})
 
         # 首次出现的模型名自动写入 model_configs（open + 默认倍率），便于计费与列表一致
         auto_models = await db.ensure_default_open_models(models, model_types)

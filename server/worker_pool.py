@@ -172,6 +172,32 @@ def worker_model_names(worker) -> set[str]:
     return out
 
 
+def effective_model_type(worker, model: str) -> str:
+    """工人声明类型 + 名称启发式 → chat|vision|image|embedding。"""
+    declared = (getattr(worker, "model_types", None) or {}).get(model, "chat")
+    try:
+        from web_public import infer_model_type
+        return infer_model_type(model, {model: declared})
+    except Exception:
+        from web_public import normalize_model_type
+        return normalize_model_type(declared)
+
+
+def model_type_matches(effective: str, wanted: Optional[str]) -> bool:
+    """派发类型匹配：chat 请求可命中 chat/vision；其余精确匹配。"""
+    if wanted is None:
+        return True
+    try:
+        from web_public import is_chat_capable, normalize_model_type
+        w = normalize_model_type(wanted)
+        e = normalize_model_type(effective)
+        if w == "chat":
+            return is_chat_capable(e)
+        return e == w
+    except Exception:
+        return effective == wanted
+
+
 def worker_has_model(worker, model: str) -> bool:
     return model in worker_model_names(worker)
 
@@ -285,6 +311,7 @@ class WorkerPool:
         """从数据库 agent 列表重建虚拟 Worker 列表，立即生效。"""
         from virtual_worker import VirtualWorkerConnection
         from geo_ip import virtual_worker_geo
+        from web_public import infer_model_type
         self._virtual = []
         for a in agents:
             if not a.get("enabled"):
@@ -293,12 +320,12 @@ class WorkerPool:
             for m in a.get("models", []):
                 if isinstance(m, str):
                     names.append(m)
-                    model_types[m] = "chat"
+                    model_types[m] = infer_model_type(m, {m: "chat"})
                 else:
                     n = m.get("name", "")
                     if n:
                         names.append(n)
-                        model_types[n] = m.get("type", "chat")
+                        model_types[n] = infer_model_type(n, {n: m.get("type", "chat")})
             worker_id = f"vw-{a['id']}"
             geo = virtual_worker_geo(worker_id)
             self._virtual.append(VirtualWorkerConnection(
@@ -326,7 +353,7 @@ class WorkerPool:
         If None (default), any worker carrying the model is eligible."""
         def _matches(w) -> bool:
             return worker_has_model(w, model) and (
-                model_type is None or w.model_types.get(model, "chat") == model_type
+                model_type is None or model_type_matches(effective_model_type(w, model), model_type)
             )
         real = [w for w in self._workers if _matches(w)]
         if real:
@@ -373,7 +400,7 @@ class WorkerPool:
 
         def _matches(w) -> bool:
             return worker_has_model(w, model) and (
-                model_type is None or w.model_types.get(model, "chat") == model_type
+                model_type is None or model_type_matches(effective_model_type(w, model), model_type)
             )
 
         def _real_visible(w) -> bool:
@@ -441,7 +468,7 @@ class WorkerPool:
             wids = worker_circle_ids(w)
             if not wids or wids & circles:
                 for m in w.models:
-                    result[m] = w.model_types.get(m, "chat")
+                    result[m] = effective_model_type(w, m)
         for v in self._virtual:
             owner = getattr(v, "owner_user_id", None)
             cid = getattr(v, "circle_id", None)
@@ -453,7 +480,7 @@ class WorkerPool:
                 visible = cid is None or cid in circles
             if visible:
                 for m in v.models:
-                    result[m] = v.model_types.get(m, "chat")
+                    result[m] = effective_model_type(v, m)
         return result
 
     def circle_model_ids_for_user(self, owner_user_id: Optional[int] = None,
@@ -492,7 +519,7 @@ class WorkerPool:
                 seen.add(m)
                 out.append({
                     "id": m,
-                    "model_type": w.model_types.get(m, "chat"),
+                    "model_type": effective_model_type(w, m),
                 })
         for v in self._virtual:
             cid = getattr(v, "circle_id", None)
@@ -506,7 +533,7 @@ class WorkerPool:
                 seen.add(m)
                 out.append({
                     "id": m,
-                    "model_type": v.model_types.get(m, "chat"),
+                    "model_type": effective_model_type(v, m),
                 })
         return sorted(out, key=lambda x: x["id"])
 
@@ -553,7 +580,7 @@ class WorkerPool:
         result: dict[str, str] = {}
         for w in self._workers + self._virtual:
             for m in w.models:
-                result[m] = w.model_types.get(m, "chat")
+                result[m] = effective_model_type(w, m)
         return result
 
     def list_workers(self) -> list[dict]:
@@ -594,6 +621,23 @@ class WorkerPool:
                     "hire_count": self.agent_hire_count(card["id"]),
                 })
         return rows
+
+    def get_agent_for_user(self, assistant_id: str,
+                           user_circle_ids: Optional[set] = None,
+                           public_only: bool = False) -> Optional[dict]:
+        """按 id 取当前用户可见的在线名片；同 id 多节点时取负载最低。"""
+        aid = str(assistant_id or "").strip()
+        if not aid:
+            return None
+        matches = [
+            row for row in self.list_agents_for_user(
+                user_circle_ids=user_circle_ids, public_only=public_only,
+            )
+            if row.get("id") == aid
+        ]
+        if not matches:
+            return None
+        return min(matches, key=lambda r: int(r.get("active_requests") or 0))
 
     def agent_hire_count(self, assistant_id: str) -> int:
         aid = str(assistant_id or "").strip()

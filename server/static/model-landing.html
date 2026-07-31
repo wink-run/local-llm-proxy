@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模型试用 · Token Bank</title>
+<meta name="description" content="试用全球网络上的模型">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="/static/vue.global.prod.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#fff;--bg-muted:#f5f2f0;--bg-subtle:#faf9f5;
+  --text:#000;--text-muted:#7b7b7b;--text-faint:#bcbcbc;
+  --border:#e7e4e1;--accent:#f1ccff;--primary:#000;--primary-fg:#fff;
+  --success:#16a34a;--danger:#dc2626;
+  --radius:10px;--radius-lg:18px;
+  --font:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'Space Mono',ui-monospace,monospace;
+}
+body{font-family:var(--font);background:var(--bg-subtle);color:var(--text);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.shell{max-width:720px;margin:0 auto;padding:24px 16px 48px;min-height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600}
+.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center}
+.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
+.lang-btn,.ghost-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;color:var(--text-muted)}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 24px;box-shadow:0 8px 24px rgba(0,0,0,.03)}
+.h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px;font-family:var(--mono)}
+.model-pick{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.model-pick label{margin:0}
+.model-select{
+  width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--text);font-size:16px;font-weight:600;font-family:var(--mono);outline:none;cursor:pointer;
+  appearance:auto;
+}
+.model-select:focus{border-color:var(--text)}
+.model-select:disabled{opacity:.6;cursor:not-allowed}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:4px 0 14px}
+.gallery img{width:100%;border-radius:12px;border:1px solid var(--border);background:#fff;display:block}
+.gallery-empty{grid-column:1/-1;color:var(--text-muted);font-size:13px;text-align:center;padding:36px 12px;background:var(--bg-muted);border-radius:var(--radius);border:1px solid #f0eeec}
+.meta{color:var(--text-muted);font-size:13px;line-height:1.5;margin-bottom:16px}
+.badge.img{color:#7c3aed;border-color:#ddd6fe;background:#f5f3ff}
+.badge.txt{color:#0369a1;border-color:#bae6fd;background:#f0f9ff}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.badge{font-size:11px;padding:4px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-muted);background:var(--bg-muted)}
+.field{margin-bottom:12px}
+label{display:block;color:var(--text-muted);font-size:12px;margin-bottom:5px}
+textarea,input{
+  width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:vertical
+}
+textarea:focus,input:focus{border-color:var(--text)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 18px;background:var(--primary);color:var(--primary-fg);border:none;border-radius:var(--radius);cursor:pointer;font-size:14px;font-family:inherit;font-weight:500}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-block{width:100%}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.err{color:var(--danger);font-size:13px;margin-top:10px}
+.hint{color:var(--text-muted);font-size:12px;line-height:1.5}
+.chat{display:flex;flex-direction:column;gap:10px;margin:4px 0 14px;min-height:200px;max-height:420px;overflow:auto;padding:12px;background:var(--bg-muted);border:1px solid #f0eeec;border-radius:var(--radius)}
+.chat-empty{color:var(--text-muted);font-size:13px;text-align:center;padding:36px 12px;line-height:1.5}
+.bubble{max-width:88%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.bubble.user{align-self:flex-end;background:var(--primary);color:var(--primary-fg);border-bottom-right-radius:4px}
+.bubble.assistant{align-self:flex-start;background:#fff;border:1px solid var(--border);color:var(--text);border-bottom-left-radius:4px}
+.bubble.pending{opacity:.7;font-style:italic}
+.composer{display:flex;gap:8px;align-items:flex-end}
+.composer textarea{flex:1;min-height:44px;max-height:140px;resize:vertical}
+.composer .btn{flex-shrink:0;height:44px}
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.ghost-link{background:transparent;border:none;color:var(--text-muted);font-size:12px;cursor:pointer;font-family:inherit;padding:0;text-decoration:underline}
+.auth-box{margin-top:16px;padding-top:16px;border-top:1px solid #f0eeec}
+.auth-tabs{display:flex;margin-bottom:14px;border-bottom:1px solid #f0eeec}
+.auth-tabs button{flex:1;padding:10px;background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit}
+.auth-tabs button.active{color:var(--text);border-bottom-color:var(--text);font-weight:600}
+.footer{margin-top:auto;padding-top:28px;color:var(--text-faint);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div id="app" class="shell">
+  <header>
+    <a class="brand" href="/network">
+      <span class="brand-mark"></span>
+      <span>Token Bank</span>
+    </a>
+    <div class="row">
+      <button class="lang-btn" type="button" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中文' }}</button>
+      <button v-if="loggedIn" class="ghost-btn" type="button" @click="logout">{{ T.logout }}</button>
+      <a v-else class="ghost-btn" href="/app">{{ T.openApp }}</a>
+    </div>
+  </header>
+
+  <div v-if="!model && !modelOptions.length" class="card">
+    <div class="h1">{{ T.unavailable }}</div>
+    <p class="meta">{{ T.badModel }}</p>
+    <a class="btn" href="/network" style="margin-top:8px">{{ T.backNet }}</a>
+  </div>
+
+  <div v-else class="card">
+    <div class="model-pick">
+      <label>{{ T.pickModel }}</label>
+      <select class="model-select" :value="model" :disabled="running || !modelOptions.length" @change="onModelChange($event)">
+        <optgroup v-if="chatModels.length" :label="T.groupChat">
+          <option v-for="m in chatModels" :key="'c-'+m" :value="m">{{ m }}</option>
+        </optgroup>
+        <optgroup v-if="visionModels.length" :label="T.groupVision">
+          <option v-for="m in visionModels" :key="'v-'+m" :value="m">{{ m }}</option>
+        </optgroup>
+        <optgroup v-if="imageModels.length" :label="T.groupImage">
+          <option v-for="m in imageModels" :key="'i-'+m" :value="m">{{ m }}</option>
+        </optgroup>
+        <optgroup v-if="embedModels.length" :label="T.groupEmbed">
+          <option v-for="m in embedModels" :key="'e-'+m" :value="m">{{ m }}</option>
+        </optgroup>
+        <option v-if="model && !modelOptions.includes(model)" :value="model">{{ model }}</option>
+      </select>
+    </div>
+    <p class="meta">{{ isEmbed ? T.metaEmbed : (isImage ? T.metaImage : T.meta) }}</p>
+    <div class="badges">
+      <span class="badge">{{ T.publicTry }}</span>
+      <span class="badge" :class="isImage ? 'img' : 'txt'">{{ typeBadge }}</span>
+      <span v-if="sharer" class="badge" style="font-family:var(--mono)">{{ T.pinned }} {{ sharer }}</span>
+      <a v-if="sharer" class="badge" :href="'/u/' + encodeURIComponent(sharer)">{{ T.viewSharer }}</a>
+    </div>
+
+    <div class="toolbar">
+      <span class="hint">{{ loggedIn && profile ? T.balance.replace('{n}', Number(profile.credits_balance || 0).toFixed(1)) : (isEmbed ? T.embedHint : (isImage ? T.imageHint : T.chatHint)) }}</span>
+      <button v-if="(isImage ? images.length : messages.length)" type="button" class="ghost-link" @click="clearAll" :disabled="running">{{ T.clear }}</button>
+    </div>
+
+    <!-- 嵌入：网页不支持 -->
+    <template v-if="isEmbed">
+      <div class="chat-empty" style="padding:24px;text-align:center;color:var(--muted,#888)">{{ T.embedEmpty }}</div>
+    </template>
+
+    <!-- 文本/图文：多轮对话 -->
+    <template v-else-if="!isImage">
+      <div class="chat" ref="chatEl">
+        <div v-if="!messages.length" class="chat-empty">{{ T.chatEmpty }}</div>
+        <div v-for="(m, i) in messages" :key="i" class="bubble" :class="[m.role, { pending: m.pending }]">{{ m.content }}</div>
+      </div>
+      <div class="composer">
+        <textarea v-model="prompt" rows="2" :placeholder="T.promptPh" :disabled="running || guestLocked" @keydown.enter.exact.prevent="sendMessage"></textarea>
+        <button class="btn" type="button" :disabled="running || guestLocked || !prompt.trim()" @click="sendMessage">
+          {{ running ? T.running : T.send }}
+        </button>
+      </div>
+    </template>
+
+    <!-- 图片：文生图 -->
+    <template v-else>
+      <div class="gallery">
+        <div v-if="!images.length" class="gallery-empty">{{ T.imageEmpty }}</div>
+        <a v-for="(src, i) in images" :key="i" :href="src" target="_blank" rel="noopener">
+          <img :src="src" alt="generated">
+        </a>
+      </div>
+      <div class="composer">
+        <textarea v-model="prompt" rows="2" :placeholder="T.imagePh" :disabled="running" @keydown.enter.exact.prevent="genImage"></textarea>
+        <button class="btn" type="button" :disabled="running || !prompt.trim()" @click="genImage">
+          {{ running ? T.running : T.gen }}
+        </button>
+      </div>
+    </template>
+    <p v-if="err" class="err">{{ err }}</p>
+
+    <div v-if="!loggedIn && (isImage || guestUsed)" class="auth-box">
+      <p class="hint" style="margin-bottom:12px">{{ guestUsed ? T.loginToContinue : T.needLogin }}</p>
+      <div class="auth-tabs">
+        <button type="button" :class="{ active: authTab === 'login' }" @click="authTab='login'">{{ T.login }}</button>
+        <button type="button" :class="{ active: authTab === 'register' }" @click="authTab='register'">{{ T.register }}</button>
+      </div>
+      <div class="field" v-if="authTab === 'register'">
+        <label>{{ T.nickname }}</label>
+        <input type="text" v-model="form.nickname" autocomplete="nickname">
+      </div>
+      <div class="field">
+        <label>{{ T.email }}</label>
+        <input type="email" v-model="form.email" autocomplete="email">
+      </div>
+      <div class="field">
+        <label>{{ T.password }}</label>
+        <input type="password" v-model="form.password" autocomplete="current-password">
+      </div>
+      <button class="btn btn-block" type="button" :disabled="authLoading" @click="authTab==='login' ? doLogin() : doRegister()">
+        {{ authLoading ? (authTab==='login' ? T.loggingIn : T.registering) : (authTab==='login' ? T.login : T.register) }}
+      </button>
+      <p v-if="authErr" class="err">{{ authErr }}</p>
+    </div>
+  </div>
+
+  <div class="footer">Token Bank · {{ T.footer }} · <a href="/network">{{ T.backNet }}</a></div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted, nextTick } = Vue
+
+let _storageOk = false
+const _mem = {}
+try { localStorage.setItem('__probe', '1'); localStorage.removeItem('__probe'); _storageOk = true } catch {}
+function storageGet(k) { try { return _storageOk ? localStorage.getItem(k) : (_mem[k] ?? null) } catch { return _mem[k] ?? null } }
+function storageSet(k, v) { try { if (_storageOk) localStorage.setItem(k, v); else _mem[k] = v } catch { _mem[k] = v } }
+function storageRemove(k) { try { if (_storageOk) localStorage.removeItem(k); else delete _mem[k] } catch { delete _mem[k] } }
+
+createApp({
+  setup() {
+    const lang = ref(storageGet('tb_lang') || ((navigator.language || '').startsWith('zh') ? 'zh' : 'en'))
+    const i18n = {
+      zh: {
+        unavailable: '无法试用', badModel: '暂无可用模型', backNet: '返回全球网络',
+        meta: '未登录可试用一轮；登录后按积分规则多轮对话，可随时切换模型。',
+        metaImage: '图像模型用于文生图：需登录，按正常积分扣费。',
+        metaEmbed: '嵌入模型不支持网页试用，请在客户端或 API 中使用。',
+        pickModel: '当前模型', groupChat: '文本对话', groupVision: '图文对话', groupImage: '图像生成', groupEmbed: '嵌入',
+        typeChat: '文本', typeVision: '图文', typeImage: '生图', typeEmbedding: '嵌入',
+        publicTry: '网页试用', pinned: '钉选', viewSharer: '贡献者主页 →',
+        promptPh: '输入消息，Enter 发送…', imagePh: '描述你想生成的画面…',
+        send: '发送', gen: '生成', running: '生成中…',
+        needLogin: '文生图需要登录 Token Bank 账号。',
+        loginToContinue: '试用一轮已结束，登录后可继续对话（按正常积分扣费）。',
+        login: '登录', register: '注册', loggingIn: '登录中…', registering: '注册中…',
+        email: '邮箱', password: '密码', nickname: '昵称', logout: '退出', openApp: '账户',
+        balance: '余额 {n} 积分', footer: '模型网页试用',
+        emptyPrompt: '请先输入内容',
+        chatHint: '未登录可试一轮', imageHint: '文生图需登录', embedHint: '嵌入模型不支持网页试用',
+        chatEmpty: '发送一条消息试用；登录后可多轮追问。',
+        imageEmpty: '输入画面描述后点击生成。',
+        embedEmpty: '嵌入模型请在客户端 / API 中使用，网页暂不支持试用。',
+        clear: '清空', thinking: '…',
+      },
+      en: {
+        unavailable: 'Unavailable', badModel: 'No models available', backNet: 'Back to network',
+        meta: 'Guests get one free turn; sign in for multi-turn chat with normal credits.',
+        metaImage: 'Image models require sign-in and use normal credit billing.',
+        metaEmbed: 'Embedding models are not available in the web trial.',
+        pickModel: 'Model', groupChat: 'Text chat', groupVision: 'Vision chat', groupImage: 'Image generation', groupEmbed: 'Embedding',
+        typeChat: 'Text', typeVision: 'Vision', typeImage: 'Image', typeEmbedding: 'Embedding',
+        publicTry: 'Web trial', pinned: 'Pinned', viewSharer: 'Contributor →',
+        promptPh: 'Message, Enter to send…', imagePh: 'Describe the image…',
+        send: 'Send', gen: 'Generate', running: 'Running…',
+        needLogin: 'Sign in to generate images.',
+        loginToContinue: 'Guest trial used. Sign in to continue (normal credits).',
+        login: 'Sign in', register: 'Sign up', loggingIn: 'Signing in…', registering: 'Signing up…',
+        email: 'Email', password: 'Password', nickname: 'Nickname', logout: 'Log out', openApp: 'Account',
+        balance: 'Balance {n} credits', footer: 'Model web trial',
+        emptyPrompt: 'Enter a prompt first',
+        chatHint: 'One free guest turn', imageHint: 'Sign in for images', embedHint: 'Embedding: use client/API',
+        chatEmpty: 'Try one message; sign in for multi-turn chat.',
+        imageEmpty: 'Describe a scene, then generate.',
+        embedEmpty: 'Embedding models are not available in the web trial.',
+        clear: 'Clear', thinking: '…',
+      },
+    }
+    const T = computed(() => i18n[lang.value] || i18n.zh)
+    function toggleLang() {
+      lang.value = lang.value === 'zh' ? 'en' : 'zh'
+      storageSet('tb_lang', lang.value)
+      document.documentElement.lang = lang.value === 'zh' ? 'zh-CN' : 'en'
+    }
+
+    function modelFromPath() {
+      const m = location.pathname.match(/^\/m\/(.+)$/)
+      if (!m) return ''
+      try { return decodeURIComponent(m[1]).replace(/\/+$/, '') } catch { return m[1] }
+    }
+    function sharerFromQuery() {
+      try { return new URLSearchParams(location.search).get('sharer') || '' } catch { return '' }
+    }
+
+    const model = ref(modelFromPath())
+    const modelOptions = ref([])
+    const modelTypes = ref({})
+    const sharer = ref(sharerFromQuery())
+    const loggedIn = ref(!!storageGet('user_token'))
+    const profile = ref(null)
+    const prompt = ref('')
+    const messages = ref([])
+    const images = ref([])
+    const chatEl = ref(null)
+    const running = ref(false)
+    const err = ref('')
+    // 未登录已用完一轮试用
+    const guestUsed = ref(false)
+    const authTab = ref('login')
+    const authLoading = ref(false)
+    const authErr = ref('')
+    const form = ref({ email: '', password: '', nickname: '' })
+
+    function getToken() { return storageGet('user_token') || '' }
+    const guestLocked = computed(() => guestUsed.value && !loggedIn.value)
+
+    function inferType(name) {
+      const t = modelTypes.value[name]
+      if (t === 'vision' || t === 'image' || t === 'embedding') return t
+      const low = String(name || '').toLowerCase()
+      // 名称启发式纠偏（与服务端 infer_model_type_from_name 对齐）
+      if (/(?:^|[\-_/])image(?:[\-_/]|$|\d)|gpt-image|dall-e|dalle|stable-diffusion|flux-|midjourney|sdxl/.test(low)) return 'image'
+      if (/embed|text-embedding|bge-|e5-/.test(low)) return 'embedding'
+      if (t === 'chat') return 'chat'
+      return 'chat'
+    }
+
+    const isImage = computed(() => inferType(model.value) === 'image')
+    const isEmbed = computed(() => inferType(model.value) === 'embedding')
+    const typeBadge = computed(() => {
+      const t = inferType(model.value)
+      if (t === 'image') return T.value.typeImage
+      if (t === 'vision') return T.value.typeVision
+      if (t === 'embedding') return T.value.typeEmbedding
+      return T.value.typeChat
+    })
+    const chatModels = computed(() => modelOptions.value.filter(m => inferType(m) === 'chat'))
+    const visionModels = computed(() => modelOptions.value.filter(m => inferType(m) === 'vision'))
+    const imageModels = computed(() => modelOptions.value.filter(m => inferType(m) === 'image'))
+    const embedModels = computed(() => modelOptions.value.filter(m => inferType(m) === 'embedding'))
+
+    function syncUrl() {
+      const m = model.value
+      if (!m) return
+      const q = sharer.value ? `?sharer=${encodeURIComponent(sharer.value)}` : ''
+      const path = `/m/${encodeURIComponent(m)}${q}`
+      try { history.replaceState(null, '', path) } catch {}
+      document.title = `${m} · Token Bank`
+    }
+
+    function onModelChange(ev) {
+      const next = (ev?.target?.value || '').trim()
+      if (!next || next === model.value) return
+      model.value = next
+      messages.value = []
+      // 换模型不重置访客额度（IP 限流在服务端）；仅清空本地对话
+      images.value = []
+      prompt.value = ''
+      err.value = ''
+      syncUrl()
+    }
+
+    function clearAll() {
+      if (running.value) return
+      messages.value = []
+      images.value = []
+      err.value = ''
+    }
+
+    async function loadModels() {
+      try {
+        const { r, data } = await fetchJson('/public/network')
+        let ids = []
+        const types = (r.ok && data?.available_model_types && typeof data.available_model_types === 'object')
+          ? { ...data.available_model_types } : {}
+        if (r.ok && Array.isArray(data?.available_models)) {
+          ids = data.available_models.filter(Boolean)
+        }
+        if (!ids.length && Array.isArray(data?.workers)) {
+          const set = new Set()
+          for (const w of data.workers) {
+            for (const m of w.models || []) {
+              const name = typeof m === 'string' ? m : m?.name
+              if (name) set.add(name)
+            }
+          }
+          ids = [...set].sort()
+        }
+        if (model.value && !ids.includes(model.value)) ids = [model.value, ...ids]
+        modelTypes.value = types
+        modelOptions.value = ids
+        if (!model.value && ids.length) {
+          model.value = ids[0]
+          syncUrl()
+        }
+      } catch {
+        if (model.value) modelOptions.value = [model.value]
+      }
+    }
+
+    async function fetchJson(url, opts = {}) {
+      const headers = { ...(opts.headers || {}) }
+      if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
+      if (opts.auth) {
+        const tok = getToken()
+        if (tok) headers.Authorization = `Bearer ${tok}`
+      }
+      const r = await fetch(url, { ...opts, headers })
+      let data = null
+      try { data = await r.json() } catch { data = null }
+      return { r, data }
+    }
+
+    async function scrollChat() {
+      await nextTick()
+      const el = chatEl.value
+      if (el) el.scrollTop = el.scrollHeight
+    }
+
+    async function fetchProfile() {
+      try {
+        const { r, data } = await fetchJson('/user/profile', { auth: true })
+        if (r.ok) profile.value = data
+      } catch {}
+    }
+
+    function logout() {
+      storageRemove('user_token')
+      loggedIn.value = false
+      profile.value = null
+    }
+
+    async function doLogin() {
+      authErr.value = ''
+      if (!form.value.email || !form.value.password) {
+        authErr.value = `${T.value.email} / ${T.value.password}`
+        return
+      }
+      authLoading.value = true
+      try {
+        const { r, data } = await fetchJson('/user/login', {
+          method: 'POST',
+          body: JSON.stringify({ email: form.value.email, password: form.value.password }),
+        })
+        if (!r.ok) {
+          authErr.value = (typeof data?.detail === 'string' ? data.detail : '') || 'Login failed'
+          return
+        }
+        storageSet('user_token', data.token)
+        loggedIn.value = true
+        guestUsed.value = false
+        await fetchProfile()
+      } catch {
+        authErr.value = 'Network error'
+      } finally {
+        authLoading.value = false
+      }
+    }
+
+    async function doRegister() {
+      authErr.value = ''
+      if (!form.value.email || !form.value.password) return
+      authLoading.value = true
+      try {
+        const { r, data } = await fetchJson('/user/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            email: form.value.email,
+            password: form.value.password,
+            nickname: form.value.nickname || '',
+          }),
+        })
+        if (!r.ok) {
+          authErr.value = (typeof data?.detail === 'string' ? data.detail : '') || 'Error'
+          return
+        }
+        storageSet('user_token', data.token)
+        loggedIn.value = true
+        guestUsed.value = false
+        await fetchProfile()
+      } catch {
+        authErr.value = 'Network error'
+      } finally {
+        authLoading.value = false
+      }
+    }
+
+    function detailMsg(data) {
+      const d = data?.detail
+      if (typeof d === 'string') return d
+      if (d && typeof d === 'object' && d.error) return d.error
+      return ''
+    }
+
+    async function sendMessage() {
+      err.value = ''
+      if (isEmbed.value) {
+        err.value = T.value.embedEmpty
+        return
+      }
+      if (isImage.value) {
+        await genImage()
+        return
+      }
+      const text = prompt.value.trim()
+      if (!text) {
+        err.value = T.value.emptyPrompt
+        return
+      }
+      const isGuest = !loggedIn.value || !getToken()
+      // 访客仅一轮；登录后按积分多轮
+      if (isGuest && guestUsed.value) {
+        err.value = T.value.loginToContinue
+        return
+      }
+      const prior = messages.value.filter(m => !m.pending).map(m => ({ role: m.role, content: m.content }))
+      const payloadMsgs = isGuest
+        ? [{ role: 'user', content: text }]
+        : [...prior, { role: 'user', content: text }].slice(-8)
+
+      messages.value.push({ role: 'user', content: text })
+      messages.value.push({ role: 'assistant', content: T.value.thinking, pending: true })
+      prompt.value = ''
+      running.value = true
+      await scrollChat()
+      try {
+        const body = { model: model.value, messages: payloadMsgs }
+        if (!isGuest && sharer.value) body.sharer = sharer.value
+        const { r, data } = await fetchJson('/api/web-chat', {
+          method: 'POST',
+          auth: !isGuest,
+          body: JSON.stringify(body),
+        })
+        if (messages.value.length && messages.value[messages.value.length - 1].pending) {
+          messages.value.pop()
+        }
+        if (r.status === 401) {
+          if (!isGuest) logout()
+          err.value = detailMsg(data) || (isGuest ? T.value.loginToContinue : T.value.needLogin)
+          if (isGuest) guestUsed.value = true
+          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') messages.value.pop()
+          return
+        }
+        if (r.status === 429) {
+          guestUsed.value = true
+          err.value = detailMsg(data) || T.value.loginToContinue
+          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') messages.value.pop()
+          return
+        }
+        if (!r.ok) {
+          err.value = detailMsg(data) || ('HTTP ' + r.status)
+          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') messages.value.pop()
+          return
+        }
+        messages.value.push({ role: 'assistant', content: String(data?.output || '(empty)') })
+        if (data?.guest || data?.need_login_to_continue || isGuest) {
+          guestUsed.value = true
+        }
+        if (!isGuest) await fetchProfile()
+        await scrollChat()
+      } catch {
+        if (messages.value.length && messages.value[messages.value.length - 1].pending) messages.value.pop()
+        if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') messages.value.pop()
+        err.value = 'Network error'
+      } finally {
+        running.value = false
+      }
+    }
+
+    async function genImage() {
+      err.value = ''
+      const text = prompt.value.trim()
+      if (!text) {
+        err.value = T.value.emptyPrompt
+        return
+      }
+      if (!loggedIn.value || !getToken()) {
+        err.value = T.value.needLogin
+        return
+      }
+      running.value = true
+      try {
+        const body = { model: model.value, prompt: text, n: 1 }
+        if (sharer.value) body.sharer = sharer.value
+        const { r, data } = await fetchJson('/api/web-image', {
+          method: 'POST',
+          auth: true,
+          body: JSON.stringify(body),
+        })
+        if (r.status === 401) {
+          logout()
+          err.value = T.value.needLogin
+          return
+        }
+        if (!r.ok) {
+          err.value = detailMsg(data) || ('HTTP ' + r.status)
+          return
+        }
+        const list = Array.isArray(data?.images) ? data.images.filter(Boolean) : []
+        if (list.length) images.value = [...list, ...images.value]
+        else err.value = 'empty image'
+        await fetchProfile()
+      } catch {
+        err.value = 'Network error'
+      } finally {
+        running.value = false
+      }
+    }
+
+    onMounted(async () => {
+      await loadModels()
+      if (model.value) {
+        document.title = `${model.value} · Token Bank`
+        if (loggedIn.value) fetchProfile()
+      }
+    })
+
+    return {
+      lang, T, toggleLang, model, modelOptions, chatModels, visionModels, imageModels, embedModels,
+      isImage, isEmbed, typeBadge, sharer,
+      loggedIn, profile, prompt, messages, images, chatEl,
+      running, err, guestUsed, guestLocked, authTab, authLoading, authErr, form,
+      logout, doLogin, doRegister, sendMessage, genImage, clearAll, onModelChange,
+    }
+  }
+}).mount('#app')
+</script>
+</body>
+</html>

@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Bank Agent</title>
+<meta name="description" content="试用已分享的智能体">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="/static/vue.global.prod.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#fff;--bg-muted:#f5f2f0;--bg-subtle:#faf9f5;
+  --text:#000;--text-secondary:#333;--text-muted:#7b7b7b;--text-faint:#bcbcbc;
+  --border:#e7e4e1;--border-light:#f0eeec;
+  --accent:#f1ccff;--primary:#000;--primary-fg:#fff;
+  --success:#16a34a;--danger:#dc2626;--warn:#d97706;
+  --radius:10px;--radius-lg:18px;
+  --font:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'Space Mono',ui-monospace,monospace;
+}
+body{font-family:var(--font);background:var(--bg-subtle);color:var(--text);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.shell{max-width:720px;margin:0 auto;padding:24px 16px 48px;min-height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:-.01em;text-decoration:none}
+.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
+.lang-btn,.ghost-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;color:var(--text-muted)}
+.lang-btn:hover,.ghost-btn:hover{color:var(--text);border-color:var(--text-muted)}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 24px;box-shadow:0 8px 24px rgba(0,0,0,.03)}
+.h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
+.meta{color:var(--text-muted);font-size:13px;line-height:1.5;margin-bottom:16px;white-space:pre-wrap}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.badge{font-size:11px;padding:4px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-muted);background:var(--bg-muted)}
+.badge.ok{color:var(--success);border-color:#bbf7d0;background:#f0fdf4}
+.badge.warn{color:var(--warn);border-color:#fde68a;background:#fffbeb}
+.badge.err{color:var(--danger);border-color:#fecaca;background:#fef2f2}
+.field{margin-bottom:12px}
+label{display:block;color:var(--text-muted);font-size:12px;margin-bottom:5px}
+textarea,input[type=email],input[type=password],input[type=text]{
+  width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:vertical
+}
+textarea:focus,input:focus{border-color:var(--text)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 18px;background:var(--primary);color:var(--primary-fg);border:none;border-radius:var(--radius);cursor:pointer;font-size:14px;font-family:inherit;font-weight:500}
+.btn:hover:not(:disabled){opacity:.88}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-block{width:100%}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.err{color:var(--danger);font-size:13px;margin-top:10px}
+.ok{color:var(--success);font-size:13px;margin-top:10px}
+.hint{color:var(--text-muted);font-size:12px;margin-top:8px;line-height:1.5}
+/* 多轮对话 */
+.chat{display:flex;flex-direction:column;gap:10px;margin:4px 0 14px;min-height:200px;max-height:420px;overflow:auto;padding:12px;background:var(--bg-muted);border:1px solid var(--border-light);border-radius:var(--radius)}
+.chat-empty{color:var(--text-muted);font-size:13px;text-align:center;padding:36px 12px;line-height:1.5}
+.bubble{max-width:88%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.bubble.user{align-self:flex-end;background:var(--primary);color:var(--primary-fg);border-bottom-right-radius:4px}
+.bubble.assistant{align-self:flex-start;background:#fff;border:1px solid var(--border);color:var(--text);border-bottom-left-radius:4px}
+.bubble.pending{opacity:.7;font-style:italic}
+.composer{display:flex;gap:8px;align-items:flex-end}
+.composer textarea{flex:1;min-height:44px;max-height:140px;resize:vertical}
+.composer .btn{flex-shrink:0;height:44px}
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.ghost-link{background:transparent;border:none;color:var(--text-muted);font-size:12px;cursor:pointer;font-family:inherit;padding:0;text-decoration:underline}
+.ghost-link:hover{color:var(--text)}
+.auth-box{margin-top:16px;padding-top:16px;border-top:1px solid var(--border-light)}
+.auth-tabs{display:flex;margin-bottom:14px;border-bottom:1px solid var(--border-light)}
+.auth-tabs button{flex:1;padding:10px;background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit}
+.auth-tabs button.active{color:var(--text);border-bottom-color:var(--text);font-weight:600}
+.footer{margin-top:auto;padding-top:28px;color:var(--text-faint);font-size:12px;text-align:center}
+.mono{font-family:var(--mono);font-size:12px}
+.state{text-align:center;padding:48px 16px;color:var(--text-muted)}
+</style>
+</head>
+<body>
+<div id="app" class="shell">
+  <header>
+    <a class="brand" href="/">
+      <span class="brand-mark"></span>
+      <span>Token Bank</span>
+    </a>
+    <div class="row">
+      <button class="lang-btn" type="button" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中文' }}</button>
+      <button v-if="loggedIn" class="ghost-btn" type="button" @click="logout">{{ T.logout }}</button>
+      <a v-else class="ghost-btn" href="/app" style="text-decoration:none">{{ T.openApp }}</a>
+    </div>
+  </header>
+
+  <div v-if="loading" class="state">{{ T.loading }}</div>
+
+  <div v-else-if="fatal && !showAuthGate" class="card">
+    <div class="h1">{{ T.unavailable }}</div>
+    <p class="meta">{{ fatal }}</p>
+    <a class="btn" href="/" style="margin-top:8px;text-decoration:none">{{ T.backHome }}</a>
+  </div>
+
+  <div v-else-if="showAuthGate" class="card">
+    <div class="h1">{{ T.unavailable }}</div>
+    <p class="meta">{{ fatal || T.needAuthCircle }}</p>
+    <div class="auth-box" style="border-top:none;padding-top:0;margin-top:8px">
+      <div class="auth-tabs">
+        <button type="button" :class="{ active: authTab === 'login' }" @click="authTab='login'">{{ T.login }}</button>
+        <button type="button" :class="{ active: authTab === 'register' }" @click="authTab='register'">{{ T.register }}</button>
+      </div>
+      <div class="field" v-if="authTab === 'register'">
+        <label>{{ T.nickname }}</label>
+        <input type="text" v-model="form.nickname" autocomplete="nickname">
+      </div>
+      <div class="field">
+        <label>{{ T.email }}</label>
+        <input type="email" v-model="form.email" autocomplete="email">
+      </div>
+      <div class="field">
+        <label>{{ T.password }}</label>
+        <input type="password" v-model="form.password" autocomplete="current-password">
+      </div>
+      <button class="btn btn-block" type="button" :disabled="authLoading" @click="authTab==='login' ? doLogin() : doRegister()">
+        {{ authLoading ? (authTab==='login' ? T.loggingIn : T.registering) : (authTab==='login' ? T.login : T.register) }}
+      </button>
+      <p v-if="authErr" class="err">{{ authErr }}</p>
+    </div>
+  </div>
+
+  <template v-else-if="agent">
+    <div class="card">
+      <div class="h1">{{ agent.display_name || agent.name || agent.id }}</div>
+      <p class="meta">{{ agent.description || T.noDesc }}</p>
+      <div class="badges">
+        <span class="badge ok">{{ T.online }}</span>
+        <span class="badge">{{ agent.visibility === 'circle' ? T.circleShare : T.publicShare }}</span>
+        <span v-if="agent.runtime" class="badge mono">{{ agent.runtime }}</span>
+        <span v-if="agent.owner_nickname" class="badge">{{ agent.owner_nickname }}</span>
+        <span class="badge">{{ T.creditsPerTask.replace('{n}', String(creditsPerTask)) }}</span>
+      </div>
+
+      <div class="toolbar">
+        <span class="hint" style="margin:0">{{ loggedIn && profile ? T.balance.replace('{n}', Number(profile.credits_balance || 0).toFixed(1)) : T.chatHint }}</span>
+        <button v-if="messages.length" type="button" class="ghost-link" @click="clearChat" :disabled="running">{{ T.clear }}</button>
+      </div>
+
+      <div class="chat" ref="chatEl">
+        <div v-if="!messages.length" class="chat-empty">{{ T.chatEmpty }}</div>
+        <div v-for="(m, i) in messages" :key="i" class="bubble" :class="[m.role, { pending: m.pending }]">{{ m.content }}</div>
+      </div>
+
+      <div class="composer">
+        <textarea v-model="prompt" rows="2" :placeholder="T.promptPh" :disabled="running || guestLocked" @keydown.enter.exact.prevent="sendMessage"></textarea>
+        <button class="btn" type="button" :disabled="running || guestLocked || !prompt.trim()" @click="sendMessage">
+          {{ running ? T.running : T.send }}
+        </button>
+      </div>
+      <p v-if="err" class="err">{{ err }}</p>
+
+      <div v-if="!loggedIn && guestUsed" class="auth-box">
+        <p class="hint" style="margin-bottom:12px">{{ T.loginToContinue }}</p>
+        <div class="auth-tabs">
+          <button type="button" :class="{ active: authTab === 'login' }" @click="authTab='login'">{{ T.login }}</button>
+          <button type="button" :class="{ active: authTab === 'register' }" @click="authTab='register'">{{ T.register }}</button>
+        </div>
+        <div class="field" v-if="authTab === 'register'">
+          <label>{{ T.nickname }}</label>
+          <input type="text" v-model="form.nickname" autocomplete="nickname">
+        </div>
+        <div class="field">
+          <label>{{ T.email }}</label>
+          <input type="email" v-model="form.email" autocomplete="email">
+        </div>
+        <div class="field">
+          <label>{{ T.password }}</label>
+          <input type="password" v-model="form.password" autocomplete="current-password">
+        </div>
+        <button class="btn btn-block" type="button" :disabled="authLoading" @click="authTab==='login' ? doLogin() : doRegister()">
+          {{ authLoading ? (authTab==='login' ? T.loggingIn : T.registering) : (authTab==='login' ? T.login : T.register) }}
+        </button>
+        <p v-if="authErr" class="err">{{ authErr }}</p>
+      </div>
+    </div>
+  </template>
+
+  <div class="footer">Token Bank · {{ T.footer }}</div>
+</div>
+
+
+<script>
+const { createApp, ref, computed, onMounted, nextTick } = Vue
+
+/* localStorage 在受限环境可能不可用 */
+let _storageOk = false
+const _mem = {}
+try { localStorage.setItem('__probe', '1'); localStorage.removeItem('__probe'); _storageOk = true } catch {}
+function storageGet(k) { try { return _storageOk ? localStorage.getItem(k) : (_mem[k] ?? null) } catch { return _mem[k] ?? null } }
+function storageSet(k, v) { try { if (_storageOk) localStorage.setItem(k, v); else _mem[k] = v } catch { _mem[k] = v } }
+function storageRemove(k) { try { if (_storageOk) localStorage.removeItem(k); else delete _mem[k] } catch { delete _mem[k] } }
+
+createApp({
+  setup() {
+    const lang = ref(storageGet('tb_lang') || ((navigator.language || '').startsWith('zh') ? 'zh' : 'en'))
+    const i18n = {
+      zh: {
+        loading: '加载中…', unavailable: '无法访问此智能体', backHome: '返回首页',
+        noDesc: '暂无简介', online: '在线', publicShare: '全球分享', circleShare: '圈子分享',
+        creditsPerTask: '每次 {n} 积分', promptPh: '输入消息，Enter 发送…',
+        send: '发送', running: '思考中…', needLogin: '圈子分享仅成员可见；全球分享未登录可试一轮。',
+        loginToContinue: '试用一轮已结束，登录后可继续对话（按正常积分扣费）。',
+        login: '登录', register: '注册', loggingIn: '登录中…', registering: '注册中…',
+        email: '邮箱', password: '密码', nickname: '昵称', logout: '退出', openApp: '账户',
+        balance: '余额 {n} 积分', footer: '已分享智能体的网页版',
+        notFound: '智能体不存在、离线，或你无权访问（圈子分享需成为成员）。',
+        needAuthCircle: '这是圈子分享的智能体，请先登录后再查看。',
+        emptyPrompt: '请先输入内容',
+        chatHint: '未登录可试一轮', chatEmpty: '发送一条消息试用；登录后可多轮追问。',
+        clear: '清空对话', thinking: '…',
+      },
+      en: {
+        loading: 'Loading…', unavailable: 'Agent unavailable', backHome: 'Home',
+        noDesc: 'No description', online: 'Online', publicShare: 'Global', circleShare: 'Circle',
+        creditsPerTask: '{n} credits / turn', promptPh: 'Message, Enter to send…',
+        send: 'Send', running: 'Thinking…', needLogin: 'Circle agents are members-only. Public agents: one free guest turn.',
+        loginToContinue: 'Guest trial used. Sign in to continue (normal credits).',
+        login: 'Sign in', register: 'Sign up', loggingIn: 'Signing in…', registering: 'Signing up…',
+        email: 'Email', password: 'Password', nickname: 'Nickname', logout: 'Log out', openApp: 'Account',
+        balance: 'Balance {n} credits', footer: 'Web version of a shared agent',
+        notFound: 'Not found, offline, or not visible to you (circle members only).',
+        needAuthCircle: 'Circle-shared agent — sign in to view.',
+        emptyPrompt: 'Enter a message first',
+        chatHint: 'One free guest turn', chatEmpty: 'Try one message; sign in for multi-turn chat.',
+        clear: 'Clear', thinking: '…',
+      },
+    }
+    const T = computed(() => i18n[lang.value] || i18n.zh)
+    function toggleLang() {
+      lang.value = lang.value === 'zh' ? 'en' : 'zh'
+      storageSet('tb_lang', lang.value)
+      document.documentElement.lang = lang.value === 'zh' ? 'zh-CN' : 'en'
+    }
+
+    const loading = ref(true)
+    const fatal = ref('')
+    const showAuthGate = ref(false)
+    const agent = ref(null)
+    const creditsPerTask = ref(10)
+    const loggedIn = ref(!!storageGet('user_token'))
+    const profile = ref(null)
+    const prompt = ref('')
+    const messages = ref([])
+    const chatEl = ref(null)
+    const running = ref(false)
+    const err = ref('')
+    // 未登录已用完一轮试用
+    const guestUsed = ref(false)
+    const authTab = ref('login')
+    const authLoading = ref(false)
+    const authErr = ref('')
+    const form = ref({ email: '', password: '', nickname: '' })
+
+    function getToken() { return storageGet('user_token') || '' }
+    const guestLocked = computed(() => guestUsed.value && !loggedIn.value)
+    function assistantIdFromPath() {
+      const m = location.pathname.match(/^\/a\/([^/?#]+)/)
+      return m ? decodeURIComponent(m[1]) : ''
+    }
+
+    async function fetchJson(url, opts = {}) {
+      const headers = { ...(opts.headers || {}) }
+      if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
+      if (opts.auth) {
+        const tok = getToken()
+        if (tok) headers.Authorization = `Bearer ${tok}`
+      }
+      const r = await fetch(url, { ...opts, headers })
+      let data = null
+      try { data = await r.json() } catch { data = null }
+      return { r, data }
+    }
+
+    async function scrollChat() {
+      await nextTick()
+      const el = chatEl.value
+      if (el) el.scrollTop = el.scrollHeight
+    }
+
+    function clearChat() {
+      if (running.value) return
+      messages.value = []
+      err.value = ''
+    }
+
+    /** 把多轮对话压成单次 prompt（agent-tasks 仅接受字符串） */
+    function buildPromptWithHistory(history, nextUser) {
+      const prior = history.filter(m => !m.pending && m.content)
+      if (!prior.length) return nextUser
+      const lines = prior.map(m => {
+        const who = m.role === 'user' ? 'User' : 'Assistant'
+        return `${who}: ${m.content}`
+      })
+      return `Conversation so far:\n${lines.join('\n\n')}\n\nUser: ${nextUser}\n\nAssistant:`
+    }
+
+    async function loadAgent() {
+      loading.value = true
+      fatal.value = ''
+      showAuthGate.value = false
+      agent.value = null
+      const id = assistantIdFromPath()
+      if (!id) {
+        fatal.value = T.value.notFound
+        loading.value = false
+        return
+      }
+      try {
+        let { r, data } = await fetchJson(`/public/agents/${encodeURIComponent(id)}`)
+        if (r.ok && data?.agent) {
+          agent.value = data.agent
+          creditsPerTask.value = data.credits_per_task ?? 10
+          applyMeta()
+          loading.value = false
+          if (loggedIn.value) await fetchProfile()
+          return
+        }
+        if (!getToken()) {
+          fatal.value = T.value.needAuthCircle
+          showAuthGate.value = true
+          loading.value = false
+          return
+        }
+        ;({ r, data } = await fetchJson(`/api/agents/${encodeURIComponent(id)}`, { auth: true }))
+        if (r.status === 401) {
+          logout()
+          fatal.value = T.value.needAuthCircle
+          showAuthGate.value = true
+          loading.value = false
+          return
+        }
+        if (!r.ok || !data?.agent) {
+          fatal.value = (typeof data?.detail === 'string' ? data.detail : '') || T.value.notFound
+          loading.value = false
+          return
+        }
+        agent.value = data.agent
+        creditsPerTask.value = data.credits_per_task ?? 10
+        applyMeta()
+        await fetchProfile()
+      } catch {
+        fatal.value = T.value.notFound
+      } finally {
+        loading.value = false
+      }
+    }
+
+    function applyMeta() {
+      const a = agent.value
+      if (!a) return
+      const title = a.display_name || a.name || a.id
+      document.title = `${title} · Token Bank`
+      const desc = a.description || title
+      let el = document.querySelector('meta[name="description"]')
+      if (!el) {
+        el = document.createElement('meta')
+        el.setAttribute('name', 'description')
+        document.head.appendChild(el)
+      }
+      el.setAttribute('content', desc)
+    }
+
+    async function fetchProfile() {
+      try {
+        const { r, data } = await fetchJson('/user/profile', { auth: true })
+        if (r.ok) profile.value = data
+      } catch {}
+    }
+
+    function logout() {
+      storageRemove('user_token')
+      loggedIn.value = false
+      profile.value = null
+    }
+
+    async function doLogin() {
+      authErr.value = ''
+      if (!form.value.email || !form.value.password) {
+        authErr.value = `${T.value.email} / ${T.value.password}`
+        return
+      }
+      authLoading.value = true
+      try {
+        const { r, data } = await fetchJson('/user/login', {
+          method: 'POST',
+          body: JSON.stringify({ email: form.value.email, password: form.value.password }),
+        })
+        if (!r.ok) {
+          authErr.value = (typeof data?.detail === 'string' ? data.detail : '') || 'Login failed'
+          return
+        }
+        storageSet('user_token', data.token)
+        loggedIn.value = true
+        guestUsed.value = false
+        await loadAgent()
+      } catch {
+        authErr.value = 'Network error'
+      } finally {
+        authLoading.value = false
+      }
+    }
+
+    async function doRegister() {
+      authErr.value = ''
+      if (!form.value.email || !form.value.password) return
+      authLoading.value = true
+      try {
+        const { r, data } = await fetchJson('/user/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            email: form.value.email,
+            password: form.value.password,
+            nickname: form.value.nickname || '',
+          }),
+        })
+        if (!r.ok) {
+          authErr.value = (typeof data?.detail === 'string' ? data.detail : '') || 'Error'
+          return
+        }
+        storageSet('user_token', data.token)
+        loggedIn.value = true
+        guestUsed.value = false
+        await loadAgent()
+      } catch {
+        authErr.value = 'Network error'
+      } finally {
+        authLoading.value = false
+      }
+    }
+
+    async function sendMessage() {
+      err.value = ''
+      const text = prompt.value.trim()
+      if (!text) {
+        err.value = T.value.emptyPrompt
+        return
+      }
+      const isGuest = !loggedIn.value || !getToken()
+      if (isGuest && guestUsed.value) {
+        err.value = T.value.loginToContinue
+        return
+      }
+      const history = messages.value.slice()
+      // 访客单轮不带历史；登录后压缩多轮上下文
+      const apiPrompt = isGuest ? text : buildPromptWithHistory(history, text)
+      messages.value.push({ role: 'user', content: text })
+      messages.value.push({ role: 'assistant', content: T.value.thinking, pending: true })
+      prompt.value = ''
+      running.value = true
+      await scrollChat()
+      try {
+        const { r, data } = await fetchJson('/api/agent-tasks', {
+          method: 'POST',
+          auth: !isGuest,
+          body: JSON.stringify({
+            assistant_id: agent.value.id,
+            prompt: apiPrompt,
+            worker_id: agent.value.worker_id || undefined,
+          }),
+        })
+        if (messages.value.length && messages.value[messages.value.length - 1].pending) {
+          messages.value.pop()
+        }
+        if (r.status === 401) {
+          if (!isGuest) logout()
+          err.value = (typeof data?.detail === 'string' ? data.detail : '') || (isGuest ? T.value.loginToContinue : T.value.needLogin)
+          if (isGuest) guestUsed.value = true
+          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') {
+            messages.value.pop()
+          }
+          return
+        }
+        if (r.status === 429) {
+          guestUsed.value = true
+          err.value = (typeof data?.detail === 'string' ? data.detail : '') || T.value.loginToContinue
+          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') {
+            messages.value.pop()
+          }
+          return
+        }
+        if (!r.ok) {
+          const detail = data?.detail
+          const msg = typeof detail === 'string'
+            ? detail
+            : (detail?.error || detail?.message || data?.error || `HTTP ${r.status}`)
+          err.value = String(msg)
+          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') {
+            messages.value.pop()
+          }
+          return
+        }
+        const out = data?.output || data?.result || data?.text || data?.message
+          || (typeof data === 'string' ? data : '')
+        messages.value.push({ role: 'assistant', content: String(out || '(empty)') })
+        if (data?.guest || data?.need_login_to_continue || isGuest) {
+          guestUsed.value = true
+        }
+        if (!isGuest) await fetchProfile()
+        await scrollChat()
+      } catch (e) {
+        if (messages.value.length && messages.value[messages.value.length - 1].pending) {
+          messages.value.pop()
+        }
+        if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') {
+          messages.value.pop()
+        }
+        err.value = e?.message || 'Network error'
+      } finally {
+        running.value = false
+      }
+    }
+
+    onMounted(() => {
+      document.documentElement.lang = lang.value === 'zh' ? 'zh-CN' : 'en'
+      loadAgent()
+    })
+
+    return {
+      lang, T, toggleLang, loading, fatal, showAuthGate, agent, creditsPerTask,
+      loggedIn, profile, prompt, messages, chatEl, running, err, guestUsed, guestLocked,
+      authTab, authLoading, authErr, form, doLogin, doRegister, logout,
+      sendMessage, clearChat,
+    }
+  },
+}).mount('#app')
+</script>
+</body>
+</html>

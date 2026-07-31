@@ -69,6 +69,16 @@ export function getProfile() {
   return authRequest('GET', '/user/profile', { token });
 }
 
+/** 同步一句话画像到云端（贡献者主页展示）；空串清除 */
+export function updateProfilePersona(persona) {
+  const token = localStorage.getItem('token');
+  if (!token) return Promise.resolve(null);
+  return authRequest('PATCH', '/user/profile', {
+    token,
+    body: { persona: String(persona || '').trim().slice(0, 300) },
+  });
+}
+
 export function getStats() {
   return http.get('/user/stats');
 }
@@ -97,9 +107,19 @@ export function listPublicCommunityAgents() {
   return http.get('/public/agents');
 }
 
+/** 全球公开智能体单条名片（匿名） */
+export function getPublicCommunityAgent(assistantId) {
+  return http.get(`/public/agents/${encodeURIComponent(assistantId)}`);
+}
+
 /** 登录用户可见武将：公开 + 圈子 */
 export function listCommunityAgents() {
   return http.get('/api/agents');
+}
+
+/** 当前用户可见的单条智能体名片 */
+export function getCommunityAgent(assistantId) {
+  return http.get(`/api/agents/${encodeURIComponent(assistantId)}`);
 }
 
 /** 雇佣上报（真实被雇次数 +1） */

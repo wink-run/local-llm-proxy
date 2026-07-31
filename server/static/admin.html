@@ -195,7 +195,7 @@ select.form-input{cursor:pointer}
           <tr v-for="w in workers" :key="w.worker_id">
             <td><span class="dot dot-online"></span>{{ w.name }}</td>
             <td class="mono">{{ w.worker_id }}</td>
-            <td><span v-for="m in w.models" :key="m" class="tag">{{ m }}<span v-if="(w.model_types||{})[m]==='image'" style="margin-left:3px;color:#9333ea;font-size:10px">图</span></span></td>
+            <td><span v-for="m in w.models" :key="m" class="tag">{{ m }}<span v-if="(w.model_types||{})[m]==='image'" style="margin-left:3px;color:#9333ea;font-size:10px">生图</span><span v-else-if="(w.model_types||{})[m]==='vision'" style="margin-left:3px;color:#2563eb;font-size:10px">图文</span><span v-else-if="(w.model_types||{})[m]==='embedding'" style="margin-left:3px;color:#64748b;font-size:10px">嵌入</span></span></td>
             <td style="color:#7b7b7b">{{ fmtTime(w.connected_at) }}</td>
             <td>{{ w.active_requests }}</td>
           </tr>
@@ -737,12 +737,13 @@ select.form-input{cursor:pointer}
             <div v-for="(m, mi) in bsForm.models" :key="mi" style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center">
               <input v-model="m.id" class="form-input form-input-md" :placeholder="lang==='zh'?'模型 ID':'Model ID'" />
               <select v-model="m.modality" class="form-input form-input-sm">
-                <option value="chat">{{ lang==='zh'?'对话':'Chat' }}</option>
-                <option value="image">{{ lang==='zh'?'图像':'Image' }}</option>
-                <option value="embedding">Embedding</option>
+                <option value="chat">{{ lang==='zh'?'文本':'Text' }}</option>
+                <option value="vision">{{ lang==='zh'?'图文':'Vision' }}</option>
+                <option value="image">{{ lang==='zh'?'生图':'Image' }}</option>
+                <option value="embedding">{{ lang==='zh'?'嵌入':'Embedding' }}</option>
               </select>
-              <!-- 对话：in / out / cache（USD / 1M tokens） -->
-              <template v-if="m.modality === 'chat'">
+              <!-- 文本/图文：in / out / cache（USD / 1M tokens） -->
+              <template v-if="m.modality === 'chat' || m.modality === 'vision'">
                 <input v-model="m.in" class="form-input form-input-sm" :placeholder="lang==='zh'?'in $/M':'in $/M'" title="in" />
                 <input v-model="m.out" class="form-input form-input-sm" :placeholder="lang==='zh'?'out $/M':'out $/M'" title="out" />
                 <input v-model="m.cacheRead" class="form-input form-input-sm" :placeholder="lang==='zh'?'cache $/M':'cache $/M'" title="cacheRead" />

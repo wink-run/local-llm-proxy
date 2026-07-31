@@ -16,6 +16,8 @@ import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import { fmtContribTokens, fmtCreditCny, creditsToCny } from '../lib/credit-pricing';
 import { avatarColor } from '../components/UserAvatar';
+import { getServerUrl } from '../config';
+import { copyText } from '../lib/resource-enable';
 function multiplierToStars(m) {
   const n = m >= 1.3 ? 5 : m >= 1.1 ? 4 : m >= 0.9 ? 3 : m >= 0.7 ? 2 : 1;
   return '★'.repeat(n) + '☆'.repeat(5 - n);
@@ -128,6 +130,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
   const [selectedCircleIds, setSelectedCircleIds] = useState(new Set());
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [showAssistantPicker, setShowAssistantPicker] = useState(false);
+  const [copiedAssistantId, setCopiedAssistantId] = useState('');
 
   useEffect(() => {
     Promise.all([listMyCircles(), listJoinedCircles()])
@@ -203,6 +206,18 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+  }
+
+  /** 复制已分享智能体的网页版链接（全球/圈子共用 /a/{id}） */
+  async function copyAssistantWebLink(id) {
+    const base = (getServerUrl() || '').replace(/\/$/, '');
+    if (!base || !id) return;
+    const url = `${base}/a/${encodeURIComponent(id)}`;
+    const ok = await copyText(url);
+    if (ok) {
+      setCopiedAssistantId(id);
+      setTimeout(() => setCopiedAssistantId((cur) => (cur === id ? '' : cur)), 1500);
+    }
   }
 
   function assistantDisabledReason(r) {
@@ -412,7 +427,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                 const label = a ? (a.display_name || a.name) : id;
                 const reason = a ? assistantDisabledReason(a) : '';
                 return (
-                  // 仅 × 可移除，避免点 chip 本体误删
+                  // 仅操作按钮可点；避免点 chip 本体误删
                   <span
                     key={id}
                     title={reason || a?.description || undefined}
@@ -420,6 +435,15 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
                   >
                     <TruncTip as="span" title={label} className="max-w-[14rem]">{label}</TruncTip>
                     {reason && <span className="text-[10px] opacity-80">· {reason}</span>}
+                    <button
+                      type="button"
+                      title={t('contribute.copyWebLink')}
+                      aria-label={t('contribute.copyWebLink')}
+                      onClick={() => copyAssistantWebLink(id)}
+                      className="ml-0.5 px-1.5 h-5 inline-flex items-center justify-center rounded-md text-[10px] text-current/70 hover:text-current hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer transition-colors duration-200"
+                    >
+                      {copiedAssistantId === id ? t('contribute.webLinkCopied') : t('contribute.webLink')}
+                    </button>
                     <button
                       type="button"
                       title={t('contribute.removeAssistant')}

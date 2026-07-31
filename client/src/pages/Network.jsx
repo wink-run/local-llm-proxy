@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getNetwork, getStats } from '../api/client';
+import { getNetwork, getStats, browseCircles, applyJoinCircle } from '../api/client';
 import { modelStatsForIds, normalizeNetworkPayload } from '../lib/networkModelStats';
 import { fetchServerCommunityModels } from '../lib/communityModels';
 import { useLang } from '../store/lang';
@@ -13,6 +13,85 @@ function fmtContribTokens(n) {
   if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
   if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
   return String(v);
+}
+
+/** 模型/智能体条目的去重键 */
+function offerItemKey(item) {
+  if (typeof item === 'string') return item;
+  return item?.display_name || item?.name || item?.id || '';
+}
+
+/**
+ * 按分享者聚合供给排行：同用户多真实节点 / 多虚拟 Agent 合并为一条，
+ * Token 与接单量累加，模型与智能体去重合并。
+ */
+function aggregateWorkersBySharer(workers) {
+  const map = new Map();
+  for (const w of workers || []) {
+    const key = w.sharer || w.worker_id || w.name || '';
+    if (!key) continue;
+    const toks = Number(w.period_tokens) || 0;
+    const jobs = Number(w.period_agent_jobs) || 0;
+    const lat = Number(w.avg_latency_ms) || 0;
+    const models = Array.isArray(w.models) ? w.models : [];
+    const agents = Array.isArray(w.agents) ? w.agents : [];
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, {
+        ...w,
+        period_tokens: toks,
+        period_agent_jobs: jobs,
+        models: [...models],
+        agents: [...agents],
+        agent_count: Number(w.agent_count) || agents.length || 0,
+        _latSum: lat,
+        _latN: lat > 0 ? 1 : 0,
+        _nameToks: toks,
+      });
+      continue;
+    }
+    prev.period_tokens += toks;
+    prev.period_agent_jobs += jobs;
+    if (lat > 0) {
+      prev._latSum += lat;
+      prev._latN += 1;
+    }
+    prev.agent_count = (Number(prev.agent_count) || 0)
+      + (Number(w.agent_count) || agents.length || 0);
+    const modelKeys = new Set(prev.models.map(offerItemKey).filter(Boolean));
+    for (const m of models) {
+      const id = offerItemKey(m);
+      if (id && !modelKeys.has(id)) {
+        modelKeys.add(id);
+        prev.models.push(m);
+      }
+    }
+    const agentKeys = new Set(prev.agents.map(offerItemKey).filter(Boolean));
+    for (const a of agents) {
+      const id = offerItemKey(a);
+      if (id && !agentKeys.has(id)) {
+        agentKeys.add(id);
+        prev.agents.push(a);
+      }
+    }
+    // 展示名：避开 *.local 主机名；否则取用量更高的
+    const candHost = /\.local$/i.test(String(w.name || ''));
+    const prevHost = /\.local$/i.test(String(prev.name || ''));
+    if (prevHost && !candHost) {
+      prev.name = w.name;
+      prev._nameToks = toks;
+    } else if (!candHost && toks > (Number(prev._nameToks) || 0)) {
+      prev.name = w.name;
+      prev._nameToks = toks;
+    } else if (candHost && prevHost && toks > (Number(prev._nameToks) || 0)) {
+      prev.name = w.name;
+      prev._nameToks = toks;
+    }
+  }
+  return [...map.values()].map((r) => ({
+    ...r,
+    avg_latency_ms: r._latN ? Math.round(r._latSum / r._latN) : (Number(r.avg_latency_ms) || 0),
+  }));
 }
 
 /** 节点上架：完整列表（悬浮用）与短摘要（列表展示） */
@@ -137,13 +216,15 @@ export default function Network() {
   const [loading,        setLoading]        = useState(true);
   const [circleModelMap, setCircleModelMap] = useState({});
   const [communityIds,   setCommunityIds]   = useState([]);
+  const [circles,        setCircles]        = useState([]);
+  const [circleBusyId,   setCircleBusyId]   = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [netRes, statsRes, communityRes] = await Promise.allSettled([
-          getNetwork(), getStats(), fetchServerCommunityModels(),
+        const [netRes, statsRes, communityRes, circlesRes] = await Promise.allSettled([
+          getNetwork(), getStats(), fetchServerCommunityModels(), browseCircles(),
         ]);
         if (cancelled) return;
         if (netRes.status === 'fulfilled') {
@@ -155,6 +236,10 @@ export default function Network() {
           const v = communityRes.value;
           setCommunityIds(Array.isArray(v?.ids) ? v.ids : []);
           setCircleModelMap(v?.circleMap && typeof v.circleMap === 'object' ? v.circleMap : {});
+        }
+        if (circlesRes.status === 'fulfilled') {
+          const list = circlesRes.value?.data?.circles;
+          setCircles(Array.isArray(list) ? list : []);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -174,16 +259,15 @@ export default function Network() {
     }
   }, [communityIds, network]);
 
-  // 排行：Token 优先，智能体接单量次之（兼容仅上架智能体的节点）
+  // 排行：先按用户聚合，再按 Token / 接单量排序（避免同用户多节点占满榜单）
   const topWorkers = useMemo(() => {
-    const workers = Array.isArray(network?.workers) ? network.workers : [];
-    return [...workers]
+    return aggregateWorkersBySharer(network?.workers)
       .sort((a, b) => {
         const tok = (b.period_tokens || 0) - (a.period_tokens || 0);
         if (tok !== 0) return tok;
         return (b.period_agent_jobs || 0) - (a.period_agent_jobs || 0);
       })
-      .slice(0, 5);
+      .slice(0, 20);
   }, [network]);
 
   const totalNodes  = network?.summary?.online_workers ?? 0;
@@ -197,6 +281,46 @@ export default function Network() {
   const totalTokens = network?.summary?.contrib_tokens
     ?? network?.workers?.reduce((s, w) => s + (w.period_tokens || 0), 0)
     ?? 0;
+
+  /** 已入圈 → 主页；否则确认后申请加入 */
+  async function onCircleClick(c) {
+    if (!c?.id) return;
+    if (c.join_status === 'member') {
+      navigate(`/circles/${c.id}`);
+      return;
+    }
+    if (c.join_status === 'pending') {
+      window.alert(t('network.circlePending'));
+      return;
+    }
+    if (c.full) {
+      window.alert(t('circles.browse.full'));
+      return;
+    }
+    const name = c.name || '';
+    if (!window.confirm(t('network.circleApplyConfirm').replace('{name}', name))) return;
+    setCircleBusyId(c.id);
+    try {
+      const r = await applyJoinCircle(c.id);
+      const d = r?.data || {};
+      if (d.already_member) {
+        setCircles((prev) => prev.map((x) => (x.id === c.id ? { ...x, join_status: 'member' } : x)));
+        navigate(`/circles/${c.id}`);
+        return;
+      }
+      if (d.full) {
+        window.alert(t('circles.browse.full'));
+        setCircles((prev) => prev.map((x) => (x.id === c.id ? { ...x, full: true } : x)));
+        return;
+      }
+      window.alert(t('network.circleApplySent').replace('{name}', name));
+      setCircles((prev) => prev.map((x) => (x.id === c.id ? { ...x, join_status: 'pending' } : x)));
+    } catch (err) {
+      window.alert(err?.response?.data?.detail || t('circles.browse.applyFailed'));
+    } finally {
+      setCircleBusyId(null);
+    }
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -227,7 +351,7 @@ export default function Network() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div className="tb-soft-card rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.globalNodes')}</div>
           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">{loading ? '—' : totalNodes}</div>
@@ -242,6 +366,13 @@ export default function Network() {
           <div className="text-xs text-zinc-400">{t('network.availableAgents')}</div>
           <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{loading ? '—' : totalAgents}</div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.availableAgentsHint')}</div>
+        </div>
+        <div className="tb-soft-card rounded-xl p-3">
+          <div className="text-xs text-zinc-400">{t('network.circlesStat')}</div>
+          <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 mt-1">
+            {loading ? '—' : (network?.summary?.circle_count ?? circles.length)}
+          </div>
+          <div className="text-xs text-zinc-400 mt-0.5">{t('network.circlesStatHint')}</div>
         </div>
         <div className="tb-soft-card rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.contribTokens')}</div>
@@ -403,6 +534,74 @@ export default function Network() {
               })}
             </div>
           </div>
+
+          {/* 公开圈子列表 */}
+          <div className="space-y-2">
+            <div className="px-1 flex items-center justify-between">
+              <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.circlesTitle')}</h2>
+              <button
+                type="button"
+                onClick={() => navigate('/circles/browse')}
+                className="tb-table-cell-meta text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                {t('network.circlesMore')}
+              </button>
+            </div>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {circles.length === 0 ? (
+                <div className="px-5 py-6 text-xs text-zinc-400">{t('network.noCircles')}</div>
+              ) : circles.slice(0, 20).map((c) => {
+                const isMember = c.join_status === 'member';
+                const isPending = c.join_status === 'pending';
+                const desc = String(c.description || '').trim();
+                const busy = circleBusyId === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onCircleClick(c)}
+                    className="tb-soft-tile w-full text-left flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors disabled:opacity-60"
+                  >
+                    <span className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 text-xs font-semibold flex items-center justify-center shrink-0">
+                      {(c.name || '?')[0]}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <TruncTip
+                        as="span"
+                        title={c.name}
+                        className="text-xs font-medium text-zinc-800 dark:text-zinc-200 block"
+                      >
+                        {c.name}
+                      </TruncTip>
+                      <TruncTip
+                        className="text-xs text-zinc-400 mt-0.5"
+                        title={desc || t('network.circleNoDesc')}
+                      >
+                        {desc || t('network.circleNoDesc')}
+                      </TruncTip>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        {t('circles.members', { n: c.member_count ?? 0 })}
+                      </div>
+                      <div className="text-[10px] text-zinc-400 mt-0.5">
+                        {busy
+                          ? t('circles.browse.applying')
+                          : isMember
+                            ? t('network.circleJoined')
+                            : isPending
+                              ? t('circles.browse.pending')
+                              : c.full
+                                ? t('circles.browse.full')
+                                : t('network.circleOpen')}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           </div>
 
           {/* Right column */}
@@ -414,7 +613,7 @@ export default function Network() {
                 <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">{t('network.leaderboard')}</h2>
                 <span className="tb-table-cell-meta">{t('network.leaderboardHint')}</span>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-[28rem] overflow-y-auto">
                 {topWorkers.length === 0 ? (
                   <div className="px-5 py-6 text-xs text-zinc-400">{t('network.noContribData')}</div>
                 ) : topWorkers.map((w, i) => {
@@ -424,7 +623,7 @@ export default function Network() {
                   const jobs = Number(w.period_agent_jobs) || 0;
                   const toks = Number(w.period_tokens) || 0;
                   return (
-                    <div key={w.worker_id || w.name} className="tb-soft-tile flex items-center gap-3 px-4 py-3 rounded-xl">
+                    <div key={w.sharer || w.worker_id || w.name} className="tb-soft-tile flex items-center gap-3 px-4 py-3 rounded-xl">
                       <span className={`text-xs font-bold w-5 shrink-0 ${rankColor}`}>#{rank}</span>
                       <div className="flex-1 min-w-0">
                         <TruncTip className="text-xs font-medium text-zinc-700 dark:text-zinc-300" title={w.name}>

@@ -10,6 +10,7 @@ import ResourceAssetCard, {
 import PortraitShareModal, { PortraitVisualBoard } from './PortraitShareCard';
 import { tagToPurpose } from '../lib/resource-purpose';
 import { completeEnablePackage, copyText } from '../lib/resource-enable';
+import { updateProfilePersona } from '../api/client';
 
 const FINDER_NAME = 'resource-finder';
 const MAX_RECS = 30;
@@ -191,17 +192,25 @@ function loadPortrait() {
   } catch { /* */ }
   return null;
 }
+function syncPersonaToServer(persona) {
+  // 有登录态时把一句话画像同步到云端，供贡献者主页展示
+  updateProfilePersona(persona || '').catch(() => {});
+}
 function savePortrait(patch) {
   try {
     const prev = loadPortrait() || {};
     const needsByType = { ...(prev.needsByType || {}), ...((patch && patch.needsByType) || {}) };
     const next = { ...prev, ...patch, needsByType, updatedAt: Date.now() };
     localStorage.setItem(PORTRAIT_KEY, JSON.stringify(next));
+    if (Object.prototype.hasOwnProperty.call(patch || {}, 'persona') || next.persona) {
+      syncPersonaToServer(next.persona || '');
+    }
     return next;
   } catch { return patch; }
 }
 function clearPortrait() {
   try { localStorage.removeItem(PORTRAIT_KEY); } catch { /* */ }
+  syncPersonaToServer('');
 }
 /** 某类型尚无 needs 时,用能力域顶上去,避免换资产还要重跑画像 */
 function seedNeedsFromGoals(goals) {
@@ -664,6 +673,10 @@ export default function PersonalizedRecommend({
   onRefresh,
   onAdopted,
   onItemsChange,
+  /** portrait=画像挖掘展示；recommend=基于画像推荐（默认 recommend 保持资源页原行为） */
+  panel = 'recommend',
+  /** 无画像时引导去画像页 */
+  onGoPortrait,
 }) {
   const { t } = useLang();
   const rtype = normType(typeFilter);
@@ -709,6 +722,13 @@ export default function PersonalizedRecommend({
     if (!purposeFilter) return items;
     return items.filter((rec) => recMatchesPurpose(rec, purposeFilter));
   }, [items, purposeFilter]);
+
+  // 打开画像/推荐时：若本地已有一句话画像，补同步到云端（贡献者主页）
+  useEffect(() => {
+    const p = loadPortrait();
+    const text = String(p?.persona || '').trim();
+    if (text) syncPersonaToServer(text);
+  }, []);
 
   // 推荐列表变化 → 父级刷新用途芯片
   useEffect(() => {
@@ -1247,6 +1267,20 @@ export default function PersonalizedRecommend({
         : (hasSharedPortrait || (items && items.length) ? t('resources.reco.remine') : t('resources.reco.mine', { type: typeLabel }));
   const runtimeAgent = ((ready.finder && ready.finder.projections) || [])
     .map((p) => p.agentId).find((id) => id === 'codex' || id === 'claude-code') || '';
+  const isPortraitPanel = panel === 'portrait';
+  const isRecommendPanel = panel !== 'portrait';
+
+  /** 画像页审阅完成：只落盘画像，不进入资源发现 */
+  const finishPortrait = () => {
+    savePortrait({
+      persona, traits, goals, extensions,
+      needsByType: { [rtype]: needs },
+      digest, installed,
+    });
+    setPhase('idle');
+    setRun(rtype, { phase: 'idle', taskId: null, job: null });
+    setMsg(t('resources.reco.portraitSaved'));
+  };
 
   return (
     <div className="space-y-3">
@@ -1282,13 +1316,21 @@ export default function PersonalizedRecommend({
                 <p className="text-xs text-zinc-600 dark:text-zinc-300 line-clamp-2">{sharedPortrait.persona}</p>
               )}
               <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={reusePortrait} disabled={busy}
-                  className="px-3 py-1.5 rounded-md bg-violet-600 text-white text-xs hover:bg-violet-700 disabled:opacity-50">
-                  {t('resources.reco.reusePortrait', { type: typeLabel })}
-                </button>
-                <button type="button" onClick={mine} disabled={busy}
-                  className="px-3 py-1.5 rounded-md border border-zinc-300 dark:border-zinc-600 text-xs text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50">
-                  {t('resources.reco.remine')}
+                {isRecommendPanel && (
+                  <button type="button" onClick={reusePortrait} disabled={busy}
+                    className="px-3 py-1.5 rounded-md bg-violet-600 text-white text-xs hover:bg-violet-700 disabled:opacity-50">
+                    {t('resources.reco.reusePortrait', { type: typeLabel })}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={isPortraitPanel ? mine : (onGoPortrait || mine)}
+                  disabled={busy}
+                  className="px-3 py-1.5 rounded-md border border-zinc-300 dark:border-zinc-600 text-xs text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  {isPortraitPanel
+                    ? t('resources.reco.remine')
+                    : (onGoPortrait ? t('resources.reco.goPortraitRemine') : t('resources.reco.remine'))}
                 </button>
                 {canShare && (
                   <button type="button" onClick={() => setShareOpen(true)} disabled={busy}
@@ -1304,8 +1346,15 @@ export default function PersonalizedRecommend({
           )}
           {(!hasSharedPortrait || phase === 'mining') && (
             <div className="flex items-center gap-3">
-              <button type="button" onClick={mine} disabled={busy}
-                className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm hover:bg-violet-700 disabled:opacity-50">{mineLabel}</button>
+              {isPortraitPanel || !onGoPortrait ? (
+                <button type="button" onClick={mine} disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm hover:bg-violet-700 disabled:opacity-50">{mineLabel}</button>
+              ) : (
+                <button type="button" onClick={onGoPortrait}
+                  className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm hover:bg-violet-700">
+                  {t('resources.reco.goPortraitMine')}
+                </button>
+              )}
               {digest && <span className="text-xs text-zinc-400">{t('resources.reco.sessions', { n: digest.sessions })}</span>}
             </div>
           )}
@@ -1315,8 +1364,8 @@ export default function PersonalizedRecommend({
       {msg && <p className="text-xs text-emerald-600">{msg}</p>}
       {err && <p className="text-xs text-red-500">{err}</p>}
 
-      {/* 分析中 / 发现中 */}
-      {(phase === 'analyzing' || phase === 'discovering') && (
+      {/* 分析中 / 发现中：画像页只跑分析；推荐页可跑发现 */}
+      {((phase === 'analyzing') || (isRecommendPanel && phase === 'discovering')) && (
         <div className="rounded-lg border border-violet-200 dark:border-violet-800/50 bg-violet-50/60 dark:bg-violet-900/15 p-4 space-y-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5" aria-hidden>
@@ -1400,19 +1449,46 @@ export default function PersonalizedRecommend({
             ) : (
               <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('resources.reco.noNeeds', { type: typeLabel })}</p>
             )}
-            <textarea value={supplement} onChange={(e) => { setSupplement(e.target.value); setRun(rtype, { supplement: e.target.value }); }} rows={2}
-              placeholder={t('resources.reco.supplement', { type: typeLabel, opt: needs.length ? t('resources.reco.optional') : t('resources.reco.required') })}
-              className="w-full text-xs rounded-md border border-zinc-200 dark:border-zinc-700 bg-transparent px-2 py-1.5 resize-none" />
+            {isRecommendPanel && (
+              <textarea value={supplement} onChange={(e) => { setSupplement(e.target.value); setRun(rtype, { supplement: e.target.value }); }} rows={2}
+                placeholder={t('resources.reco.supplement', { type: typeLabel, opt: needs.length ? t('resources.reco.optional') : t('resources.reco.required') })}
+                className="w-full text-xs rounded-md border border-zinc-200 dark:border-zinc-700 bg-transparent px-2 py-1.5 resize-none" />
+            )}
             <div className="flex items-center gap-2">
-              <button type="button" onClick={discover} disabled={needs.length === 0 && !supplement.trim()}
-                className="px-4 py-1.5 rounded-lg bg-violet-600 text-white text-xs hover:bg-violet-700 disabled:opacity-50">{t('resources.reco.startDiscover')}</button>
+              {isPortraitPanel ? (
+                <button type="button" onClick={finishPortrait}
+                  className="px-4 py-1.5 rounded-lg bg-violet-600 text-white text-xs hover:bg-violet-700">
+                  {t('resources.reco.portraitSavedBtn')}
+                </button>
+              ) : (
+                <button type="button" onClick={discover} disabled={needs.length === 0 && !supplement.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-violet-600 text-white text-xs hover:bg-violet-700 disabled:opacity-50">{t('resources.reco.startDiscover')}</button>
+              )}
               <button type="button" onClick={() => { setPhase('idle'); clearRun(rtype); }} className="text-xs text-zinc-400 hover:text-zinc-600">{t('resources.reco.cancel')}</button>
             </div>
           </div>
         </div>
       )}
 
-      {phase === 'done' && digest && digest.sessions === 0 && (
+      {/* 画像页：闲时展示已有画像看板 */}
+      {isPortraitPanel && hasSharedPortrait && phase === 'idle' && !busy && (
+        <div className="tb-soft-card rounded-lg p-3">
+          <PortraitVisualBoard
+            persona={sharedPortrait.persona}
+            traits={sharedPortrait.traits || []}
+            goals={sharedPortrait.goals || []}
+            extensions={sharedPortrait.extensions || []}
+            needs={(sharedPortrait.needsByType && sharedPortrait.needsByType[rtype]) || sharedPortrait.needs || []}
+            digest={sharedPortrait.digest}
+            t={t}
+            typeLabel={typeLabel}
+            canShare={canShare}
+            onShare={() => setShareOpen(true)}
+          />
+        </div>
+      )}
+
+      {isRecommendPanel && phase === 'done' && digest && digest.sessions === 0 && (
         <p className="text-xs text-zinc-400 py-4 text-center">{t('resources.reco.noSessions')}</p>
       )}
 
@@ -1424,8 +1500,8 @@ export default function PersonalizedRecommend({
         t={t}
       />
 
-      {/* 推荐结果 */}
-      {items && items.length > 0 && phase !== 'analyzing' && phase !== 'discovering' && (
+      {/* 推荐结果：仅推荐板块 */}
+      {isRecommendPanel && items && items.length > 0 && phase !== 'analyzing' && phase !== 'discovering' && (
         <>
           <div className="flex items-center justify-between text-[11px] text-zinc-400">
             <span>{t('resources.reco.forYou', {

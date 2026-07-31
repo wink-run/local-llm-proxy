@@ -17,14 +17,15 @@ REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "120"))
 IMG_CACHE_DIR = Path(__file__).resolve().parent / "static" / "img_cache"
 
 
-async def handle_image(body: dict, consumer_user_id: int | None = None):
+async def handle_image(body: dict, consumer_user_id: int | None = None,
+                       sharer: str | None = None):
     model = body.get("model", "")
     n = int(body.get("n") or 1)
     response_format = body.get("response_format", "b64_json")
 
     logger.info(
-        "[p2p] image start user=%s model=%s n=%s format=%s",
-        consumer_user_id, model, n, response_format,
+        "[p2p] image start user=%s model=%s n=%s format=%s sharer=%s",
+        consumer_user_id, model, n, response_format, sharer,
     )
 
     if consumer_user_id is not None:
@@ -40,15 +41,21 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
         if not user or float(user["credits_balance"] or 0) <= 0:
             raise DispatchError(402, "Insufficient credits", "insufficient_credits")
 
-    # 图像请求只路由到声明了 image 类型的 worker；虚拟 worker 是 chat 端点转发器、
-    # 未实现图像生成，若被选中会把图像请求误发到 /chat/completions 并泄漏 active_requests，
-    # 故在自增计数前直接排除（真实图像 worker 注册时已声明 type="image"，不受影响）。
-    from virtual_worker import VirtualWorkerConnection
-    cands = pool.candidates(model, model_type="image",
-                            owner_user_id=consumer_user_id,
-                            user_circle_ids=set())
+    # 圈子可见性（个人虚拟源 / 圈内真实节点）
+    user_circles: set = set()
+    if consumer_user_id is not None:
+        user_circles = set(await db.get_user_circle_ids(consumer_user_id))
+
+    # 图像请求：按有效类型（含名称纠偏）选 image worker；虚拟源走 OpenAI 兼容生图转发
+    cands = pool.candidates(
+        model,
+        model_type="image",
+        owner_user_id=consumer_user_id,
+        user_circle_ids=user_circles,
+        sharer=sharer,
+    )
     worker = cands[0] if cands else None
-    if not worker or isinstance(worker, VirtualWorkerConnection):
+    if not worker:
         logger.warning(
             "[p2p] image no worker model=%s user=%s candidates=%d",
             model, consumer_user_id, len(cands),

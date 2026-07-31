@@ -277,6 +277,7 @@ async def init_db() -> None:
     await _migrate_user_billing()
     await _migrate_circles()
     await _migrate_user_avatars()
+    await _migrate_user_persona()
 
 
 
@@ -662,7 +663,7 @@ async def ensure_default_open_models(
     names: list[str], model_types: dict[str, str] | None = None
 ) -> list[str]:
     """Insert missing model names with open defaults; update model_type if it changed.
-    model_types maps name → type ('chat' | 'image')."""
+    model_types maps name → type ('chat' | 'vision' | 'image' | 'embedding')."""
     if not names:
         return []
     model_types = model_types or {}
@@ -1906,6 +1907,28 @@ async def _migrate_user_avatars() -> None:
         await db.commit()
 
 
+async def _migrate_user_persona() -> None:
+    """users.persona：一句话画像，公开贡献者主页展示。"""
+    async with connect() as db:
+        async with db.execute("PRAGMA table_info(users)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "persona" not in cols:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN persona TEXT NOT NULL DEFAULT ''"
+            )
+        await db.commit()
+
+
+async def set_user_persona(user_id: int, persona: str) -> None:
+    """更新一句话画像；空串表示清除。最长 300 字。"""
+    text = (persona or "").strip()
+    if len(text) > 300:
+        text = text[:300]
+    async with connect() as db:
+        await db.execute("UPDATE users SET persona=? WHERE id=?", (text, user_id))
+        await db.commit()
+
+
 async def get_user_billing(user_id: int) -> dict:
     import json as _json
     async with connect() as db:
@@ -2426,7 +2449,7 @@ async def list_browsable_circles(user_id: int, query: str = "") -> list:
     """公开圈子列表，附带当前用户的入圈状态。"""
     async with connect() as db:
         sql = """
-            SELECT c.id, c.name, c.description, c.max_members, c.created_at, c.owner_id,
+            SELECT c.id, c.name, c.description, c.max_members, c.code, c.created_at, c.owner_id,
                    (SELECT COUNT(*) FROM circle_members m WHERE m.circle_id=c.id) AS member_count,
                    CASE
                      WHEN EXISTS(SELECT 1 FROM circle_members m WHERE m.circle_id=c.id AND m.user_id=?)
@@ -2450,6 +2473,37 @@ async def list_browsable_circles(user_id: int, query: str = "") -> list:
             rows = [dict(r) async for r in cur]
             for r in rows:
                 r["member_count"] = int(r.get("member_count") or 0)
+                r["full"] = r["member_count"] >= int(r.get("max_members") or 0)
+            return rows
+
+
+async def count_public_circles() -> int:
+    """公开圈子总数。"""
+    async with connect() as db:
+        async with db.execute("SELECT COUNT(*) FROM circles WHERE is_public=1") as cur:
+            row = await cur.fetchone()
+            return int(row[0] if row else 0)
+
+
+async def list_public_circles(limit: int = 50) -> list:
+    """公开圈子列表（无需登录）；含成员数与邀请码，不含个人入圈状态。"""
+    lim = max(1, min(int(limit or 50), 100))
+    async with connect() as db:
+        async with db.execute(
+            """
+            SELECT c.id, c.name, c.description, c.max_members, c.code, c.created_at,
+                   (SELECT COUNT(*) FROM circle_members m WHERE m.circle_id=c.id) AS member_count
+            FROM circles c
+            WHERE c.is_public=1
+            ORDER BY member_count DESC, c.created_at DESC
+            LIMIT ?
+            """,
+            (lim,),
+        ) as cur:
+            rows = [dict(r) async for r in cur]
+            for r in rows:
+                r["member_count"] = int(r.get("member_count") or 0)
+                r["full"] = r["member_count"] >= int(r.get("max_members") or 0)
             return rows
 
 

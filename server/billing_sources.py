@@ -24,7 +24,7 @@ CATEGORIES = ("payg", "app_sub", "api_sub")
 TIERS = ("free", "paid", "p2p")
 AUTH_METHODS = ("api_key", "oauth")
 API_FORMATS = ("openai", "anthropic", "gemini")
-MODALITIES = ("chat", "image", "embedding")
+MODALITIES = ("chat", "vision", "image", "embedding")
 HANDLERS = ("local", "openai", "anthropic", "gemini", "p2p", "agnes-image", "jimeng-api")
 
 
@@ -349,11 +349,13 @@ def compile_billing_sections(sources: list[dict]) -> dict:
 def _registry_modalities(models: list[dict]) -> dict[str, bool]:
     modalities: dict[str, bool] = {"language": True}
     for m in models or []:
-        mod = m.get("modality") or "chat"
+        mod = m.get("modality") or m.get("type") or "chat"
         if mod == "image":
             modalities["image"] = True
         elif mod == "embedding":
             modalities["embedding"] = True
+        elif mod == "vision":
+            modalities["vision"] = True
     return modalities
 
 

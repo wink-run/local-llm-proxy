@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>贡献者主页 · Token Bank</title>
+<meta name="description" content="查看贡献者分享的模型与智能体">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="/static/vue.global.prod.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#fff;--bg-muted:#f5f2f0;--bg-subtle:#faf9f5;
+  --text:#000;--text-muted:#7b7b7b;--text-faint:#bcbcbc;
+  --border:#e7e4e1;--accent:#f1ccff;--link:#2563eb;
+  --radius:10px;--radius-lg:18px;
+  --font:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'Space Mono',ui-monospace,monospace;
+}
+body{font-family:var(--font);background:var(--bg-subtle);color:var(--text);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.shell{max-width:720px;margin:0 auto;padding:24px 16px 48px;min-height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600}
+.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center}
+.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
+.lang-btn,.ghost-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;color:var(--text-muted)}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 24px;box-shadow:0 8px 24px rgba(0,0,0,.03);margin-bottom:16px}
+.h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
+.meta{color:var(--text-muted);font-size:13px;line-height:1.5;margin-bottom:16px}
+.persona{color:var(--text);font-size:14px;line-height:1.65;margin:0 0 16px;padding:12px 14px;background:var(--bg-muted);border-radius:12px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:8px}
+.stat{background:var(--bg-muted);border-radius:12px;padding:12px}
+.stat .k{font-size:11px;color:var(--text-muted)}
+.stat .v{font-size:18px;font-weight:700;margin-top:4px}
+.sec-h{font-size:13px;font-weight:600;margin:18px 0 10px}
+.list{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;align-items:center;gap:10px;padding:12px;border-radius:12px;background:var(--bg-muted);border:1px solid transparent}
+.row:hover{border-color:var(--border);background:#fff}
+.name{font-size:13px;font-weight:500;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.desc{font-size:11px;color:var(--text-muted);margin-top:2px}
+.side{margin-left:auto;font-size:11px;color:var(--link);flex-shrink:0}
+.state{text-align:center;padding:48px 16px;color:var(--text-muted)}
+.footer{margin-top:auto;padding-top:28px;color:var(--text-faint);font-size:12px;text-align:center}
+.mono{font-family:var(--mono);font-size:11px;color:var(--text-muted)}
+</style>
+</head>
+<body>
+<div id="app" class="shell">
+  <header>
+    <a class="brand" href="/network">
+      <span class="brand-mark"></span>
+      <span>Token Bank</span>
+    </a>
+    <div style="display:flex;gap:8px">
+      <button class="lang-btn" type="button" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中文' }}</button>
+      <a class="ghost-btn" href="/network">{{ T.backNet }}</a>
+    </div>
+  </header>
+
+  <div v-if="loading" class="state">{{ T.loading }}</div>
+  <div v-else-if="fatal" class="card">
+    <div class="h1">{{ T.offline }}</div>
+    <p class="meta">{{ fatal }}</p>
+    <a class="ghost-btn" href="/network" style="display:inline-block">{{ T.backNet }}</a>
+  </div>
+  <template v-else-if="profile">
+    <div class="card">
+      <div class="h1">{{ profile.name }}</div>
+      <p class="meta">{{ T.subtitle }}</p>
+      <p class="mono" style="margin-bottom:14px">{{ profile.sharer }}</p>
+      <p v-if="profile.persona" class="persona">{{ profile.persona }}</p>
+      <div class="stats">
+        <div class="stat"><div class="k">{{ T.nodes }}</div><div class="v">{{ profile.online_nodes }}</div></div>
+        <div class="stat"><div class="k">{{ T.tokens }}</div><div class="v">{{ fmtTok(profile.period_tokens) }}</div></div>
+        <div class="stat"><div class="k">{{ T.latency }}</div><div class="v">{{ profile.avg_latency_ms || 0 }}<span style="font-size:12px;font-weight:500;color:var(--text-muted)"> ms</span></div></div>
+      </div>
+
+      <div class="sec-h">{{ T.modelsTitle }}</div>
+      <div class="list" v-if="(profile.models || []).length">
+        <a v-for="m in profile.models" :key="m" class="row"
+           :href="'/m/' + encodeURIComponent(m) + '?sharer=' + encodeURIComponent(profile.sharer)">
+          <div style="min-width:0;flex:1"><div class="name">{{ m }}</div></div>
+          <span class="side">{{ T.tryModel }}</span>
+        </a>
+      </div>
+      <p v-else class="meta">{{ T.emptyModels }}</p>
+
+      <div class="sec-h">{{ T.agentsTitle }}</div>
+      <div class="list" v-if="(profile.agents || []).length">
+        <a v-for="a in profile.agents" :key="a.id" class="row" :href="'/a/' + encodeURIComponent(a.id)">
+          <div style="min-width:0;flex:1">
+            <div class="name" style="font-family:inherit">{{ a.display_name || a.name || a.id }}</div>
+            <div class="desc">{{ a.description || T.noDesc }}</div>
+          </div>
+          <span class="side">{{ T.tryAgent }}</span>
+        </a>
+      </div>
+      <p v-else class="meta">{{ T.emptyAgents }}</p>
+    </div>
+  </template>
+
+  <div class="footer">Token Bank · {{ T.footer }}</div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue
+
+createApp({
+  setup() {
+    const lang = ref(localStorage.getItem('tb_lang') || ((navigator.language || '').startsWith('zh') ? 'zh' : 'en'))
+    const i18n = {
+      zh: {
+        loading: '加载中…', offline: '贡献者当前离线', backNet: '全球网络',
+        subtitle: '贡献者主页 · 查看并试用其分享的模型与智能体',
+        nodes: '在线节点', tokens: '本周期 Token', latency: '平均延迟',
+        modelsTitle: '分享的模型', agentsTitle: '分享的智能体',
+        tryModel: '试用 →', tryAgent: '试用 →', noDesc: '暂无简介',
+        emptyModels: '暂无在线模型', emptyAgents: '暂无公开智能体',
+        footer: '公开贡献快照',
+        notFound: '未找到该贡献者，或节点已离线。',
+      },
+      en: {
+        loading: 'Loading…', offline: 'Contributor offline', backNet: 'Network',
+        subtitle: 'Contributor profile · try their shared models and agents',
+        nodes: 'Online nodes', tokens: 'Period tokens', latency: 'Avg latency',
+        modelsTitle: 'Shared models', agentsTitle: 'Shared agents',
+        tryModel: 'Try →', tryAgent: 'Try →', noDesc: 'No description',
+        emptyModels: 'No online models', emptyAgents: 'No public agents',
+        footer: 'Public offer snapshot',
+        notFound: 'Contributor not found or offline.',
+      },
+    }
+    const T = computed(() => i18n[lang.value] || i18n.zh)
+    function toggleLang() {
+      lang.value = lang.value === 'zh' ? 'en' : 'zh'
+      localStorage.setItem('tb_lang', lang.value)
+      document.documentElement.lang = lang.value === 'zh' ? 'zh-CN' : 'en'
+    }
+
+    const loading = ref(true)
+    const fatal = ref('')
+    const profile = ref(null)
+
+    function sharerFromPath() {
+      const m = location.pathname.match(/^\/u\/([^/?#]+)/)
+      return m ? decodeURIComponent(m[1]) : ''
+    }
+
+    function fmtTok(n) {
+      const v = Number(n) || 0
+      if (v >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
+      if (v >= 1e3) return (v / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'
+      return String(v)
+    }
+
+    async function load() {
+      loading.value = true
+      fatal.value = ''
+      const handle = sharerFromPath()
+      if (!handle) {
+        fatal.value = T.value.notFound
+        loading.value = false
+        return
+      }
+      try {
+        const r = await fetch('/public/sharers/' + encodeURIComponent(handle))
+        const data = await r.json().catch(() => null)
+        if (!r.ok || !data?.sharer) {
+          fatal.value = (typeof data?.detail === 'string' ? data.detail : '') || T.value.notFound
+          profile.value = null
+          return
+        }
+        profile.value = data.sharer
+        document.title = `${data.sharer.name} · Token Bank`
+      } catch {
+        fatal.value = T.value.notFound
+      } finally {
+        loading.value = false
+      }
+    }
+
+    onMounted(load)
+
+    return { lang, T, toggleLang, loading, fatal, profile, fmtTok }
+  }
+}).mount('#app')
+</script>
+</body>
+</html>

@@ -77,6 +77,21 @@ function Layout() {
     return window.electronAPI.app.onNavigate((path) => navigate(path));
   }, [navigate]);
 
+  // 公开页 /network?circle=ID → 登录后进入圈子主页（MemoryRouter 需手动跳转）
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const cid = (sp.get('circle') || '').trim();
+      if (!/^\d+$/.test(cid)) return;
+      navigate(`/circles/${cid}`);
+      sp.delete('circle');
+      const q = sp.toString();
+      const next = window.location.pathname + (q ? `?${q}` : '') + window.location.hash;
+      window.history.replaceState({}, '', next);
+    } catch { /* ignore */ }
+  }, [user, navigate]);
+
   if (loading) {
     return (
       <div className="tb-app-shell flex h-screen items-center justify-center text-zinc-500 dark:text-zinc-400">

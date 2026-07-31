@@ -116,6 +116,7 @@ async def profile(uid: int = Depends(get_current_user_id)):
         "show_on_wall": bool(user["show_on_wall"]),
         "wall_display": user["wall_display"],
         "avatar_url": user.get("avatar_url") or "",
+        "persona": (user.get("persona") or "").strip(),
         "created_at": user["created_at"],
     }
 
@@ -124,6 +125,7 @@ class UpdateProfileRequest(BaseModel):
     nickname: str | None = None
     show_on_wall: bool | None = None
     wall_display: str | None = None
+    persona: str | None = None  # 一句话画像；传空串可清除
 
 
 @router.patch("/profile")
@@ -137,6 +139,11 @@ async def update_profile(req: UpdateProfileRequest, uid: int = Depends(get_curre
         if req.wall_display not in ("nickname", "masked", "hidden"):
             raise HTTPException(400, "wall_display 必须是 nickname/masked/hidden")
         updates.append("wall_display=?"); params.append(req.wall_display)
+    if req.persona is not None:
+        text = (req.persona or "").strip()
+        if len(text) > 300:
+            raise HTTPException(400, "画像过长（最多 300 字）")
+        updates.append("persona=?"); params.append(text)
     if updates:
         params.append(uid)
         from pg_compat import connect

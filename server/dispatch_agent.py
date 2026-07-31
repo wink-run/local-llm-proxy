@@ -25,26 +25,32 @@ async def handle_agent_task(
     *,
     assistant_id: str,
     prompt: str,
-    consumer_user_id: int,
+    consumer_user_id: Optional[int],
     worker_id: Optional[str] = None,
     timeout_ms: Optional[int] = None,
 ) -> dict:
-    """选 worker → 预扣积分 → 下发 → 等待结果；失败退款。"""
+    """选 worker → 预扣积分 → 下发 → 等待结果；失败退款。
+    consumer_user_id 为 None 时为访客试用：不扣积分，仅公开智能体。
+    """
     aid = (assistant_id or "").strip()
     text = (prompt or "").strip()
     if not aid or not text:
         return {"ok": False, "error": "assistant_id and prompt required", "status": "rejected"}
 
-    user = await db.get_user_by_id(consumer_user_id)
-    if not user or float(user["credits_balance"] or 0) < AGENT_TASK_CREDITS:
-        return {
-            "ok": False,
-            "error": "Insufficient credits",
-            "status": "rejected",
-            "credits_required": AGENT_TASK_CREDITS,
-        }
+    guest = consumer_user_id is None
+    if not guest:
+        user = await db.get_user_by_id(consumer_user_id)
+        if not user or float(user["credits_balance"] or 0) < AGENT_TASK_CREDITS:
+            return {
+                "ok": False,
+                "error": "Insufficient credits",
+                "status": "rejected",
+                "credits_required": AGENT_TASK_CREDITS,
+            }
+        circles = set(await db.get_user_circle_ids(consumer_user_id))
+    else:
+        circles = set()
 
-    circles = set(await db.get_user_circle_ids(consumer_user_id))
     workers = pool.pick_agent_workers(aid, user_circle_ids=circles, worker_id=worker_id)
     if not workers:
         return {
@@ -64,24 +70,25 @@ async def handle_agent_task(
     }
     worker.active_requests += 1
 
-    # 预扣调用方积分；失败再退
-    ok_deduct, bal = await db.deduct_credits(
-        consumer_user_id,
-        AGENT_TASK_CREDITS,
-        model_name=f"agent:{aid}",
-        tokens=0,
-        tier="p2p",
-    )
-    if not ok_deduct:
-        worker.pending_agents.pop(task_id, None)
-        worker.active_requests = max(0, worker.active_requests - 1)
-        return {
-            "ok": False,
-            "error": "Insufficient credits",
-            "status": "rejected",
-            "balance": bal,
-            "credits_required": AGENT_TASK_CREDITS,
-        }
+    # 预扣调用方积分；失败再退（访客跳过）
+    if not guest:
+        ok_deduct, bal = await db.deduct_credits(
+            consumer_user_id,
+            AGENT_TASK_CREDITS,
+            model_name=f"agent:{aid}",
+            tokens=0,
+            tier="p2p",
+        )
+        if not ok_deduct:
+            worker.pending_agents.pop(task_id, None)
+            worker.active_requests = max(0, worker.active_requests - 1)
+            return {
+                "ok": False,
+                "error": "Insufficient credits",
+                "status": "rejected",
+                "balance": bal,
+                "credits_required": AGENT_TASK_CREDITS,
+            }
 
     timeout_sec = max(30, (timeout_ms or AGENT_TASK_TIMEOUT_SEC * 1000) / 1000)
     try:
@@ -93,44 +100,46 @@ async def handle_agent_task(
             "timeout_ms": int(timeout_sec * 1000),
         })
         logger.info(
-            "[agent_task] dispatch task_id=%s assistant=%s worker=%s user=%s",
-            task_id, aid, worker.worker_id, consumer_user_id,
+            "[agent_task] dispatch task_id=%s assistant=%s worker=%s user=%s guest=%s",
+            task_id, aid, worker.worker_id, consumer_user_id, guest,
         )
         result = await asyncio.wait_for(q.get(), timeout=timeout_sec)
     except asyncio.TimeoutError:
         worker.pending_agents.pop(task_id, None)
         worker.active_requests = max(0, worker.active_requests - 1)
-        await db.award_credits(
-            user_id=consumer_user_id,
-            delta=AGENT_TASK_CREDITS,
-            type_="refund",
-            model_name=f"agent:{aid}",
-            tokens=0,
-            base_credits=AGENT_TASK_CREDITS,
-            multiplier=1.0,
-            note=f"agent_task timeout refund task_id={task_id}",
-        )
+        if not guest:
+            await db.award_credits(
+                user_id=consumer_user_id,
+                delta=AGENT_TASK_CREDITS,
+                type_="refund",
+                model_name=f"agent:{aid}",
+                tokens=0,
+                base_credits=AGENT_TASK_CREDITS,
+                multiplier=1.0,
+                note=f"agent_task timeout refund task_id={task_id}",
+            )
         worker.record_agent_complete(aid, False)
         return {
             "ok": False,
             "task_id": task_id,
             "status": "timeout",
             "error": f"Agent task timeout ({int(timeout_sec)}s)",
-            "credits_refunded": AGENT_TASK_CREDITS,
+            "credits_refunded": 0 if guest else AGENT_TASK_CREDITS,
         }
     except Exception as e:
         worker.pending_agents.pop(task_id, None)
         worker.active_requests = max(0, worker.active_requests - 1)
-        await db.award_credits(
-            user_id=consumer_user_id,
-            delta=AGENT_TASK_CREDITS,
-            type_="refund",
-            model_name=f"agent:{aid}",
-            tokens=0,
-            base_credits=AGENT_TASK_CREDITS,
-            multiplier=1.0,
-            note=f"agent_task error refund task_id={task_id}",
-        )
+        if not guest:
+            await db.award_credits(
+                user_id=consumer_user_id,
+                delta=AGENT_TASK_CREDITS,
+                type_="refund",
+                model_name=f"agent:{aid}",
+                tokens=0,
+                base_credits=AGENT_TASK_CREDITS,
+                multiplier=1.0,
+                note=f"agent_task error refund task_id={task_id}",
+            )
         worker.record_agent_complete(aid, False)
         logger.error("[agent_task] error task_id=%s: %s", task_id, e)
         return {"ok": False, "task_id": task_id, "status": "failed", "error": str(e)}
@@ -142,28 +151,28 @@ async def handle_agent_task(
     worker.record_agent_complete(aid, success, duration_ms if isinstance(duration_ms, (int, float)) else None)
 
     if not success:
-        # 执行失败退还调用方
-        await db.award_credits(
-            user_id=consumer_user_id,
-            delta=AGENT_TASK_CREDITS,
-            type_="refund",
-            model_name=f"agent:{aid}",
-            tokens=0,
-            base_credits=AGENT_TASK_CREDITS,
-            multiplier=1.0,
-            note=f"agent_task failed refund task_id={task_id} status={status}",
-        )
+        if not guest:
+            await db.award_credits(
+                user_id=consumer_user_id,
+                delta=AGENT_TASK_CREDITS,
+                type_="refund",
+                model_name=f"agent:{aid}",
+                tokens=0,
+                base_credits=AGENT_TASK_CREDITS,
+                multiplier=1.0,
+                note=f"agent_task failed refund task_id={task_id} status={status}",
+            )
         return {
             "ok": False,
             "task_id": task_id,
             "status": status,
             "error": (result or {}).get("error") or status,
             "output": (result or {}).get("output") or "",
-            "credits_refunded": AGENT_TASK_CREDITS,
+            "credits_refunded": 0 if guest else AGENT_TASK_CREDITS,
             "worker_id": worker.worker_id,
         }
 
-    # 成功：给贡献者即时结息（一期固定分）
+    # 成功：给贡献者即时结息（一期固定分）；访客试用也给贡献者结息
     if worker.user_id:
         await db.award_credits(
             user_id=worker.user_id,

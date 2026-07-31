@@ -3339,8 +3339,8 @@ function buildDefaultModelList() {
       object: 'model',
       created: 0,
       owned_by: ob,
-      // vision(图文) 对 API 仍是 chat completions 模型，/v1/models 不额外标注（只有 image/embedding 影响路由）
-      ...(modelType && modelType !== 'chat' && modelType !== 'vision' ? { model_type: modelType } : {}),
+      // chat / vision / image / embedding 四类全部透出（与客户端 Providers 对齐）
+      ...(modelType && modelType !== 'chat' ? { model_type: modelType } : {}),
     });
   };
   if (isCommunityP2pEnabled()) {

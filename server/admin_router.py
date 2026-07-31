@@ -114,15 +114,15 @@ class ModelConfigRequest(BaseModel):
     contribute_rate: float = 8
     consume_rate: float = 5
     enabled: bool = True
-    model_type: str = "chat"    # chat / image
+    model_type: str = "chat"    # chat / vision / image / embedding
 
 
 @router.post("/models", dependencies=[Depends(auth_admin)])
 async def upsert_model(req: ModelConfigRequest):
     if req.tier not in ("premium", "open"):
         raise HTTPException(400, "tier 必须是 premium 或 open")
-    if req.model_type not in ("chat", "image"):
-        raise HTTPException(400, "model_type 必须是 chat 或 image")
+    if req.model_type not in ("chat", "vision", "image", "embedding"):
+        raise HTTPException(400, "model_type 必须是 chat / vision / image / embedding")
     return await db.upsert_model_config(
         req.name, req.display_name, req.tier,
         req.contribute_rate, req.consume_rate, req.enabled,

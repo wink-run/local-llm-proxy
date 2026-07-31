@@ -1,17 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { matchPath, Navigate, useLocation } from 'react-router-dom';
 
-/** 按路由配置校验登录/游客权限 */
-function PageGate({ config, user, guest, children }) {
+/** 按路由配置校验登录/游客权限（仅当前激活页可触发 Navigate，避免缓存页连环重定向） */
+function PageGate({ config, user, guest, active, children }) {
   const location = useLocation();
+  let blocked = null;
   if (config.requireUser && !user) {
-    return <Navigate to="/login" replace />;
+    blocked = { to: '/login', state: undefined };
+  } else if (config.requireLogin && !user) {
+    blocked = { to: '/login', state: { from: location.pathname } };
+  } else if (config.requireAuthed && !(user || guest)) {
+    blocked = { to: '/login', state: undefined };
   }
-  if (config.requireLogin && !user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-  }
-  if (config.requireAuthed && !(user || guest)) {
-    return <Navigate to="/login" replace />;
+  if (blocked) {
+    // 隐藏的 keep-alive 页禁止 Navigate，否则会与当前路由互相打架导致 Maximum update depth
+    if (!active) return null;
+    return <Navigate to={blocked.to} replace state={blocked.state} />;
   }
   return children;
 }
@@ -76,7 +80,7 @@ export default function KeepAliveRoutes({ configs, user, guest }) {
             className={isActive ? 'h-full min-h-0' : 'hidden'}
             aria-hidden={!isActive}
           >
-            <PageGate config={cfg} user={user} guest={guest}>
+            <PageGate config={cfg} user={user} guest={guest} active={isActive}>
               <Component routePath={key} routeParams={routeParams} />
             </PageGate>
           </div>

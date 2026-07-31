@@ -66,6 +66,36 @@ def test_agent_card_visible_public_and_circle():
     assert agent_card_visible(cir, w, {9}) is False
 
 
+def test_get_agent_for_user_picks_lowest_load():
+    from worker_pool import pool
+
+    class _W:
+        def __init__(self, wid, agents, load=0, circles=None):
+            self.worker_id = wid
+            self.agents = agents
+            self.active_requests = load
+            self.circle_ids = list(circles or [])
+            self.circle_id = self.circle_ids[0] if len(self.circle_ids) == 1 else None
+            self.name = wid
+            self.owner_nickname = "adam"
+
+    prev = list(pool._workers)
+    try:
+        pool._workers = [
+            _W("w-busy", [{"id": "poet", "visibility": "public", "display_name": "写诗"}], load=5),
+            _W("w-idle", [{"id": "poet", "visibility": "public", "display_name": "写诗"}], load=1),
+            _W("w-circle", [{"id": "secret", "visibility": "circle", "display_name": "密"}], load=0, circles=[7]),
+        ]
+        pub = pool.get_agent_for_user("poet", public_only=True)
+        assert pub and pub["worker_id"] == "w-idle"
+        assert pool.get_agent_for_user("secret", public_only=True) is None
+        assert pool.get_agent_for_user("secret", user_circle_ids=set()) is None
+        cir = pool.get_agent_for_user("secret", user_circle_ids={7})
+        assert cir and cir["id"] == "secret" and cir["worker_id"] == "w-circle"
+    finally:
+        pool._workers = prev
+
+
 def test_pick_agent_workers_falls_back_when_pinned_offline():
     from worker_pool import pool
 
