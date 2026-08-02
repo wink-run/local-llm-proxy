@@ -131,9 +131,9 @@ test('auth_mode 分类：oauth / config-file / 已托管(读备份) / 空目录'
   // 兼容端点：settings.json 有「非网关」base_url
   const forti = mk('.claude-fortinet');
   w(forti, 'settings.json', { env: { ANTHROPIC_BASE_URL: 'https://fp.example.com/', ANTHROPIC_AUTH_TOKEN: 'sk-f' }, model: 'forti-coder' });
-  // 已托管：settings.json 指向网关，但 .tokenbank-bak 保留原始兼容端点 → 仍应分类为 config-file
+  // 已托管：settings.json 指向网关 + PROXY_MANAGED，但 .tokenbank-bak 保留原始兼容端点 → 仍应分类为 config-file
   const mng = mk('.claude-managed');
-  w(mng, 'settings.json', { env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:11430', ANTHROPIC_AUTH_TOKEN: 'sk-local' } });
+  w(mng, 'settings.json', { env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:11430', ANTHROPIC_AUTH_TOKEN: 'PROXY_MANAGED' } });
   w(mng, 'settings.json.tokenbank-bak', { env: { ANTHROPIC_BASE_URL: 'https://fp.example.com/', ANTHROPIC_AUTH_TOKEN: 'sk-f' }, model: 'forti-coder' });
   // 空目录
   mk('.claude-empty');

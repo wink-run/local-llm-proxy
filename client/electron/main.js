@@ -237,8 +237,8 @@ function revertAppConfigFile(app_id, config_file) {
   if (isClaudeDesktopApp(app_id)) revertClaudeDesktopOfficialExtras();
 }
 
-// CLI「兼容端点实例」的 settings.json 托管（核心逻辑见 ./cli-endpoint-config）。
-// settings.json 的 env 压过 shim 注入 → 写死自定义 base_url 的实例只能改写 settings.json 本身。
+// Claude Code CLI 的 settings.json 托管（核心逻辑见 ./cli-endpoint-config）。
+// settings.json 的 env 压过 shim → 选路由时写入 PROXY_MANAGED + 网关 BASE_URL，占住配置防其他代理改写。
 function syncCliInstanceEndpointConfig(app, opts = {}) {
   try {
     const cl = require('./config-loader');
@@ -249,7 +249,7 @@ function syncCliInstanceEndpointConfig(app, opts = {}) {
     });
   } catch (e) { console.warn('[cli-instance] endpoint settings sync error:', e && e.message); }
 }
-// 取消托管 / 退出：把某工具（或全部）的兼容端点实例 settings.json 强制还原回原始配置
+// 取消托管 / 退出：把某工具（或全部）Claude Code 实例的 settings.json 强制还原
 function revertCliInstanceEndpointConfigs(agentId) {
   try {
     for (const a of (readLocalConfig().apps || [])) {
@@ -2488,13 +2488,16 @@ function registerIPC() {
 
   // Write Claude Code config into ~/.claude/settings.json（用户级设置；Claude Code 实际读取的就是这个，
   // settings.local.json 是「项目级」约定，写在 ~/.claude 下不会被读取）
-  ipcMain.handle('claude:configure', async (_e, { baseUrl, apiKey, models = [] }) => {
+  // AUTH_TOKEN 写 PROXY_MANAGED 占位：占住 settings.env（优先级高于其他代理/shim），不暴露真实 key
+  ipcMain.handle('claude:configure', async (_e, { baseUrl, models = [] }) => {
+    const { PROXY_MANAGED_TOKEN } = require('./cli-endpoint-config');
     const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
     let settings = {};
     try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
     settings.env = settings.env || {};
-    settings.env.ANTHROPIC_BASE_URL = baseUrl;
-    settings.env.ANTHROPIC_AUTH_TOKEN = apiKey;
+    settings.env.ANTHROPIC_BASE_URL = baseUrl || 'http://127.0.0.1:11430';
+    // 占位标记：占住 settings.env（优先级高于其他代理），真实 key 不写入
+    settings.env.ANTHROPIC_AUTH_TOKEN = PROXY_MANAGED_TOKEN;
 
     // Map available models to Claude tier env vars
     // Claude Code uses these to select models per task complexity
@@ -2798,7 +2801,19 @@ function registerIPC() {
 
   ipcMain.handle('agents:list',    () => agentLinker.list());
   // 手动托管：清除禁用标记后接入
-  ipcMain.handle('agents:apply',   (_e, id) => { setAutoHostDisabled(id, false); return agentLinker.applyById(id); });
+  ipcMain.handle('agents:apply',   (_e, id) => {
+    setAutoHostDisabled(id, false);
+    const r = agentLinker.applyById(id);
+    // 路由态实例：重申 settings.json 网关占位（PROXY_MANAGED），防止其他代理改写后纳管失效
+    try {
+      for (const a of (readLocalConfig().apps || [])) {
+        if (a.link_method === 'shim' && a.agent_id === id && a.instance) {
+          syncCliInstanceEndpointConfig(a);
+        }
+      }
+    } catch (e) { console.warn('[cli-instance] endpoint sync (apply):', e && e.message); }
+    return r;
+  });
   // 手动取消托管：打上禁用标记，自动托管不再重新接入
   ipcMain.handle('agents:revert',  (_e, id) => { setAutoHostDisabled(id, true); try { revertCliInstanceEndpointConfigs(id); } catch {} return agentLinker.revertById(id); });
   ipcMain.handle('agents:applyAll',  () => {
@@ -3991,7 +4006,7 @@ function registerIPC() {
           mutated = true;
           if (app.link_method === 'shim' && app.agent_id) {
             try { agentLinker.revertById(app.agent_id); } catch {}
-            // 兼容端点实例：路由能力被取消 → 还原该实例 settings.json 回原始（兼容端点）配置
+            // Claude Code：路由能力被取消 → 还原该实例 settings.json
             try { syncCliInstanceEndpointConfig(app); } catch {}
           }
           // 取消网关能力时还原 config-file 应用（如 Claude Desktop）
@@ -4438,7 +4453,7 @@ function registerIPC() {
         if (require('./shim-installer').shimExists(cmd)) agentLinker.applyById(updated.agent_id);
       } catch (e) { console.warn('[cli-instances] shim re-apply error:', e && e.message); }
     }
-    // 兼容端点实例：选路由/直连切换 → 改写 or 还原该实例 settings.json（shim 压不动 settings.json）
+    // Claude Code 实例：选路由/直连切换 → 改写 or 还原 settings.json（占住 env，防其他代理覆盖）
     if (updated.link_method === 'shim'
       && ['route_id', 'route_ids', 'hosted', 'instance'].some(k => Object.prototype.hasOwnProperty.call(patch, k))) {
       try { syncCliInstanceEndpointConfig(updated); } catch (e) { console.warn('[cli-instance] endpoint sync (update):', e && e.message); }

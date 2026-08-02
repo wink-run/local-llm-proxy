@@ -1,11 +1,13 @@
 'use strict';
-// CLI 兼容端点实例 settings.json 托管：选路由→改写指向网关；直连/还原→还原原始(兼容端点)配置。
+// Claude Code settings.json 托管：选路由→写 PROXY_MANAGED + 网关；直连/还原→还原原始配置。
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { syncCliInstanceEndpointConfig, isGatewayBaseUrl } = require('../cli-endpoint-config');
+const {
+  syncCliInstanceEndpointConfig, isGatewayBaseUrl, PROXY_MANAGED_TOKEN,
+} = require('../cli-endpoint-config');
 
 const GW = 'http://127.0.0.1:11430';
 const OPTS = { expandHome: (p) => p, gatewayOrigin: GW };
@@ -31,14 +33,14 @@ const appFor = (dir, extra = {}) => ({
   hosted: true, route_id: 'p2p:minimax-m3', instance: { config_dir: dir }, ...extra,
 });
 
-test('选路由：改写 settings.json 指向网关 + 本实例 api_key，备份保留原始 Fortinet', () => {
+test('选路由：改写 settings.json 为 PROXY_MANAGED + 网关，备份保留原始 Fortinet', () => {
   const dir = mkInstance(FORTINET);
   const file = path.join(dir, 'settings.json');
   const bak = file + '.tokenbank-bak';
   assert.equal(syncCliInstanceEndpointConfig(appFor(dir), OPTS), 'routed');
   const s = rd(file);
   assert.equal(s.env.ANTHROPIC_BASE_URL, GW);
-  assert.equal(s.env.ANTHROPIC_AUTH_TOKEN, 'sk-local-abc');
+  assert.equal(s.env.ANTHROPIC_AUTH_TOKEN, PROXY_MANAGED_TOKEN);
   // 整段替换：env 只剩网关两项，原兼容端点的任何 env 键都不残留
   assert.deepEqual(Object.keys(s.env).sort(), ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
   assert.ok(!('ANTHROPIC_SMALL_FAST_MODEL' in s.env), '去掉写死的 fast model');
@@ -58,6 +60,7 @@ test('幂等：再次选路由不会把网关配置当作原始配置备份', ()
   syncCliInstanceEndpointConfig(appFor(dir), OPTS);
   syncCliInstanceEndpointConfig(appFor(dir), OPTS);
   assert.match(rd(bak).env.ANTHROPIC_BASE_URL, /fortinet/, '备份仍是 Fortinet');
+  assert.equal(rd(path.join(dir, 'settings.json')).env.ANTHROPIC_AUTH_TOKEN, PROXY_MANAGED_TOKEN);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -85,16 +88,57 @@ test('forceDirect（取消托管/退出）：即便记录里仍有 route 也强�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('OAuth 实例（settings.json 无自定义 base_url）：不接管、不生成备份', () => {
+test('OAuth 实例（无自定义 base_url）：选路由也写入 PROXY_MANAGED，占住 settings', () => {
   const dir = mkInstance({ theme: 'dark' });
-  assert.equal(syncCliInstanceEndpointConfig(appFor(dir), OPTS), 'skip');
-  assert.ok(!fs.existsSync(path.join(dir, 'settings.json.tokenbank-bak')));
+  const file = path.join(dir, 'settings.json');
+  assert.equal(syncCliInstanceEndpointConfig(appFor(dir), OPTS), 'routed');
+  const s = rd(file);
+  assert.equal(s.env.ANTHROPIC_BASE_URL, GW);
+  assert.equal(s.env.ANTHROPIC_AUTH_TOKEN, PROXY_MANAGED_TOKEN);
+  assert.equal(s.theme, 'dark');
+  assert.ok(fs.existsSync(file + '.tokenbank-bak'), '原 settings 应备份');
+  assert.equal(rd(file + '.tokenbank-bak').theme, 'dark');
+  // 直连：还原备份
+  assert.equal(syncCliInstanceEndpointConfig(appFor(dir, { route_id: null }), OPTS), 'direct');
+  assert.ok(!rd(file).env, '还原后无托管 env');
+  assert.equal(rd(file).theme, 'dark');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('无 settings.json 的实例：安全跳过', () => {
+test('无 settings.json 的实例：选路由新建托管配置；还原则删除空文件', () => {
   const dir = mkInstance(null);
-  assert.equal(syncCliInstanceEndpointConfig(appFor(dir), OPTS), 'skip');
+  const file = path.join(dir, 'settings.json');
+  assert.equal(syncCliInstanceEndpointConfig(appFor(dir), OPTS), 'routed');
+  assert.deepEqual(rd(file).env, {
+    ANTHROPIC_AUTH_TOKEN: PROXY_MANAGED_TOKEN,
+    ANTHROPIC_BASE_URL: GW,
+  });
+  assert.ok(!fs.existsSync(file + '.tokenbank-bak'), '原本无文件则无备份');
+  assert.equal(syncCliInstanceEndpointConfig(appFor(dir), { ...OPTS, forceDirect: true }), 'direct');
+  assert.ok(!fs.existsSync(file), '清空托管键后空对象应删文件');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('其他代理改写 base_url 后再次 sync：重新占回网关', () => {
+  const dir = mkInstance(FORTINET);
+  const file = path.join(dir, 'settings.json');
+  syncCliInstanceEndpointConfig(appFor(dir), OPTS);
+  // 模拟其他代理改写
+  fs.writeFileSync(file, JSON.stringify({
+    env: { ANTHROPIC_BASE_URL: 'https://other-proxy.example/', ANTHROPIC_AUTH_TOKEN: 'sk-other' },
+  }, null, 2));
+  assert.equal(syncCliInstanceEndpointConfig(appFor(dir), OPTS), 'routed');
+  const s = rd(file);
+  assert.equal(s.env.ANTHROPIC_BASE_URL, GW);
+  assert.equal(s.env.ANTHROPIC_AUTH_TOKEN, PROXY_MANAGED_TOKEN);
+  // bak 仍是首次 Fortinet，不被其他代理配置污染
+  assert.match(rd(file + '.tokenbank-bak').env.ANTHROPIC_BASE_URL, /fortinet/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('非 claude-code agent：跳过', () => {
+  const dir = mkInstance(FORTINET);
+  assert.equal(syncCliInstanceEndpointConfig(appFor(dir, { agent_id: 'codex' }), OPTS), 'skip');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

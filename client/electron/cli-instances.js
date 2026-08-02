@@ -14,7 +14,8 @@ function readJson(p) {
 }
 
 // 读实例的「纳管前」settings.json（真实来源）：当前 settings.json 若已被 TokenBank 改写成
-// 指向网关，则用 .tokenbank-bak（原始备份）；否则当前文件本身就是原始。返回 { orig, managed }。
+// 指向网关（ANTHROPIC_AUTH_TOKEN=PROXY_MANAGED），则用 .tokenbank-bak（原始备份）；
+// 否则当前文件本身就是原始。返回 { orig, managed }。
 // managed=true 表示该实例的 settings.json 当前正被 TokenBank 托管（指向网关）。
 function readOriginalSettings(dir) {
   const file = path.join(dir, 'settings.json');
