@@ -667,6 +667,12 @@ export default function Dashboard() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Skill/工具会话补录完成后刷新盘点（否则 WorkBuddy Skill 入库后仍显示 0）
+  useEffect(() => {
+    if (!window.electronAPI?.localStats?.onChanged) return undefined;
+    return window.electronAPI.localStats.onChanged(() => { load(); });
+  }, [load]);
+
   // ── Derived ───────────────────────────────────────────────────────────────
   const totalCalls  = localData?.total_calls  ?? 0;
   const totalTokens = localData?.total_tokens ?? 0;

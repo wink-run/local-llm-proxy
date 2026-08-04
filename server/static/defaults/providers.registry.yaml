@@ -228,6 +228,7 @@ providers:
   pricing: {}
   handler: openai
   api_format: openai
+  supports_responses: true
   enabled_default: false
   keyless: true
   key_prefix:
@@ -655,6 +656,7 @@ billing_sources:
   base_url: https://api.openai.com/v1
   auth: oauth
   api_format: openai
+  supports_responses: true
   handler: openai
   hint: ''
   keyless: false
@@ -903,6 +905,7 @@ billing_sources:
   base_url: https://api.openai.com/v1
   auth: api_key
   api_format: openai
+  supports_responses: true
   handler: openai
   hint: 付费 API，支持 GPT-4o / o3 等全系模型
   keyless: true

@@ -53,13 +53,15 @@ function syncSessionTelemetry(localStats, opts = {}) {
   const force = !!(opts && opts.force);
   const now = Date.now();
   if (!force && _lastTelemetrySyncAt && (now - _lastTelemetrySyncAt) < TELEMETRY_SYNC_MIN_MS) {
-    return { hookImported: 0, sessionImported: 0, traeSynced: 0, skipped: true };
+    return { hookImported: 0, sessionImported: 0, traeSynced: 0, skillRecorded: 0, toolsRecorded: 0, skipped: true };
   }
   _lastTelemetrySyncAt = now;
 
   let hookImported = 0;
   let sessionImported = 0;
   let traeSynced = 0;
+  let skillRecorded = 0;
+  let toolsRecorded = 0;
   try {
     hookImported = cursorHooks.importEvents(localStats);
     maybeFixTraeSessionTimestamps(localStats);
@@ -70,22 +72,22 @@ function syncSessionTelemetry(localStats, opts = {}) {
     sessionImported = (r && r.imported) || 0;
     // transcript 行常无 usage → 0 token 占位；hook 纳管后以 hook 为准，清掉 cursor:… 脏行
     cursorHooks.purgeTranscriptZeroTokens(localStats);
-    // Skill 调用增量入库（Claude Skill/slash + Codex SKILL.md 路径）
-    let skillRecorded = 0;
+    // Skill / 工具调用增量入库（Claude / Codex / Cursor / WorkBuddy）
     try {
       const skillUsage = require('./session-skill-usage');
       const sr = skillUsage.syncSkillUsage(localStats);
       skillRecorded = (sr && sr.recorded) || 0;
+      toolsRecorded = (sr && sr.toolsRecorded) || 0;
     } catch (e) {
       console.error('[session-telemetry] skill-usage', e.message);
     }
     console.log('[session-telemetry]', JSON.stringify({
-      hookImported, sessionImported, traeSynced, skillRecorded, skip: [...skip],
+      hookImported, sessionImported, traeSynced, skillRecorded, toolsRecorded, skip: [...skip],
     }));
   } catch (e) {
     console.error('[session-telemetry]', e.message);
   }
-  return { hookImported, sessionImported, traeSynced };
+  return { hookImported, sessionImported, traeSynced, skillRecorded, toolsRecorded };
 }
 
 module.exports = { syncSessionTelemetry };

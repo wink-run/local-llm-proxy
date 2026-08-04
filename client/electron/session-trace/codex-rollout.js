@@ -76,6 +76,35 @@ function codexUserText(data) {
   return '';
 }
 
+/** 从 Codex reasoning.summary / content 抽出可读文本（summary 常为 [{type,text}] 数组） */
+function codexReasoningText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const parts = [];
+  const pushPart = (v) => {
+    if (v == null) return;
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t) parts.push(t);
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const item of v) pushPart(item);
+      return;
+    }
+    if (typeof v === 'object') {
+      // Responses：{ type: 'summary_text', text } / { type: 'reasoning_text', text }
+      const t = v.text || v.content || v.summary || v.thinking;
+      if (typeof t === 'string' && t.trim()) parts.push(t.trim());
+    }
+  };
+  pushPart(payload.summary);
+  pushPart(payload.content);
+  pushPart(payload.reasoning_content);
+  // 字符串字段兜底（少数上游直接给 summary 字符串）
+  if (!parts.length && typeof payload.text === 'string') pushPart(payload.text);
+  return parts.join('\n\n').slice(0, 500);
+}
+
 function codexAssistantText(data) {
   if (data.type === 'event_msg' && data.payload?.type === 'agent_message') {
     return String(data.payload.message || '').slice(0, 500);
@@ -93,7 +122,8 @@ function codexAssistantText(data) {
           .slice(0, 500);
       }
     }
-    if (p.type === 'reasoning') return String(p.summary || p.content || '').slice(0, 500);
+    // reasoning.summary 是对象数组，不能 String(arr) → "[object Object]"
+    if (p.type === 'reasoning') return codexReasoningText(p);
   }
   return '';
 }
@@ -327,9 +357,11 @@ function trace(sessionId) {
           const t = codexAssistantText(data);
           if (t) steps.push({ idx: steps.length, kind: 'assistant', label: 'Assistant', _line: at, text: t });
         } else if (p.type === 'reasoning') {
+          const text = codexAssistantText(data);
+          const encrypted = !text && !!(p.encrypted_content);
           steps.push({
             idx: steps.length, kind: 'assistant', label: 'Reasoning', _line: at,
-            reasoning: true, text: codexAssistantText(data),
+            reasoning: true, text, encrypted,
           });
         }
       }
@@ -371,5 +403,6 @@ module.exports = {
   findSessionFile,
   codexSessionIdFromFilename,
   parseCodexRolloutFile,
+  codexReasoningText,
   MAX_TRACE_STEPS,
 };

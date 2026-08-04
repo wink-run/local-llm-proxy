@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { loadGatewayAvailableModels, resolveLocalGatewayBase, inferModelTypeFromName } from '../api/gatewayModels';
 import { getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig, getApps, getOauth } from '../api/adapter';
@@ -20,6 +21,7 @@ import { useCurrency } from '../store/currency';
 import { runStreamChatTest } from '../lib/streamTestLatency';
 import { getNetwork } from '../api/client';
 import { normalizeNetworkPayload, workerInfo, workersForModel } from '../lib/networkModelStats';
+import { buildInvokeText, buildMcpInvokeText } from '../lib/resource-enable';
 
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
 function modelTierKey(m) {
@@ -684,6 +686,321 @@ function strategyLabel(key, t) {
   return map[key] || key;
 }
 
+/** 资源/MCP 芯片区：自适应换行，超过约 5 行折叠，点展开 */
+function BoundChipFold({ children, itemCount = 0, t }) {
+  const ref = useRef(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  // 单行约 30px（py-1.5 + 字号），行间距 gap-1.5=6px → 5 行
+  const maxCollapsedH = 5 * 30 + 4 * 6;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const check = () => setOverflows(el.scrollHeight > maxCollapsedH + 2);
+    check();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [itemCount, maxCollapsedH, expanded]);
+
+  return (
+    <div>
+      <div
+        ref={ref}
+        className={`flex flex-wrap gap-1.5 ${expanded ? '' : 'overflow-hidden'}`}
+        style={expanded ? undefined : { maxHeight: maxCollapsedH }}
+      >
+        {children}
+      </div>
+      {overflows && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+        >
+          {expanded ? t('gateway.common.collapse') : t('gateway.app.boundExpand')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 资源/MCP 绑定匹配用的应用 id 集合（含 agent 别名） */
+function appBoundMatchIds(app) {
+  const ids = new Set();
+  if (!app) return ids;
+  for (const v of [app.agent_id, app.preset_id, app.activity_agent_id, app.id]) {
+    if (typeof v === 'string' && v) ids.add(v);
+  }
+  // codex ↔ codex-desktop 互通
+  if (ids.has('codex')) ids.add('codex-desktop');
+  if (ids.has('codex-desktop')) ids.add('codex');
+  return ids;
+}
+
+/** 跳转资源配置页前写入筛选（与 Resources.jsx localStorage key 对齐） */
+function prepareResourcesNav(agentId) {
+  try {
+    localStorage.setItem('tokenbank.resources.appFilter', agentId || '');
+    localStorage.setItem('tokenbank.resources.viewTab', 'managed');
+  } catch { /* ignore */ }
+}
+
+/** 跳转 MCP 配置页前写入供给源 Tab + 应用筛选 */
+function prepareMcpNav(agentId) {
+  try {
+    localStorage.setItem('tokenbank.providers.supplyTab', 'mcp');
+    localStorage.setItem('tokenbank.providers.mcpAgentTab', agentId || '');
+    localStorage.setItem('tokenbank.providers.mcpViewTab', 'managed');
+  } catch { /* ignore */ }
+}
+
+/** 编辑页：只读展示当前智能体已投射的资源与已绑定的 MCP */
+function AppBoundAssetsSection({ app, onClose }) {
+  const { t, lang } = useLang();
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [resources, setResources] = useState([]);
+  const [mcps, setMcps] = useState([]);
+  // 当前选中的试用项（res:… / mcp:…），点芯片切换下方唯一示例
+  const [selectedKey, setSelectedKey] = useState('');
+  const matchIds = appBoundMatchIds(app);
+  const isAgentApp = !!(app?.agent_id || app?.preset_id);
+  // 跳转筛选：智能体用 agent_id；API 应用回退 app.id
+  const resourceFilterId = app?.agent_id || app?.preset_id || app?.id || '';
+  const mcpFilterId = app?.agent_id || app?.preset_id || app?.id || '';
+  const invokeLang = lang === 'en' ? 'en' : 'zh';
+
+  useEffect(() => {
+    if (matchIds.size === 0) {
+      setLoading(false);
+      setResources([]);
+      setMcps([]);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const [resRes, mcpRes] = await Promise.all([
+          window.electronAPI?.resource?.listResources?.({}) || { resources: [] },
+          window.electronAPI?.mcp?.listServers?.() || { servers: [] },
+        ]);
+        if (cancelled) return;
+        const allRes = Array.isArray(resRes?.resources) ? resRes.resources
+          : (Array.isArray(resRes) ? resRes : []);
+        const allMcp = Array.isArray(mcpRes?.servers) ? mcpRes.servers
+          : (Array.isArray(mcpRes) ? mcpRes : []);
+        // 资源：投射记录命中当前 agent
+        setResources(allRes.filter((r) =>
+          (r.projections || []).some((p) => matchIds.has(p.agentId || p.agent_id))));
+        // MCP：写盘投射或网关中转任一命中
+        setMcps(allMcp.filter((s) => {
+          const sync = s.sync_clients || [];
+          const gw = s.gateway_clients || [];
+          const clients = s.clientTargets || [];
+          return sync.some((id) => matchIds.has(id))
+            || gw.some((id) => matchIds.has(id))
+            || clients.some((c) => c?.installed && matchIds.has(c.id));
+        }));
+      } catch {
+        if (!cancelled) { setResources([]); setMcps([]); }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [app?.agent_id, app?.preset_id, app?.activity_agent_id, app?.id]);
+
+  // 列表变化时：选中项失效则回落到第一项
+  useEffect(() => {
+    const keys = [
+      ...resources.map((r) => `res:${r.id || `${r.type}-${r.name}`}`),
+      ...mcps.map((s) => `mcp:${s.id || s.name}`),
+    ];
+    if (!keys.length) {
+      if (selectedKey) setSelectedKey('');
+      return;
+    }
+    if (!keys.includes(selectedKey)) setSelectedKey(keys[0]);
+  }, [resources, mcps, selectedKey]);
+
+  // 智能体应用始终展示；纯 API 应用仅在有绑定时展示
+  if (matchIds.size === 0) return null;
+  if (!loading && !isAgentApp && resources.length === 0 && mcps.length === 0) return null;
+
+  function typeLabel(type) {
+    const key = `resources.type.${type}`;
+    const v = t(key);
+    return v === key ? (type || '') : v;
+  }
+
+  function mcpBindTags(server) {
+    const tags = [];
+    const sync = server.sync_clients || [];
+    const gw = server.gateway_clients || [];
+    const clients = server.clientTargets || [];
+    if (sync.some((id) => matchIds.has(id))
+      || clients.some((c) => c?.installed && matchIds.has(c.id))) {
+      tags.push(t('gateway.app.boundMcpSync'));
+    }
+    if (gw.some((id) => matchIds.has(id))) {
+      tags.push(t('gateway.app.boundMcpGateway'));
+    }
+    return tags;
+  }
+
+  function goResources(e) {
+    e?.preventDefault?.();
+    prepareResourcesNav(resourceFilterId);
+    onClose?.();
+    navigate('/resources');
+  }
+
+  function goMcp(e) {
+    e?.preventDefault?.();
+    prepareMcpNav(mcpFilterId);
+    onClose?.();
+    navigate('/providers');
+  }
+
+  // 当前选中项对应的试用口令
+  const selectedRes = resources.find((r) => `res:${r.id || `${r.type}-${r.name}`}` === selectedKey);
+  const selectedMcp = mcps.find((s) => `mcp:${s.id || s.name}` === selectedKey);
+  const exampleText = selectedRes
+    ? buildInvokeText(selectedRes, invokeLang)
+    : (selectedMcp ? buildMcpInvokeText(selectedMcp, invokeLang) : '');
+
+  const chipBase = 'inline-flex items-center gap-1 max-w-full text-xs px-2.5 py-1.5 rounded-md border transition-colors';
+  const chipIdle = 'border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40 text-zinc-600 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500';
+  const chipActive = 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300';
+  const linkCls = 'text-xs text-blue-600 dark:text-blue-400 hover:underline shrink-0';
+
+  // 按类型分组，避免智能体/提示词/技能混在一起
+  const RESOURCE_TYPE_ORDER = ['assistant', 'prompt', 'skill'];
+  const resourcesByType = RESOURCE_TYPE_ORDER.map((type) => ({
+    type,
+    items: resources.filter((r) => r.type === type),
+  })).filter((g) => g.items.length > 0);
+  // 未归类类型单独一组
+  const otherResources = resources.filter((r) => !RESOURCE_TYPE_ORDER.includes(r.type));
+  if (otherResources.length) {
+    resourcesByType.push({ type: 'other', items: otherResources });
+  }
+
+  function renderResourceChips(items) {
+    return (
+      <BoundChipFold t={t} itemCount={items.length}>
+        {items.map((r) => {
+          const key = `res:${r.id || `${r.type}-${r.name}`}`;
+          const active = selectedKey === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSelectedKey(key)}
+              className={`${chipBase} ${active ? chipActive : chipIdle}`}
+              title={r.display_name || r.name}
+            >
+              <span className="truncate">{r.display_name || r.name || r.id}</span>
+            </button>
+          );
+        })}
+      </BoundChipFold>
+    );
+  }
+
+  return (
+    <div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1">{t('gateway.app.boundAssets')}</div>
+      {/* 使用说明：投射 vs 中转 + 去哪改 + 复制试用 */}
+      <div className="text-xs text-zinc-400 leading-relaxed mb-2">{t('gateway.app.boundHint')}</div>
+      {loading ? (
+        <div className="text-xs text-zinc-400">{t('gateway.app.boundLoading')}</div>
+      ) : (resources.length === 0 && mcps.length === 0) ? (
+        <div className="space-y-1.5">
+          <div className="text-xs text-zinc-400">{t('gateway.app.boundEmpty')}</div>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={goResources} className={linkCls}>{t('gateway.app.boundGoResources')} →</button>
+            <button type="button" onClick={goMcp} className={linkCls}>{t('gateway.app.boundGoMcp')} →</button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {(resources.length > 0 || isAgentApp) && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs text-zinc-400">{t('gateway.app.boundResources')}</div>
+                <button type="button" onClick={goResources} className={linkCls}>{t('gateway.app.boundGoResources')} →</button>
+              </div>
+              {resources.length > 0 ? (
+                <div className="space-y-2">
+                  {resourcesByType.map((g) => (
+                    <div key={g.type}>
+                      <div className="text-[11px] text-zinc-400 mb-1">
+                        {g.type === 'other' ? t('gateway.app.boundResourcesOther') : typeLabel(g.type)}
+                      </div>
+                      {renderResourceChips(g.items)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-zinc-400">{t('gateway.app.boundEmpty')}</div>
+              )}
+            </div>
+          )}
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="text-xs text-zinc-400">{t('gateway.app.boundMcp')}</div>
+              <button type="button" onClick={goMcp} className={linkCls}>{t('gateway.app.boundGoMcp')} →</button>
+            </div>
+            {mcps.length > 0 ? (
+              <BoundChipFold t={t} itemCount={mcps.length}>
+                {mcps.map((s) => {
+                  const key = `mcp:${s.id || s.name}`;
+                  const active = selectedKey === key;
+                  const tags = mcpBindTags(s);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSelectedKey(key)}
+                      className={`${chipBase} ${active ? chipActive : chipIdle}`}
+                      title={s.display_name || s.name}
+                    >
+                      <span className="truncate">{s.display_name || s.name || s.id}</span>
+                      {tags.map((tag) => (
+                        <span key={tag} className={`text-[10px] shrink-0 ${active ? 'text-blue-400' : 'text-zinc-400'}`}>{tag}</span>
+                      ))}
+                    </button>
+                  );
+                })}
+              </BoundChipFold>
+            ) : (
+              <div className="text-xs text-zinc-400">{t('gateway.app.boundEmpty')}</div>
+            )}
+          </div>
+
+          {/* 单一试用示例：对齐接入配置的请求示例（点芯片切换 + 复制） */}
+          {exampleText && (
+            <div className="border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden">
+              <div className="flex items-center bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-200 dark:border-zinc-700 px-3 py-2">
+                <span className="text-xs font-medium text-zinc-500">{t('gateway.app.boundTryHint')}</span>
+                <div className="flex-1" />
+                <CopyButton text={exampleText} label={t('gateway.common.copy')} className="py-1 text-xs" />
+              </div>
+              <pre className="px-4 py-3 text-xs font-mono leading-relaxed text-zinc-700 dark:text-zinc-300 overflow-x-auto bg-zinc-50/30 dark:bg-zinc-900/30 whitespace-pre-wrap break-words">
+                {exampleText}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
 function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', instanceCount = 1, onUpdate, onDelete, onRegenKey, onCancelManage, onWritten, onClose, onCancel }) {
   const { t } = useLang();
@@ -1053,6 +1370,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
     </div>
   );
 
+  // 当前智能体已投射资源 / 已绑定 MCP（只读）
+  const boundAssetsSection = <AppBoundAssetsSection app={app} onClose={dismiss} />;
+
   const btnSave = (
     <button onClick={save} disabled={busy}
       className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white disabled:opacity-50">
@@ -1084,7 +1404,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
           /* 纳管应用（config-file / 透明托管）：基础信息 + Key + 路由规则 */
           <>
             <div className="p-5 space-y-4">
-              {baseInfoSection}{apiKeyRow}{routeSection}
+              {baseInfoSection}{apiKeyRow}{routeSection}{boundAssetsSection}
             </div>
             <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
               {btnSave}{btnCancel}
@@ -1094,7 +1414,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
           /* Trae Work：手工在 IDE 配置自定义模型 + 路由仅作参考 */
           <>
             <div className="p-5 space-y-4">
-              {baseInfoSection}{apiKeyRow}{routeSection}{directGuideSection}{directGatewaySection}{traeModelSection}
+              {baseInfoSection}{apiKeyRow}{routeSection}{boundAssetsSection}{directGuideSection}{directGatewaySection}{traeModelSection}
             </div>
             <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
               {btnSave}{btnCancel}
@@ -1104,7 +1424,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
           /* 官方订阅 + 会话导入：基础信息 + Key + 手工说明 */
           <>
             <div className="p-5 space-y-4">
-              {baseInfoSection}{apiKeyRow}{directGuideSection}{directGatewaySection}
+              {baseInfoSection}{apiKeyRow}{boundAssetsSection}{directGuideSection}{directGatewaySection}
             </div>
             <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
               {btnSave}{btnCancel}
@@ -1113,7 +1433,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
         ) : (
           <>
             <div className="p-5 space-y-4">
-              {baseInfoSection}{apiKeyRow}{envSection}{routeSection}{accessSection}
+              {baseInfoSection}{apiKeyRow}{envSection}{routeSection}{boundAssetsSection}{accessSection}
             </div>
             <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
               {onDelete && isKeyApp(app.link_method) && (
@@ -1322,6 +1642,8 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
             className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
           <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.modelInterceptHint')}</div>
         </div>
+        {/* 已绑定资源 / MCP（API 应用按 app.id 匹配中转） */}
+        <AppBoundAssetsSection app={app} onClose={onCancel} />
         {/* 接入配置：Key + base_url + 示例（用户自行把应用指向网关）*/}
         {app.api_key && (
           <div>

@@ -1009,24 +1009,18 @@ function p2pAbortError(kind) {
 
 function proxyRequest(provider, reqPath, body, res) {
   return new Promise((resolve, reject) => {
-    const base    = normBase(provider.base_url);
-    const ver     = apiVer(provider.base_url);
-    const fullUrl = base + reqPath.replace(/^\/v1\//, `/${ver}/`);
-    let u;
-    try { u = new URL(fullUrl); }
-    catch { return reject(new Error('invalid_url')); }
-
-    const mod      = u.protocol === 'https:' ? https : http;
-    // 只对 OAI 路径注入 stream_options（Anthropic /v1/messages 不识别）
+    // 只对 OAI chat 路径注入 stream_options（Anthropic / Responses 上游不识别或语义不同）
     let sendBody = /\/chat\/completions$/.test(reqPath) ? withUsageOption(body) : body;
     let headers  = {
       'Content-Type':   'application/json',
       'Accept':         'text/event-stream, application/json',
     };
+    // OAuth：注入鉴权头/体，并采用 applyAuth 返回的上游 base（Codex→chatgpt backend 等）
+    let effectiveBase = provider.base_url;
     if (provider._oauth) {
-      // OAuth 供给源：注入 Bearer + 指纹头 + system，覆盖默认认证头
       const ap = provider._oauth.applyAuth({ headers, body: sendBody, credentials: provider.credentials });
       headers = ap.headers; sendBody = ap.body;
+      if (ap.baseUrl) effectiveBase = ap.baseUrl;
     } else if (provider.token) {
       if (providerApiFormat(provider) === 'anthropic') {
         headers['x-api-key'] = provider.token;
@@ -1039,6 +1033,11 @@ function proxyRequest(provider, reqPath, body, res) {
     const bodyStr = JSON.stringify(sendBody);
     headers['Content-Length'] = Buffer.byteLength(bodyStr);
 
+    let u;
+    try { u = new URL(resolveUpstreamUrl(effectiveBase, reqPath)); }
+    catch { return reject(new Error('invalid_url')); }
+
+    const mod = u.protocol === 'https:' ? https : http;
     const opts = {
       hostname: u.hostname,
       port: u.port || (u.protocol === 'https:' ? 443 : 80),
@@ -1077,6 +1076,7 @@ function proxyRequest(provider, reqPath, body, res) {
       if (isStream) {
         // Streaming: pipe to client while sniffing SSE events for usage + upstream message id.
         // Cache tokens may appear too (Anthropic message_start / message_delta).
+        // Responses API：usage 在 response.completed / response.usage 事件的 response.usage。
         let usageIn = 0, usageOut = 0, cacheCreate = 0, cacheRead = 0, msgId = null;
         let sseBuf = '';
         proxyRes.on('data', (chunk) => {
@@ -1094,8 +1094,8 @@ function proxyRequest(provider, reqPath, body, res) {
             }
             try {
               const obj = JSON.parse(ds);
-              // 上游响应 id：OpenAI chunk 顶层 id；Anthropic message_start 在 message.id
-              if (!msgId) msgId = obj.id || obj.message?.id || null;
+              // 上游响应 id：OpenAI chunk 顶层 id；Anthropic message_start；Responses response.id
+              if (!msgId) msgId = obj.id || obj.message?.id || obj.response?.id || null;
               // Anthropic 缓存 token 分布在 message_start / message_delta
               const au = obj.message?.usage || (obj.type === 'message_delta' ? obj.usage : null);
               if (au) {
@@ -1104,9 +1104,14 @@ function proxyRequest(provider, reqPath, body, res) {
                 if (au.cache_creation_input_tokens != null) cacheCreate = au.cache_creation_input_tokens;
                 if (au.cache_read_input_tokens     != null) cacheRead   = au.cache_read_input_tokens;
               }
-              if (obj.usage) {
-                usageIn  = obj.usage.prompt_tokens     || obj.usage.input_tokens     || usageIn;
-                usageOut = obj.usage.completion_tokens || obj.usage.output_tokens    || usageOut;
+              const ru = obj.response?.usage || obj.usage;
+              if (ru) {
+                usageIn  = ru.prompt_tokens     || ru.input_tokens     || usageIn;
+                usageOut = ru.completion_tokens || ru.output_tokens    || usageOut;
+                if (ru.input_tokens_details?.cached_tokens != null) {
+                  cacheRead = ru.input_tokens_details.cached_tokens;
+                }
+                if (ru.cache_read_input_tokens != null) cacheRead = ru.cache_read_input_tokens;
               }
             } catch {}
           }
@@ -1136,12 +1141,13 @@ function proxyRequest(provider, reqPath, body, res) {
           let usageIn = 0, usageOut = 0, cacheCreate = 0, cacheRead = 0, msgId = null;
           try {
             const obj = JSON.parse(buf.toString());
-            msgId = obj.id || null; // OpenAI chatcmpl_xxx / Anthropic msg_xxx 都在顶层 id
-            const u   = obj.usage || {};
-            usageIn  = u.prompt_tokens     || u.input_tokens                || 0;
-            usageOut = u.completion_tokens || u.output_tokens               || 0;
-            cacheCreate = u.cache_creation_input_tokens || 0;
-            cacheRead   = u.cache_read_input_tokens     || 0;
+            msgId = obj.id || null; // OpenAI chatcmpl_xxx / Anthropic msg_xxx / Responses resp_xxx
+            const u2  = obj.usage || {};
+            usageIn  = u2.prompt_tokens     || u2.input_tokens                || 0;
+            usageOut = u2.completion_tokens || u2.output_tokens               || 0;
+            cacheCreate = u2.cache_creation_input_tokens || 0;
+            cacheRead   = u2.cache_read_input_tokens
+              || u2.input_tokens_details?.cached_tokens || 0;
           } catch {}
           resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0,
             input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
@@ -1587,6 +1593,34 @@ function providerApiFormat(provider) {
   if (/anthropic/i.test(provider.base_url || '')) return 'anthropic';
   if (/generativelanguage\.googleapis\.com/i.test(provider.base_url || '')) return 'gemini';
   return 'openai';
+}
+
+/**
+ * 上游是否原生支持 OpenAI Responses API（/v1/responses 或 Codex backend /responses）。
+ * 支持时网关对 Codex 客户端请求做透传（保留 previous_response_id 等），否则降级转 Chat。
+ */
+function providerSupportsResponses(provider) {
+  if (!provider) return false;
+  if (provider.supports_responses === false) return false;
+  if (provider.supports_responses === true) return true;
+  if (provider.api_format === 'responses') return true;
+  // Codex ChatGPT 订阅 OAuth：上游 chatgpt.com/backend-api/codex 本身就是 Responses
+  if (provider.auth_type === 'oauth' && provider.oauth_provider === 'codex') return true;
+  // 官方 OpenAI API
+  if (/api\.openai\.com/i.test(String(provider.base_url || ''))) return true;
+  if (provider.id === 'openai' || provider.id === 'codex') return true;
+  return false;
+}
+
+/** 拼上游 URL：ChatGPT Codex backend 的 Responses 无 /v1 前缀。 */
+function resolveUpstreamUrl(baseUrl, reqPath) {
+  const base = normBase(baseUrl);
+  const path = String(reqPath || '');
+  if (/chatgpt\.com\/backend-api\/codex$/i.test(base) && /\/responses\/?$/.test(path)) {
+    return base + '/responses';
+  }
+  const ver = apiVer(baseUrl);
+  return base + path.replace(/^\/v1\//, `/${ver}/`);
 }
 
 // ── Gemini (generateContent) ⇄ OpenAI ───────────────────────────────────────
@@ -2096,13 +2130,29 @@ function proxyP2PSync(provider, oaiBody, model, res) {
 }
 
 // ── Codex Responses ⇄ Chat Completions ───────────────────────────────────────
-// Codex 客户端走 Responses 协议（/v1/responses），但第三方上游只会 Chat Completions。
-// 这里把 Responses 请求转成 Chat 请求转发上游，再把上游 Chat 响应（流式/非流式）转回 Responses。
+// Codex 客户端走 Responses 协议（/v1/responses）。上游若原生支持 Responses 则透传；
+// 否则（多数第三方仅 Chat Completions）在此把 Responses ⇄ Chat 互转。
 function proxyResponsesViaChat(provider, responsesBody, model, res) {
   return new Promise((resolve, reject) => {
     const streaming = !!responsesBody.stream;
     // Responses → Chat 请求体（含 stream 时自动注入 include_usage）
     const chatBody = codexTransform.responsesToChat({ ...responsesBody, model });
+    // 工具上下文：回写时还原 namespace / custom / tool_search（对齐 cc-switch）
+    const toolContext = chatBody._codexToolContext
+      || codexTransform.buildCodexToolContext(responsesBody);
+    delete chatBody._codexToolContext; // 内部字段，勿发给上游
+
+    // 工具链路诊断：入站类型 → 展平后 chat tools → 便于排查「无工具日志」
+    const inboundTools = codexTransform.summarizeResponsesTools(responsesBody);
+    const chatToolNames = (chatBody.tools || []).map(t => t && t.function && t.function.name).filter(Boolean);
+    debugLog('proxyResponsesViaChat 工具转换', {
+      provider: provider.id, model,
+      inbound: inboundTools,
+      chat_tools: chatToolNames.length,
+      chat_tool_names: chatToolNames.slice(0, 40),
+      has_exec: chatToolNames.includes('exec'),
+    });
+    console.log(`[gateway] responses→chat tools=${chatToolNames.length} exec=${chatToolNames.includes('exec')} inbound=${inboundTools.top_level}+add=${inboundTools.additional}`);
 
     const base    = normBase(provider.base_url);
     const fullUrl = base + '/' + apiVer(provider.base_url) + '/chat/completions';
@@ -2146,7 +2196,7 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
           'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
           'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*',
         });
-        const sm = new codexTransform.ChatToResponsesStream();
+        const sm = new codexTransform.ChatToResponsesStream({ toolContext });
         let buf = '';
         const usageOf = () => { const u2 = sm.getUsage() || {}; return {
           provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
@@ -2182,7 +2232,7 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
           let respObj, usageIn = 0, usageOut = 0, cacheRead = 0, msgId = null;
           try {
             const chatResp = JSON.parse(raw);
-            respObj = codexTransform.chatToResponses(chatResp);
+            respObj = codexTransform.chatToResponses(chatResp, { toolContext });
             const u2 = respObj.usage || {};
             usageIn = u2.input_tokens || 0; usageOut = u2.output_tokens || 0;
             cacheRead = u2.cache_read_input_tokens || u2.input_tokens_details?.cached_tokens || 0;
@@ -2212,6 +2262,9 @@ function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
   return new Promise((resolve, reject) => {
     const streaming = !!responsesBody.stream;
     const chatBody  = codexTransform.responsesToChat({ ...responsesBody, model });
+    const toolContext = chatBody._codexToolContext
+      || codexTransform.buildCodexToolContext(responsesBody);
+    delete chatBody._codexToolContext;
     let anthBody    = oaiRequestToAnthropic({ ...chatBody, stream: streaming });
 
     const base    = normBase(provider.base_url);
@@ -2251,7 +2304,7 @@ function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
 
       if (streaming) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*' });
-        const sm = new codexTransform.ChatToResponsesStream();
+        const sm = new codexTransform.ChatToResponsesStream({ toolContext });
         const chatId = 'chatcmpl-' + Math.random().toString(36).slice(2, 26);
         let buf = '', usageIn = 0, usageOut = 0, started = false;
         const feed = (obj) => { res.write(sm.handleChunk(obj)); };
@@ -2288,7 +2341,7 @@ function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
         proxyRes.on('end', () => {
           try {
             const anthResp = JSON.parse(Buffer.concat(chunks).toString());
-            const respObj  = codexTransform.chatToResponses(anthropicRespToOai(anthResp));
+            const respObj  = codexTransform.chatToResponses(anthropicRespToOai(anthResp), { toolContext });
             res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
             res.end(JSON.stringify(respObj));
             const latency = Date.now() - t0;
@@ -2375,13 +2428,21 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   // 转发请求日志（控制台常驻）：看清每次请求实际转发到哪个 provider / 哪个模型
   console.log(`[gateway] → forward model="${attemptModel}" via provider="${provider.id}" (${provider.type}) ${provider.base_url}`);
 
-  // Codex Responses 请求：anthropic 供给源走 Responses→Anthropic 桥，否则走 Responses⇄Chat
+  // Codex Responses 请求：
+  //  - 上游原生支持 Responses → 透传（保留 previous_response_id 等多轮字段）
+  //  - Anthropic → Responses→Anthropic 桥
+  //  - 其余（仅 Chat Completions）→ Responses⇄Chat 转换
   if (reqPath === '/v1/responses' || reqPath === '/responses') {
-    const toAnthropic = providerApiFormat(provider) === 'anthropic';
+    const fmt = providerApiFormat(provider);
     const rb = clampOutputTokens(attemptModel, { ...body, model: attemptModel });
-    return toAnthropic
-      ? await proxyResponsesViaAnthropic(provider, rb, attemptModel, res)
-      : await proxyResponsesViaChat(provider, rb, attemptModel, res);
+    if (fmt === 'anthropic') {
+      return await proxyResponsesViaAnthropic(provider, rb, attemptModel, res);
+    }
+    if (providerSupportsResponses(provider)) {
+      console.log(`[gateway] → responses native passthrough via "${provider.id}"`);
+      return await proxyRequest(provider, '/v1/responses', rb, res);
+    }
+    return await proxyResponsesViaChat(provider, rb, attemptModel, res);
   }
   const attemptBody = clampOutputTokens(attemptModel, { ...body, model: attemptModel });
   const oaiConvertOpts = { includeImages: modelSupportsVision(attemptModel, provider) };
@@ -3727,6 +3788,8 @@ module.exports = {
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
   stratStepOf, encodeRouteHeader, orderStepsByFlow, buildStrategyCandidates, parsePureCodec, unifySteps,
   isP2pProvider, isP2pCreditsError, isP2pApiKeyError, hasP2pRelayKey, resolveFailStatus,
+  // Responses 透传判定 / URL 拼装（供单测）
+  providerSupportsResponses, resolveUpstreamUrl, providerApiFormat,
   // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
   // Gemini 转换（供单测/复用，含 tool-calling）

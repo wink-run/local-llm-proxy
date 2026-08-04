@@ -1329,8 +1329,8 @@ function createTray() {
             if (quickInvokes.some((q) => q.id === row.id)) continue;
             const name = row.display_name || row.name;
             const invokeText = lang === 'en'
-              ? `Use the "${name}" agent from Token Bank for this task. Call tb_list_resources(type=assistant) then tb_get_resource, then follow it in this session.`
-              : `用「${name}」智能体处理当前任务。先 tb_list_resources(type=assistant) 再 tb_get_resource 取回出战正文，在本会话按正文执行。`;
+              ? `Summon the "${name}" agent from Token Bank to complete this task.`
+              : `召唤 Token Bank 中的「${name}」智能体来完成当前任务。`;
             quickInvokes.push({
               id: row.id,
               displayName: name,
@@ -2709,6 +2709,8 @@ function registerIPC() {
   });
   ipcMain.handle('localStats:query', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
+    // 打开盘点页时先补录 Skill/工具（WorkBuddy trace 等），避免「会话有 Skill、盘点却是 0」
+    try { syncSessionTelemetry(localStats); } catch {}
     const data = localStats.queryDashboard(d);
     // 按应用聚合（合并网关实时 + 会话补录），供「应用用量分布」按应用分组、判定网关/订阅/混合徽章
     try {
@@ -5311,8 +5313,9 @@ app.whenReady().then(() => {
   // 有新增就通知前端刷新——否则直连用量要等重启重新挂载才显示，不像网关那样"实时"。
   const runSessionImport = () => {
     try {
-      const { hookImported, sessionImported } = syncSessionTelemetry(localStats);
-      if (hookImported > 0 || sessionImported > 0) {
+      const { hookImported, sessionImported, skillRecorded, toolsRecorded } = syncSessionTelemetry(localStats);
+      // Skill/工具补录也要通知前端：否则 WorkBuddy 等只写 skill_calls 时 Dashboard 一直显示 0
+      if (hookImported > 0 || sessionImported > 0 || skillRecorded > 0 || toolsRecorded > 0) {
         try {
           mainWindow?.webContents?.send('apps:changed');
           mainWindow?.webContents?.send('localStats:changed');
