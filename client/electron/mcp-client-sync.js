@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 let shim = null;
 try { shim = require('./shim-installer'); } catch { /* optional in CLI */ }
-const { BUILTIN_BRIDGE_ID, BUILTIN_PROMPTS_ID, BUILTIN_MODELS_ID, BUILTIN_RESOURCES_ID, writeElectronAsNodeLauncher } = require('./mcp-manager');
+const { BUILTIN_BRIDGE_ID, BUILTIN_PROMPTS_ID, BUILTIN_MODELS_ID, BUILTIN_RESOURCES_ID, writeElectronAsNodeLauncher, mcpStdioFromLauncher } = require('./mcp-manager');
 const { CLIENT_TARGETS } = require('./mcp-agent-targets');
 
 const STATE_PATH = path.join(os.homedir(), '.tokenbank', 'mcp', 'client-sync-state.json');
@@ -60,11 +60,7 @@ function serverToEntry(serverRow, clientId) {
       scriptPath: PROMPTS_SCRIPT,
       env: { TB_CLIENT_ID: clientId || '' },
     });
-    return {
-      command: launcher,
-      args: [],
-      env: {},
-    };
+    return mcpStdioFromLauncher(launcher);
   }
 
   // 内置模型资源 MCP：始终可查网关可用模型
@@ -74,11 +70,7 @@ function serverToEntry(serverRow, clientId) {
       scriptPath: MODELS_SCRIPT,
       env: {},
     });
-    return {
-      command: launcher,
-      args: [],
-      env: {},
-    };
+    return mcpStdioFromLauncher(launcher);
   }
 
   // 内置资源发现 MCP：能力总览 + skill/assistant/社区目录
@@ -89,11 +81,7 @@ function serverToEntry(serverRow, clientId) {
       scriptPath: RESOURCES_SCRIPT,
       env: { TB_CLIENT_ID: clientId || '' },
     });
-    return {
-      command: launcher,
-      args: [],
-      env: {},
-    };
+    return mcpStdioFromLauncher(launcher);
   }
 
   // URL / HTTP / SSE MCP（如 WorkBuddy connector-proxy）
@@ -159,11 +147,16 @@ function loadJsonMcp(filePath) {
   return { ...raw, mcpServers: {} };
 }
 
-function syncJsonClient(clientId, filePath, servers) {
+function syncJsonClient(clientId, filePath, servers, { allowCreate = false } = {}) {
   const list = Array.isArray(servers) ? servers : [];
-  // 配置尚不存在：绝不新建（避免启动自写 config → 再被判「已安装」）
+  // 安装探测已不依赖配置文件是否存在；已确认安装的 Agent 允许首次创建 mcp 配置
+  // （否则 Windows 上 WorkBuddy / Kimi 等常因缺 mcp.json 静默跳过）
   if (!fs.existsSync(filePath)) {
-    return { synced: [], keys: [], path: filePath, skipped: true, reason: 'config-missing' };
+    if (!allowCreate) {
+      return { synced: [], keys: [], path: filePath, skipped: true, reason: 'config-missing' };
+    }
+    ensureDir(filePath);
+    fs.writeFileSync(filePath, `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`, 'utf8');
   }
   const prev = readState().clients[clientId]?.keys || [];
   const doc = loadJsonMcp(filePath);
@@ -255,12 +248,16 @@ function buildCodexMcpSections(entries) {
   return blocks;
 }
 
-function syncCodexClient(clientId, filePath, servers, prevKeys) {
+function syncCodexClient(clientId, filePath, servers, prevKeys, { allowCreate = false } = {}) {
   const list = Array.isArray(servers) ? servers : [];
   const prev = Array.isArray(prevKeys) ? prevKeys : [];
-  // 配置尚不存在：绝不新建 config.toml（避免自写后再被判已安装）
+  // 与 json 同理：强信号已装时可新建空 config.toml（否则 Desktop 新装无法投射 MCP）
   if (!fs.existsSync(filePath)) {
-    return { synced: [], keys: [], path: filePath, skipped: true, reason: 'config-missing' };
+    if (!allowCreate) {
+      return { synced: [], keys: [], path: filePath, skipped: true, reason: 'config-missing' };
+    }
+    ensureDir(filePath);
+    fs.writeFileSync(filePath, '# Created by Token Bank for MCP sync\n', 'utf8');
   }
   const original = fs.readFileSync(filePath, 'utf8');
   let text = stripCodexTbMcpSections(original, prev);
@@ -330,24 +327,27 @@ function syncAll(servers, options = {}) {
       const filePath = resolveTargetConfigPath(target);
       const prevKeys = state.clients[clientId]?.keys || [];
       const clientServers = filterServersForClient(servers, clientId);
+      // 仅同步已安装 / UI 显式指定的目标；探测已不靠配置文件，可安全建盘
+      const allowCreate = true;
       let result;
 
       if (target.format === 'json-mcp') {
-        result = syncJsonClient(clientId, filePath, clientServers);
+        result = syncJsonClient(clientId, filePath, clientServers, { allowCreate });
       } else if (target.format === 'toml-mcp') {
-        result = syncCodexClient(clientId, filePath, clientServers, prevKeys);
+        result = syncCodexClient(clientId, filePath, clientServers, prevKeys, { allowCreate });
       } else {
         continue;
       }
 
-      // 配置文件不存在：跳过，保留旧 state，绝不新建文件
+      // 配置文件不存在且未允许创建：跳过，保留旧 state
       if (result.skipped && result.reason === 'config-missing') {
         results.push({
           clientId,
           label: target.label,
-          success: true,
+          success: false,
           skipped: true,
           reason: 'config-missing',
+          error: 'config-missing',
           path: result.path,
           synced: [],
           count: 0,
@@ -1108,4 +1108,6 @@ module.exports = {
   filterServersForClient,
   CLIENT_TARGETS,
   serverToEntry,
+  syncJsonClient,
+  syncCodexClient,
 };

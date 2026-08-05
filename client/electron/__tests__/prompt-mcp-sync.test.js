@@ -23,15 +23,27 @@ function withInstalledClients(ids, fn) {
 
 test('serverToEntry: prompts server 物化为 shell launcher（内嵌 ELECTRON_RUN_AS_NODE）', () => {
   const entry = sync.serverToEntry(promptsRow, 'claude-code');
-  assert.ok(String(entry.command).endsWith('prompts-claude-code.sh'), entry.command);
-  assert.deepEqual(entry.args, []);
-  const sh = require('fs').readFileSync(entry.command, 'utf8');
-  assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
-  assert.ok(sh.includes('prompt-mcp.js'));
-  // 即使在系统 Node 下跑测试，launcher 也应指向 Electron 二进制而非 node
-  assert.ok(/Electron(\.app|['"])|[/\\]electron['"]/i.test(sh), sh);
-  assert.ok(!/[/\\]bin[/\\]node'/.test(sh), 'launcher must not use system node');
-  assert.ok(sh.includes("TB_CLIENT_ID='claude-code'") || sh.includes('TB_CLIENT_ID=claude-code'));
+  assert.deepEqual(entry.env || {}, {});
+  const isWin = process.platform === 'win32';
+  if (isWin) {
+    assert.match(String(entry.command), /cmd\.exe$/i);
+    assert.ok(entry.args.some((a) => /prompts-claude-code\.cmd/i.test(String(a))), entry.args);
+    const cmdPath = String(entry.args.find((a) => /\.cmd/i.test(String(a)))).replace(/^"|"$/g, '');
+    const sh = require('fs').readFileSync(cmdPath, 'utf8');
+    assert.ok(sh.includes('ELECTRON_RUN_AS_NODE'));
+    assert.ok(sh.includes('prompt-mcp.js'));
+    assert.ok(sh.includes('TB_CLIENT_ID'));
+  } else {
+    assert.ok(String(entry.command).endsWith('prompts-claude-code.sh'), entry.command);
+    assert.deepEqual(entry.args, []);
+    const sh = require('fs').readFileSync(entry.command, 'utf8');
+    assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
+    assert.ok(sh.includes('prompt-mcp.js'));
+    // 即使在系统 Node 下跑测试，launcher 也应指向 Electron 二进制而非 node
+    assert.ok(/Electron(\.app|['"])|[/\\]electron['"]/i.test(sh), sh);
+    assert.ok(!/[/\\]bin[/\\]node'/.test(sh), 'launcher must not use system node');
+    assert.ok(sh.includes("TB_CLIENT_ID='claude-code'") || sh.includes('TB_CLIENT_ID=claude-code'));
+  }
 });
 
 test('serverToEntry: bridge 与其他 __DYNAMIC_ELECTRON__ 仍返回 null', () => {
@@ -44,10 +56,14 @@ test('serverToEntry: models server 物化为 shell launcher', () => {
     id: 'tokenbank-models', name: 'tokenbank-models', status: 'active',
     command: '__DYNAMIC_ELECTRON__', args: '[]', env: '{"ELECTRON_RUN_AS_NODE":"1"}', builtin: 1,
   }, 'cursor');
-  assert.ok(String(entry.command).endsWith('models-cursor.sh'), entry.command);
-  const sh = require('fs').readFileSync(entry.command, 'utf8');
-  assert.ok(sh.includes('models-mcp.js'));
-  assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
+  if (process.platform === 'win32') {
+    assert.ok(entry.args.some((a) => /models-cursor\.cmd/i.test(String(a))), entry.args);
+  } else {
+    assert.ok(String(entry.command).endsWith('models-cursor.sh'), entry.command);
+    const sh = require('fs').readFileSync(entry.command, 'utf8');
+    assert.ok(sh.includes('models-mcp.js'));
+    assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
+  }
 });
 
 test('serverToEntry: resources server 物化为 shell launcher 并内嵌 TB_CLIENT_ID', () => {
@@ -55,11 +71,15 @@ test('serverToEntry: resources server 物化为 shell launcher 并内嵌 TB_CLIE
     id: 'tokenbank-resources', name: 'tokenbank-resources', status: 'active',
     command: '__DYNAMIC_ELECTRON__', args: '[]', env: '{"ELECTRON_RUN_AS_NODE":"1"}', builtin: 1,
   }, 'codex');
-  assert.ok(String(entry.command).endsWith('resources-codex.sh'), entry.command);
-  const sh = require('fs').readFileSync(entry.command, 'utf8');
-  assert.ok(sh.includes('resources-mcp.js'));
-  // 与 prompts 一致：否则空 client 会列出全部 assistant
-  assert.ok(sh.includes("TB_CLIENT_ID='codex'") || sh.includes('TB_CLIENT_ID=codex'));
+  if (process.platform === 'win32') {
+    assert.ok(entry.args.some((a) => /resources-codex\.cmd/i.test(String(a))), entry.args);
+  } else {
+    assert.ok(String(entry.command).endsWith('resources-codex.sh'), entry.command);
+    const sh = require('fs').readFileSync(entry.command, 'utf8');
+    assert.ok(sh.includes('resources-mcp.js'));
+    // 与 prompts 一致：否则空 client 会列出全部 assistant
+    assert.ok(sh.includes("TB_CLIENT_ID='codex'") || sh.includes('TB_CLIENT_ID=codex'));
+  }
 });
 
 test('serverToEntry: URL/SSE MCP 可写出 url 条目', () => {

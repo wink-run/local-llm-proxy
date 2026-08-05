@@ -4,7 +4,7 @@
 >
 > 用的明白 · 用的节省 · 用的简单 · 越用越懂你 · 闲置赚钱
 >
-> 一键纳管 Claude / Cursor / Codex · 一站式 Trace 与路由 · 画像驱动资源发现 · 社区分享
+> 一键纳管 Claude / Cursor / Codex / WorkBuddy · 一站式 Trace 与路由 · 画像驱动资源发现 · 社区分享与远程智能体
 
 [English](./README.md) · [下载最新版](https://github.com/wink-run/tokenbank/releases/latest) · [架构文档](./DESIGN.md) · [隐私政策](./docs/PRIVACY_POLICY.md)
 
@@ -19,23 +19,59 @@
 - 多工具、多账号、多设备对不齐；Skill / MCP / Prompt 越装越乱
 - 月末套餐额度清零白浪费
 
-**Token Bank 是你的个人 AI 中枢，** 把 Claude Code、Codex、Cursor、Gemini CLI 等接入本地网关——不改客户端习惯，把 Token **用的明白、用的节省、用的简单**，并按使用习惯沉淀与发现资源（**越用越懂你**）；闲置算力还能通过**社区分享**换成积分（**闲置赚钱**）。
+**Token Bank 是你的个人 AI 中枢，** 把 Claude Code、Codex、Cursor、WorkBuddy、Kimi Code 等接入本地网关——不改客户端习惯，把 Token **用的明白、用的节省、用的简单**，并按使用习惯沉淀与发现资源（**越用越懂你**）；闲置算力还能通过**社区分享**换成积分，社区智能体可在对方设备执行（**闲置赚钱**）。
 
 **五条主线：**
 
 | 主线 | 你得到什么 |
 |---|---|
 | **用的明白** | 一键纳管；全链路 Trace；多维盘点与多设备汇总；订阅 / 按量对照 |
-| **用的节省** | 无损换模；智能路由（本地源优先）；场景策略；可选无损压缩 |
+| **用的节省** | 无损换模；智能路由（本地源优先 + 任务分型）；场景策略；可选无损压缩 |
 | **用的简单** | 纳管 / 还原一键完成；CLI 多账号按目录分发；托盘常驻；改一个本地地址即可接入 |
 | **越用越懂你** | 工作画像；MCP / Skill / Prompt / Agent 个性化发现、沉淀与迭代 |
-| **闲置赚钱** | 贡献闲置算力赚积分；圈子共享与网络地图 |
+| **闲置赚钱** | 贡献闲置算力赚积分；雇佣社区智能体；圈子共享与网络地图 |
+
+---
+
+## 技术架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  桌面客户端 (Electron · Mac / Windows) 或 CLI / Docker Web UI    │
+│  网关 · 供给源 · 资源 · 游乐场 · 盘点 · 圈子 · 贡献 · 托盘      │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ 本机 loopback
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  本地网关  :11430/v1                                            │
+│  · Anthropic Messages / OpenAI Chat / Codex Responses 协议适配  │
+│  · keyScene 换模 · 场景/任务分型路由 · 无损压缩 · 会话 Trace    │
+│  · MCP 内置中转（prompts / models / resources / agent-bridge）  │
+└───────────────┬─────────────────────────────┬───────────────────┘
+                │ 本地源 Key 不出机             │ 登录 + 转发 Key
+                ▼                             ▼
+     Ollama / 免费 API / 订阅 / 按量      云端 Token Bank 服务
+                                             │
+                              ┌──────────────┼──────────────┐
+                              ▼              ▼              ▼
+                         社区模型 P2P    社区智能体派发   多设备用量合并
+                         (WebSocket)    (对方设备执行)   圈子 / 目录下发
+```
+
+**实现要点：**
+
+| 层次 | 说明 |
+|---|---|
+| **应用 Handler** | `app-handlers.yaml` 声明式描述 CLI shim / 配置文件 patch / 会话扫描；WorkBuddy、Trae、Hermes、Kimi 等按强信号探测安装态 |
+| **路由** | 统一「路由 = Selector 链」：个人/社区/免费/付费来源 + 预定义任务分型（design / repo-qa / chore / debug） |
+| **资源投射** | Skill / Prompt / MCP 只写入**已纳管且本机已装**的目标；无 stdio 的应用可走内置 MCP 中转 |
+| **数据面** | 网关实时日志 + 本地会话补录（Claude / Codex / Cursor / WorkBuddy Trace 等）自动去重 |
 
 ---
 
 ## 核心能力：一键纳管 · 无损换模 · 全链路 Trace
 
-Token Bank 不只是转发 API——它把 **Claude Code、Codex、Gemini CLI、Cursor、Copilot** 等主流 Agent 统一纳入本地网关，在**不改动 Agent 本身**的前提下，实现用量追溯、模型切换与智能路由。
+Token Bank 不只是转发 API——它把 **Claude Code、Codex、Cursor、WorkBuddy、Kimi Code、OpenClaw** 等主流 Agent 统一纳入本地网关，在**不改动 Agent 本身**的前提下，实现用量追溯、模型切换与智能路由。
 
 ### 一键纳管应用
 
@@ -43,9 +79,10 @@ Token Bank 不只是转发 API——它把 **Claude Code、Codex、Gemini CLI、
 
 | 应用 | 接入方式 |
 |---|---|
-| Claude Code / Codex CLI / Gemini CLI / OpenCode 等 | CLI 透明托管：自动注入 `BASE_URL` 环境变量，无需改命令 |
-| Claude Desktop / Codex Desktop / OpenClaw | 配置文件写入：一键 patch 指向本地网关 |
-| Cursor 等 OpenAI 兼容客户端 | 手动改 `OPENAI_BASE_URL`，或在网关创建专用 Key |
+| Claude Code / Codex CLI / OpenCode / Hermes / Kimi Code | CLI 透明托管：自动注入 `BASE_URL` 等环境变量，无需改命令 |
+| Claude Desktop / Codex Desktop / OpenClaw / WorkBuddy | 配置文件写入：一键 patch 指向本地网关（缺省配置可在强信号确认后首次创建） |
+| Trae Work | 会话补录 + 手工填网关参数（IDE 内自定义模型） |
+| Cursor / Copilot / Qwen / Grok 等 | 会话统计，或 OpenAI 兼容入口改 `OPENAI_BASE_URL` / 网关专用 Key |
 
 **纳管流程：**
 
@@ -79,7 +116,7 @@ Anthropic Messages ↔ OpenAI Chat ↔ Codex Responses
 | 模式 | 说明 |
 |---|---|
 | **网关实时代理** | 请求经 `localhost:11430` 转发，记录路由链、真实模型、Token、延迟、费用 |
-| **会话补录** | 纳管但未走网关时，扫描本地会话日志（`~/.claude`、`~/.codex` 等）补录用量 |
+| **会话补录** | 纳管但未走网关时，扫描本地会话日志（`~/.claude`、`~/.codex`、WorkBuddy Trace 等）补录用量 |
 | **自动去重** | 同一次调用若既走网关又落进会话文件，只记一次 |
 
 Trace 数据在 **盘点** 页按 **应用 · 供给源 · 模型 · 供给类型 · 设备 · 时间** 多维切片，调用日志可查看每条请求的路由结果与耗时。
@@ -89,9 +126,9 @@ Trace 数据在 **盘点** 页按 **应用 · 供给源 · 模型 · 供给类�
 供给源分为 **本地源** 与 **社区分享源** 两大类，每个应用可独立绑定路由，全局供给链作为兜底：
 
 ```
-按应用绑定（keyScene / 场景路由）
+按应用绑定（keyScene / 场景路由 / 任务分型）
     ↓ 未绑定或 llm-router-* 模型
-智能供给链
+智能供给链（统一「路由 = Selector 链」）
     本地源：Ollama → 免费 API (Groq / GitHub Models) → 订阅 / 按量 API
     ↓ 本地源不可用或需扩展算力
     社区分享源（消耗积分，调用社区共享算力）
@@ -105,8 +142,15 @@ fallback · round-robin · weighted · latency · direct
 | **社区分享源** | 社区共享算力网络 | 消耗积分调用远程节点，模型列表动态下发 |
 
 - **场景路由**：日常对话、代码补全、长文档分析绑定不同供给链
+- **任务分型路由**：预定义 `design` / `repo-qa` / `chore` / `debug` 等 model_key，按任务类型选链（对齐 OpenCode 类推理路由）
+- **来源/价格过滤**：可限定仅个人源、仅社区、仅免费或仅付费
 - **策略组**：按任务特征（工具调用、上下文长度等）动态选择 provider 顺序
 - **故障转移**：本地源不可用时自动尝试社区分享，对 Agent 完全透明
+- **出站保护**：按上游模型输出上限夹紧 `max_tokens`，减少协议/限额 400
+
+### 模型模态
+
+供给源模型可标记 **文本 / 图文 / 生图 / 嵌入**，驱动游乐场能力与 Codex catalog 的 `input_modalities`；图文模型才会在客户端暴露图片输入。
 
 ### 网关无损压缩
 
@@ -178,10 +222,12 @@ fallback · round-robin · weighted · latency · direct
 
 **调试 / 游乐场**不再只是单模型对话：
 
-- 设一个**主 Agent**作为聚合入口，接收自然语言任务
+- 设一个**主 Agent**作为聚合入口，接收自然语言任务（支持**图片输入**）
 - 主 Agent 可编排步骤，派发至已纳管的其他智能体（含 Kimi / Cursor 等运行时）
+- **社区智能体**：在贡献页按需雇佣；任务在**对方设备**执行，不下载对方正文，降低陌生 Agent 风险
+- 内置 `tokenbank-agent-bridge` MCP：`tb_list_agents` / `tb_dispatch_agent` 供编排派发
 - 对话流按块输出，工具调用可见；支持停止后续接
-- 智能体可见性由**运行时投射**门控：投射了才能在调试列表出现
+- 智能体可见性由**运行时投射 + 已纳管**门控：投射了且本机可用才会出现在列表
 
 ### 资源中枢：MCP · Skill · Prompt
 
@@ -190,9 +236,10 @@ fallback · round-robin · weighted · latency · direct
 | 类型 | 能力 |
 |---|---|
 | **社区目录** | 登录后拉取 MCP / Skill / Prompt / Agent 推荐清单（缓存优先，离线走内置兜底） |
-| **投射** | 把资源投射到指定智能体；可取消投射；纳管时级联依赖 |
-| **Prompt MCP** | Prompt 不再落盘斜杠命令，统一经 `tokenbank-prompts`（`tb_get_prompt` / `tb_list_prompts`），按投射集过滤 |
-| **工作画像海报** | 盘点页可生成四套气质的分享海报（专业 / 可爱 / 幽默 / 简约），便于对外展示用量画像 |
+| **投射** | 只投射到**已纳管且本机已装**的目标；可取消；纳管时级联依赖 |
+| **内置 MCP 中转** | 无 stdio 通道的应用：选应用 → 绑定 prompts/models/resources → 复制中转配置即可 |
+| **Prompt MCP** | Prompt 经 `tokenbank-prompts`（`tb_get_prompt` / `tb_list_prompts`），按投射集过滤 |
+| **工作画像海报** | 盘点页可生成四套气质的分享海报（专业 / 可爱 / 幽默 / 简约） |
 
 ---
 
@@ -217,16 +264,16 @@ Token Bank 记录每一次调用：走了哪条路由、用了哪个模型、花
 社区分享（消耗积分，调用共享算力）
 ```
 
-- **无损换模**：客户端原生模型名不变，协议自动适配
-- **场景策略**：对话 / 补全 / 长文可绑不同供给链；故障转移对 Agent 透明
+- **无损换模**：客户端原生模型名不变，协议自动适配（含 Codex Responses 工具转发）
+- **场景 / 任务分型策略**：对话 / 补全 / 长文 / design·repo-qa·chore·debug 可绑不同供给链；故障转移对 Agent 透明
 - **无损压缩**：减少上游输入 Token，语义不变
 
 ### 三、用的简单
 
 - **网关页一键纳管与还原**，少改配置
-- **CLI 多账号**按启动目录自动分发；托盘常驻看状态与今日用量
+- **CLI 多账号**按启动目录自动分发；托盘常驻看状态与今日用量（品牌 logo + 玻璃浮层）
 - **OpenAI 兼容入口**：现有工具改一个本地地址即可接入
-- **Agent 游乐场**：主 Agent 接任务并派发，工具流可见
+- **Agent 游乐场**：主 Agent 接任务并派发（含社区智能体），工具流可见
 
 ### 四、越用越懂你
 
@@ -236,7 +283,7 @@ Token Bank 记录每一次调用：走了哪条路由、用了哪个模型、花
 
 ### 五、闲置赚钱
 
-把闲置算力或 API 额度贡献给 **社区分享** 网络，赚取积分，再消费共享模型。
+把闲置算力或 API 额度贡献给 **社区分享** 网络，赚取积分，再消费共享模型；也可上架 / 雇佣 **社区智能体**（对方设备执行）。
 
 **可贡献：** 本地 Ollama、闲置上游额度、内网私有模型（出站 WebSocket，无需开放端口）
 
@@ -264,9 +311,9 @@ Token Bank 记录每一次调用：走了哪条路由、用了哪个模型、花
   ```
 
   然后重新打开。或在「系统设置 → 隐私与安全性」中选择「仍要打开」。
-- **Windows** `.exe` — NSIS 安装包，支持后台自动更新
+- **Windows** `.exe` — NSIS 安装包，支持后台自动更新；标题栏与壳层主题一致
 
-安装后打开 → 进入「配置」页 → 填写账号服务地址和 P2P Key → 完成。
+安装后打开 → 进入「配置」页 → 填写账号服务地址和转发 Key → 完成。
 
 **接入 AI 工具：**
 
@@ -284,7 +331,7 @@ API Key 在「网关」页创建本地 Key，或使用你已有的上游 Key。
 
 ```bash
 git clone https://github.com/wink-run/tokenbank.git
-cd local-llm-proxy/client
+cd tokenbank/client
 npm install
 node cli/gateway.js start
 ```
@@ -305,7 +352,7 @@ pm2 start cli/gateway.js -- start
 
 ```bash
 git clone https://github.com/wink-run/tokenbank.git
-cd local-llm-proxy
+cd tokenbank
 
 docker compose up gateway -d
 ```
@@ -392,12 +439,12 @@ docker compose up gateway -d
 | 页面 | 功能 |
 |---|---|
 | **盘点** | 多维统计：应用占比、**本地源 / 社区分享** 分布、模型排行、压缩节省、费用估算；**工作画像分享海报** |
-| **网关** | **一键纳管** + **CLI 多账号**；会话 Trace；场景路由与供给链 |
-| **调试 / 游乐场** | **Agent 聚合编排**：主 Agent 接任务并派发；工具流、停止续接 |
-| **资源** | 社区推荐 **MCP / Skill / Prompt / Agent**；投射门控；画像推荐 |
-| **供给源** | **本地源**与 **社区分享源**；测速与动态目录 |
-| **圈子 / 贡献 / 网络** | 圈子共享 · 贡献节点 · 全球节点地图 |
-| **配置** | 网关端口、超时、并发 · 无损压缩 · 云端账号 |
+| **网关** | **一键纳管**（含 WorkBuddy / Trae 等）+ **CLI 多账号**；会话 Trace；场景 / 任务分型路由 |
+| **调试 / 游乐场** | **Agent 聚合编排**（含社区智能体、图片输入）；工具流、停止续接 |
+| **资源** | 社区推荐 **MCP / Skill / Prompt / Agent**；投射门控；**内置 MCP 中转**；画像推荐 |
+| **供给源** | **本地源**与 **社区分享源**；模态（文本/图文/生图/嵌入）；测速与动态目录 |
+| **圈子 / 贡献 / 网络** | 圈子共享 · 贡献节点 / 社区智能体雇佣 · 全球节点地图（网页亦可试用） |
+| **配置** | 网关端口、超时、并发 · 无损压缩 · 云端账号与转发 Key |
 
 ---
 
@@ -421,7 +468,7 @@ curl http://localhost:11430/v1/chat/completions \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-> 推荐在 **网关** 页一键纳管，无需手动改环境变量；选择路由后 Agent 仍显示原生模型名，网关透明转发至第三方模型。
+> 推荐在 **网关** 页一键纳管，无需手动改环境变量；选择路由后 Agent 仍显示原生模型名，网关透明转发至第三方模型。应用配置页可查看并试用已绑定的资源与 MCP。
 
 ---
 

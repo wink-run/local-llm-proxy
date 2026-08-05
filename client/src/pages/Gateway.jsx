@@ -915,7 +915,15 @@ function AppBoundAssetsSection({ app, onClose }) {
     <div>
       <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1">{t('gateway.app.boundAssets')}</div>
       {/* 使用说明：投射 vs 中转 + 去哪改 + 复制试用 */}
-      <div className="text-xs text-zinc-400 leading-relaxed mb-2">{t('gateway.app.boundHint')}</div>
+      <div className="text-xs text-zinc-400 leading-relaxed mb-2">
+        {t('gateway.app.boundHint')}
+        {/* WorkBuddy 投射 MCP 后须在客户端「信任」自定义连接器 */}
+        {String(app?.agent_id || app?.preset_id || app?.id || '').includes('workbuddy') && (
+          <span className="block mt-1 text-amber-600 dark:text-amber-400">
+            {t('gateway.app.workbuddyMcpTrustHint')}
+          </span>
+        )}
+      </div>
       {loading ? (
         <div className="text-xs text-zinc-400">{t('gateway.app.boundLoading')}</div>
       ) : (resources.length === 0 && mcps.length === 0) ? (

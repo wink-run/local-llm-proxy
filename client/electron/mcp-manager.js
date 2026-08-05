@@ -69,9 +69,20 @@ const PROMPTS_SCRIPT = path.join(__dirname, 'prompt-mcp.js');
 const MODELS_SCRIPT = path.join(__dirname, 'models-mcp.js');
 const RESOURCES_SCRIPT = path.join(__dirname, 'resources-mcp.js');
 
-/** shell 单引号转义（用于 bridge launcher） */
+/** shell 单引号转义（用于 Unix launcher） */
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+/** Windows cmd 双引号转义（路径/参数） */
+function winCmdQuote(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+/** Windows `set "KEY=value"`：% 需加倍，避免被当成环境变量展开 */
+function winCmdSet(key, value) {
+  const safe = String(value).replace(/%/g, '%%').replace(/"/g, '');
+  return `set "${key}=${safe}"`;
 }
 
 /**
@@ -107,13 +118,32 @@ function resolveElectronBinary() {
  * 写入 Electron-as-node 启动脚本。
  * Codex 等客户端常不透传 mcp_servers.*.env，直接 spawn Electron 会进 GUI 并 SIGABRT；
  * 脚本内固定 ELECTRON_RUN_AS_NODE，并用 env 再写一遍作双保险。
+ * Windows 写 .cmd（Agent 无法执行 bash .sh）。
+ * @param {{ name: string, scriptPath: string, env?: object, platform?: string, mcpDir?: string }} opts
  */
-function writeElectronAsNodeLauncher({ name, scriptPath, env = {} }) {
-  const mcpDir = path.join(os.homedir(), '.tokenbank', 'mcp');
-  fs.mkdirSync(mcpDir, { recursive: true });
-  const launcherPath = path.join(mcpDir, `${name}.sh`);
+function writeElectronAsNodeLauncher({ name, scriptPath, env = {}, platform = process.platform, mcpDir } = {}) {
+  const dir = mcpDir || path.join(os.homedir(), '.tokenbank', 'mcp');
+  fs.mkdirSync(dir, { recursive: true });
   const electronBin = resolveElectronBinary();
   const absScript = path.isAbsolute(scriptPath) ? scriptPath : path.resolve(scriptPath);
+  const isWin = platform === 'win32';
+  const launcherPath = path.join(dir, `${name}${isWin ? '.cmd' : '.sh'}`);
+
+  if (isWin) {
+    const envSets = Object.entries(env || {}).map(([k, v]) => winCmdSet(k, v));
+    const lines = [
+      '@echo off',
+      'setlocal',
+      winCmdSet('ELECTRON_RUN_AS_NODE', '1'),
+      ...envSets,
+      // electron.exe 直接调用（勿用 call，call 主要用于批处理）
+      `${winCmdQuote(electronBin)} ${winCmdQuote(absScript)} %*`,
+      '',
+    ];
+    fs.writeFileSync(launcherPath, lines.join('\r\n'), 'utf8');
+    return launcherPath;
+  }
+
   const envExports = Object.entries(env || {}).map(
     ([k, v]) => `export ${k}=${shellQuote(String(v))}`,
   );
@@ -129,8 +159,27 @@ function writeElectronAsNodeLauncher({ name, scriptPath, env = {} }) {
 }
 
 /**
+ * 将 launcher 路径转成 MCP stdio 的 command/args。
+ * Windows 上 .cmd 需经 cmd.exe /c 启动，否则多数 Agent 的 spawn 会失败。
+ */
+function mcpStdioFromLauncher(launcherPath, extraEnv = {}, platform = process.platform) {
+  const launcher = String(launcherPath || '');
+  if (platform === 'win32' && /\.cmd$/i.test(launcher)) {
+    const comspec = process.env.ComSpec || 'cmd.exe';
+    const quoted = `"${launcher.replace(/"/g, '')}"`;
+    return {
+      command: comspec,
+      args: ['/d', '/s', '/c', quoted],
+      env: { ...(extraEnv || {}) },
+    };
+  }
+  return { command: launcher, args: [], env: { ...(extraEnv || {}) } };
+}
+
+/**
  * 写入 bridge MCP 启动脚本：Codex 等外部进程拉起 Electron 时未必透传 env，
  * 缺 ELECTRON_RUN_AS_NODE 会触发 NSApplication 注册并 SIGABRT 崩溃。
+ * Windows 写 .cmd。
  */
 function writeBridgeMcpLauncher({
   taskId,
@@ -139,8 +188,8 @@ function writeBridgeMcpLauncher({
   sessionKey,
   sessionInstanceId,
   mcpDir,
+  platform = process.platform,
 }) {
-  const launcherPath = path.join(mcpDir, `bridge-${taskId}.sh`);
   const dispatchEnv = {};
   try {
     const { getDispatchEndpoint } = require('./agent-dispatch-server');
@@ -161,19 +210,14 @@ function writeBridgeMcpLauncher({
     TB_CLIENT_ID: mainAgentId || '',
     ...dispatchEnv,
   };
-  const envExports = Object.entries(env).map(
-    ([k, v]) => `export ${k}=${shellQuote(String(v))}`,
-  );
-  const electronBin = resolveElectronBinary();
-  const lines = [
-    '#!/bin/bash',
-    'export ELECTRON_RUN_AS_NODE=1',
-    ...envExports,
-    `exec env ELECTRON_RUN_AS_NODE=1 ${shellQuote(electronBin)} ${shellQuote(DISPATCH_SCRIPT)}`,
-    '',
-  ];
-  fs.writeFileSync(launcherPath, lines.join('\n'), { mode: 0o755 });
-  return launcherPath;
+
+  return writeElectronAsNodeLauncher({
+    name: `bridge-${taskId}`,
+    scriptPath: DISPATCH_SCRIPT,
+    env,
+    platform,
+    mcpDir,
+  });
 }
 
 /** 生成 Codex 编排临时 profile（完整 [mcp_servers.*] 表，避免 -c 局部覆盖导致 invalid transport） */
@@ -1479,11 +1523,7 @@ class MCPManager {
     if (serverRow.id === BUILTIN_BRIDGE_ID || serverRow.name === BUILTIN_BRIDGE_ID) {
       // 编排模式优先走 shell launcher（env 写在脚本内，Codex MCP 子进程更可靠）
       if (ctx.bridgeLauncher) {
-        return {
-          command: ctx.bridgeLauncher,
-          args: [],
-          env: {},
-        };
+        return mcpStdioFromLauncher(ctx.bridgeLauncher);
       }
       return {
         command: resolveElectronBinary(),
@@ -1503,47 +1543,35 @@ class MCPManager {
 
     if (serverRow.id === BUILTIN_PROMPTS_ID || serverRow.name === BUILTIN_PROMPTS_ID) {
       if (ctx.promptsLauncher) {
-        return { command: ctx.promptsLauncher, args: [], env: {} };
+        return mcpStdioFromLauncher(ctx.promptsLauncher);
       }
-      return {
-        command: writeElectronAsNodeLauncher({
-          name: `prompts-${mainAgentId || 'default'}`,
-          scriptPath: PROMPTS_SCRIPT,
-          env: { TB_CLIENT_ID: mainAgentId || '' },
-        }),
-        args: [],
-        env: {},
-      };
+      return mcpStdioFromLauncher(writeElectronAsNodeLauncher({
+        name: `prompts-${mainAgentId || 'default'}`,
+        scriptPath: PROMPTS_SCRIPT,
+        env: { TB_CLIENT_ID: mainAgentId || '' },
+      }));
     }
 
     if (serverRow.id === BUILTIN_MODELS_ID || serverRow.name === BUILTIN_MODELS_ID) {
       if (ctx.modelsLauncher) {
-        return { command: ctx.modelsLauncher, args: [], env: {} };
+        return mcpStdioFromLauncher(ctx.modelsLauncher);
       }
-      return {
-        command: writeElectronAsNodeLauncher({
-          name: `models-${mainAgentId || 'default'}`,
-          scriptPath: MODELS_SCRIPT,
-          env: {},
-        }),
-        args: [],
+      return mcpStdioFromLauncher(writeElectronAsNodeLauncher({
+        name: `models-${mainAgentId || 'default'}`,
+        scriptPath: MODELS_SCRIPT,
         env: {},
-      };
+      }));
     }
 
     if (serverRow.id === BUILTIN_RESOURCES_ID || serverRow.name === BUILTIN_RESOURCES_ID) {
       if (ctx.resourcesLauncher) {
-        return { command: ctx.resourcesLauncher, args: [], env: {} };
+        return mcpStdioFromLauncher(ctx.resourcesLauncher);
       }
-      return {
-        command: writeElectronAsNodeLauncher({
-          name: `resources-${mainAgentId || 'default'}`,
-          scriptPath: RESOURCES_SCRIPT,
-          env: { TB_CLIENT_ID: mainAgentId || '' },
-        }),
-        args: [],
-        env: {},
-      };
+      return mcpStdioFromLauncher(writeElectronAsNodeLauncher({
+        name: `resources-${mainAgentId || 'default'}`,
+        scriptPath: RESOURCES_SCRIPT,
+        env: { TB_CLIENT_ID: mainAgentId || '' },
+      }));
     }
 
     let command = serverRow.command;
@@ -1652,5 +1680,6 @@ module.exports.BUILTIN_RESOURCES_ID = BUILTIN_RESOURCES_ID;
 module.exports.buildCodexOrchestratorProfileToml = buildCodexOrchestratorProfileToml;
 module.exports.writeBridgeMcpLauncher = writeBridgeMcpLauncher;
 module.exports.writeElectronAsNodeLauncher = writeElectronAsNodeLauncher;
+module.exports.mcpStdioFromLauncher = mcpStdioFromLauncher;
 module.exports.resolveElectronBinary = resolveElectronBinary;
 module.exports.shellQuote = shellQuote;

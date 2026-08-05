@@ -815,12 +815,14 @@ export default function McpProvidersTab() {
 
     const singleServer = singleId ? servers.find(s => s.id === singleId) : null;
     const singleName = singleServer?.display_name || singleServer?.name || null;
+    const isWorkbuddyId = (id) => String(id || '').toLowerCase().includes('workbuddy');
 
     closeSyncMenu();
     setBusy(singleId || 'sync');
     setSyncMsg('');
     try {
       const parts = [];
+      let projectedToWorkbuddy = false;
 
       // 中转绑定（仅「中转」入口）
       if (syncDoRelay && singleId) {
@@ -898,6 +900,7 @@ export default function McpProvidersTab() {
             .join('、');
           if (selected.length) parts.push(t('providers.mcp.installedTo', { agents: addedLabels }));
           if (removed.length) parts.push(t('providers.mcp.removedFrom', { agents: removedLabels }));
+          if (selected.some(isWorkbuddyId)) projectedToWorkbuddy = true;
         } else if (agentIds.length) {
           res = await window.electronAPI.mcp.syncClients({ clientIds: agentIds, serverIds });
           if (!res?.success) {
@@ -907,6 +910,7 @@ export default function McpProvidersTab() {
             .map(id => syncStatus?.targets?.find(t => t.id === id)?.label || id)
             .join('、');
           parts.push(res.hint || t('providers.mcp.installedBatch', { n: serverIds.length, agents: labels }));
+          if (agentIds.some(isWorkbuddyId)) projectedToWorkbuddy = true;
         }
       }
 
@@ -919,6 +923,10 @@ export default function McpProvidersTab() {
       // 含 API 应用时提醒：客户端须手工配置中转
       if (syncDoRelay && apiIds.length) {
         parts.push(t('providers.mcp.gatewayApiManualConfigHint'));
+      }
+      // WorkBuddy：写盘后还须在客户端「信任」自定义连接器
+      if (projectedToWorkbuddy) {
+        parts.push(t('providers.mcp.workbuddyTrustHint'));
       }
       if (!singleId) setSelectedServerIds([]);
       // 中转成功后同步下拉
@@ -1364,7 +1372,11 @@ export default function McpProvidersTab() {
       }
       const synced = (res.sync?.results || []).filter(r => r.success).map(r => r.label || r.clientId);
       if (form.syncToAgents && synced.length) {
-        alert(t('providers.mcp.savedSynced', { agents: synced.join('、') }));
+        const hitWb = (res.sync?.results || []).some(
+          (r) => r.success && String(r.clientId || r.label || '').toLowerCase().includes('workbuddy'),
+        );
+        const msg = t('providers.mcp.savedSynced', { agents: synced.join('、') });
+        alert(hitWb ? `${msg}\n${t('providers.mcp.workbuddyTrustHint')}` : msg);
       } else if (form.syncToAgents && !synced.length) {
         alert(t('providers.mcp.savedNoAgents'));
       }
