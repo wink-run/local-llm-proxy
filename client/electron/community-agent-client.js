@@ -12,15 +12,46 @@ function agentConfigPath() {
   return path.join(os.homedir(), '.llm-agent', 'config.json');
 }
 
+/**
+ * local-config.json 候选路径（与 mcp-gateway-targets / main.localConfigPath 对齐）。
+ * 必须优先 Electron userData——Windows 正式包为 %APPDATA%\\Token Bank，
+ * 开发态多为 %APPDATA%\\llm-proxy-client；硬编码漏路径会导致读不到 cloud_config.token。
+ */
 function candidateLocalConfigPaths() {
+  const paths = [];
+  if (process.env.TB_USER_DATA) {
+    paths.push(path.join(process.env.TB_USER_DATA, 'local-config.json'));
+  }
+  try {
+    const electron = require('electron');
+    const app = electron.app || electron.default?.app;
+    if (app && typeof app.getPath === 'function') {
+      paths.push(path.join(app.getPath('userData'), 'local-config.json'));
+    }
+  } catch { /* 非 Electron / 未 ready */ }
+
   const home = os.homedir();
-  return [
-    process.env.TB_USER_DATA && path.join(process.env.TB_USER_DATA, 'local-config.json'),
-    path.join(home, 'Library/Application Support/Token Bank', 'local-config.json'),
-    path.join(home, 'Library/Application Support/Token Bank-dev', 'local-config.json'),
-    path.join(home, '.config/Token Bank', 'local-config.json'),
-    path.join(home, 'AppData/Roaming/Token Bank', 'local-config.json'),
-  ].filter(Boolean);
+  if (process.platform === 'darwin') {
+    paths.push(
+      path.join(home, 'Library/Application Support/Token Bank/local-config.json'),
+      path.join(home, 'Library/Application Support/Token Bank-dev/local-config.json'),
+      path.join(home, 'Library/Application Support/llm-proxy-client/local-config.json'),
+    );
+  } else if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    paths.push(
+      path.join(appData, 'Token Bank', 'local-config.json'),
+      path.join(appData, 'Token Bank-dev', 'local-config.json'),
+      path.join(appData, 'llm-proxy-client', 'local-config.json'),
+    );
+  } else {
+    paths.push(
+      path.join(home, '.config/Token Bank/local-config.json'),
+      path.join(home, '.config/token-bank/local-config.json'),
+      path.join(home, '.config/llm-proxy-client/local-config.json'),
+    );
+  }
+  return [...new Set(paths.filter(Boolean))];
 }
 
 function readJson(p) {

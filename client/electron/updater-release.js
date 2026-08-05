@@ -10,7 +10,7 @@
 const https = require('https');
 
 const GH_OWNER = 'wink-run';
-const GH_REPO = 'local-llm-proxy';
+const GH_REPO = 'tokenbank';
 
 /** 0.4.9-beta4 → 0.4.9-beta.4 */
 function normalizeSemverVersion(version) {

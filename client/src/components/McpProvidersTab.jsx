@@ -154,24 +154,27 @@ export default function McpProvidersTab() {
     // apps:list 很重：与 MCP 并行拉，但不参与首屏 loading 门闩
     const appsPromise = window.electronAPI.apps?.list?.() || Promise.resolve([]);
     try {
-      const [catRes, srvRes, syncRes, gwRes] = await Promise.all([
-        window.electronAPI.mcp.listCatalog(),
+      // 目录多为本地 yaml，先返回以尽快结束「加载中」；servers/sync 含扫盘+安装探测更慢
+      const catRes = await window.electronAPI.mcp.listCatalog();
+      if (catRes.success) {
+        setCatalog(catRes.catalog || []);
+        setCatalogGroups(catRes.grouped || []);
+      } else {
+        setError(catRes.error || t('providers.mcp.loadCatalogFailed'));
+      }
+      if (!silent) setLoading(false);
+
+      const [srvRes, syncRes, gwRes] = await Promise.all([
         window.electronAPI.mcp.listServers(),
         window.electronAPI.mcp.getSyncStatus(),
         window.electronAPI.mcp.getGatewayInfo?.() || Promise.resolve(null),
       ]);
-      if (catRes.success) {
-        setCatalog(catRes.catalog || []);
-        setCatalogGroups(catRes.grouped || []);
-      }
-      else setError(catRes.error || t('providers.mcp.loadCatalogFailed'));
       if (srvRes.success) setServers(srvRes.servers || []);
       if (syncRes.success) setSyncStatus(syncRes);
       if (gwRes?.success) setGatewayInfo(gwRes);
       else if (gwRes && gwRes.success === false) setGatewayInfo(null);
     } catch (e) {
       setError(e.message);
-    } finally {
       if (!silent) setLoading(false);
     }
 

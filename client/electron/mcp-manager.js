@@ -1229,8 +1229,14 @@ class MCPManager {
   /**
    * 扫描即纳管：把各 Agent 配置里尚未入库的 MCP 静默导入 Token Bank。
    * 不改写客户端配置、不同步到其他 Agent；用 origin=client_scan 与 TB 安装区分。
+   * 短防抖：listServers 与其它 IPC 连打时不重复全量扫描导入。
    */
   syncDiscoveredMcps() {
+    const now = Date.now();
+    if (this._lastDiscoverAt && (now - this._lastDiscoverAt) < 5_000) {
+      return { success: true, imported: 0, total: 0, skipped: true };
+    }
+    this._lastDiscoverAt = now;
     this.init();
     const { discoverExternalMcps } = require('./mcp-client-sync');
     // 仅用 DB 行做去重，避免为「发现」先 enrich（全量扫盘）再 listManagedServers 再扫一遍

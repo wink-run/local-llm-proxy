@@ -540,7 +540,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
           </span>
         )}
         <span>·</span>
-        <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
+        <a href="https://github.com/wink-run/tokenbank" target="_blank" rel="noreferrer"
           className="hover:text-gray-500 dark:hover:text-gray-400 transition-colors underline">
           GitHub
         </a>

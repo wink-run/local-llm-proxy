@@ -1,6 +1,6 @@
 {
   "name": "llm-proxy-client",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
@@ -69,7 +69,7 @@
     "publish": {
       "provider": "github",
       "owner": "wink-run",
-      "repo": "local-llm-proxy"
+      "repo": "tokenbank"
     },
     "releaseInfo": {
       "releaseNotesFile": "release-notes.md"

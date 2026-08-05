@@ -27,8 +27,7 @@ button,input,textarea{font:inherit}
 .shell{max-width:800px;margin:0 auto;padding:24px 16px 64px}
 header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:12px;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:10px;font-weight:600}
-.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center}
-.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
+.brand-mark{width:28px;height:28px;border-radius:8px;object-fit:contain;display:block;flex-shrink:0}
 .lang-btn,.ghost-btn,.btn,.btn-sm,.btn-danger{background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text-muted)}
 .lang-btn:hover,.ghost-btn:hover,.btn:hover{color:var(--text)}
 .btn{background:var(--primary);color:var(--primary-fg);border-color:var(--primary);font-weight:500}
@@ -107,7 +106,7 @@ a.supply-row:hover,button.supply-row:hover{border-color:var(--border);background
 <div id="app" class="shell">
   <header>
     <a class="brand" href="/network">
-      <span class="brand-mark"></span>
+      <img class="brand-mark" src="/static/logo.svg" alt="Token Bank" width="28" height="28">
       <span>Token Bank</span>
     </a>
     <div style="display:flex;gap:8px;align-items:center">
@@ -147,7 +146,8 @@ a.supply-row:hover,button.supply-row:hover{border-color:var(--border);background
     </div>
   </div>
 
-  <template>
+  <!-- 注意：勿用无指令的裸 <template> 包主内容——浏览器会把子节点放进 DocumentFragment，in-DOM 模板下页面会空白 -->
+  <div>
     <div class="h1">{{ view === 'detail' ? (detail.circle?.name || T.title) : T.title }}</div>
     <p class="sub">{{ view === 'detail' ? (detail.circle?.description || T.noDesc) : T.subtitle }}</p>
 
@@ -360,7 +360,7 @@ a.supply-row:hover,button.supply-row:hover{border-color:var(--border);background
         </div>
       </template>
     </template>
-  </template>
+  </div>
 
   <div v-if="inviteModal" class="modal-mask" @click.self="inviteModal=null">
     <div class="modal">

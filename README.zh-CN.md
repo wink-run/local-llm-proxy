@@ -6,7 +6,7 @@
 >
 > 一键纳管 Claude / Cursor / Codex · 一站式 Trace 与路由 · 画像驱动资源发现 · 社区分享
 
-[English](./README.md) · [下载最新版](https://github.com/wink-run/local-llm-proxy/releases/latest) · [架构文档](./DESIGN.md) · [隐私政策](./docs/PRIVACY_POLICY.md)
+[English](./README.md) · [下载最新版](https://github.com/wink-run/tokenbank/releases/latest) · [架构文档](./DESIGN.md) · [隐私政策](./docs/PRIVACY_POLICY.md)
 
 ---
 
@@ -253,7 +253,7 @@ Token Bank 记录每一次调用：走了哪条路由、用了哪个模型、花
 
 ### 桌面版（Mac / Windows，推荐）
 
-从 [Releases](https://github.com/wink-run/local-llm-proxy/releases/latest) 下载安装包：
+从 [Releases](https://github.com/wink-run/tokenbank/releases/latest) 下载安装包：
 
 - **macOS** `.dmg` — 双击安装，托盘常驻，支持后台自动更新
 
@@ -283,7 +283,7 @@ API Key 在「网关」页创建本地 Key，或使用你已有的上游 Key。
 ### 命令行版（Linux / 服务器）
 
 ```bash
-git clone https://github.com/wink-run/local-llm-proxy.git
+git clone https://github.com/wink-run/tokenbank.git
 cd local-llm-proxy/client
 npm install
 node cli/gateway.js start
@@ -304,7 +304,7 @@ pm2 start cli/gateway.js -- start
 ### Docker 版（容器化）
 
 ```bash
-git clone https://github.com/wink-run/local-llm-proxy.git
+git clone https://github.com/wink-run/tokenbank.git
 cd local-llm-proxy
 
 docker compose up gateway -d
@@ -467,7 +467,7 @@ python agent.py start
 
 Apache License 2.0 — 详见 [`LICENSE`](./LICENSE) 与 [`NOTICE`](./NOTICE)。  
 再分发或衍生作品须保留 NOTICE，并注明来源：  
-**Token Bank · https://github.com/wink-run/local-llm-proxy**
+**Token Bank · https://github.com/wink-run/tokenbank**
 
 ---
 

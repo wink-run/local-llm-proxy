@@ -55,7 +55,7 @@ describe('updater-release', () => {
   it('builds generic feed url for tag', () => {
     assert.equal(
       feedUrlForTag('v0.4.9-beta4'),
-      'https://github.com/wink-run/local-llm-proxy/releases/download/v0.4.9-beta4/',
+      'https://github.com/wink-run/tokenbank/releases/download/v0.4.9-beta4/',
     );
   });
 });

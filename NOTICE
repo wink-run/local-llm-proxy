@@ -21,6 +21,6 @@ materials, you must:
   2. Provide clear, visible attribution to the **Local LLM Proxy** project,
      including the project name and a link to the official source repository:
 
-        https://github.com/wink-run/local-llm-proxy
+        https://github.com/wink-run/tokenbank
 
 This is in addition to all other conditions of the Apache License, Version 2.0.

@@ -9,9 +9,7 @@ const os = require('os');
 const path = require('path');
 
 let shimInstaller = null;
-let agentLinker = null;
 try { shimInstaller = require('./shim-installer'); } catch { /* optional in CLI */ }
-try { agentLinker = require('./agent-linker'); } catch { /* optional in CLI */ }
 
 /** 支持 Skill 投射的 Agent */
 const AGENT_RESOURCE_TARGETS = {
@@ -156,18 +154,22 @@ function isWorkbuddyPresent() {
  * 本机是否已安装该 Agent（投射目标用）：
  * 只认 CLI / App bundle / 桌面 userData 等强信号。
  * 禁止用「配置文件或父目录存在」反推——启动自写 config 会造成假已安装。
+ *
+ * 短缓存：MCP 页 loadAll 会对每个 server×client 反复探测；旧实现每次调
+ * agentLinker.list() 会给全部工具跑 installed+linked，首屏极慢。
  */
-function isAgentInstalled(agentId) {
-  const id = String(agentId || '');
-  if (!id) return false;
+const _installedCache = new Map(); // id -> { ts, v }
+const INSTALLED_TTL_MS = 8_000;
 
-  try {
-    const tool = agentLinker?.list?.()?.find(t => t.id === id);
-    if (tool?.installed) return true;
-  } catch { /* ignore */ }
-
+function _probeAgentInstalled(id) {
+  // 单工具探测：禁止 list()（会扫全部工具的 status/linked）
   try {
     const cl = require('./config-loader');
+    const tools = typeof cl.tools === 'function' ? cl.tools() : [];
+    const tool = Array.isArray(tools) ? tools.find((t) => t && t.id === id) : null;
+    const cmd = tool?.detect?.command;
+    if (cmd && shimInstaller?.resolveRealCommand?.(cmd)) return true;
+
     const ent = cl.appEntityById?.(id);
     if (ent?.detect_command && shimInstaller?.resolveRealCommand?.(ent.detect_command)) return true;
     if (ent?.proxy_mode === 'api_key') {
@@ -219,6 +221,26 @@ function isAgentInstalled(agentId) {
   return false;
 }
 
+function isAgentInstalled(agentId) {
+  const id = String(agentId || '');
+  if (!id) return false;
+  const now = Date.now();
+  const hit = _installedCache.get(id);
+  if (hit && (now - hit.ts) < INSTALLED_TTL_MS) return hit.v;
+  const v = _probeAgentInstalled(id);
+  _installedCache.set(id, { ts: now, v });
+  return v;
+}
+
+/** 批量预热安装探测缓存（enrich 前调用，避免 N×M 重复探测） */
+function warmAgentInstalledCache(ids) {
+  for (const id of ids || []) isAgentInstalled(id);
+}
+
+function invalidateAgentInstalledCache() {
+  _installedCache.clear();
+}
+
 function getAgentTarget(agentId) {
   return AGENT_RESOURCE_TARGETS[agentId] || null;
 }
@@ -227,6 +249,8 @@ const api = {
   AGENT_RESOURCE_TARGETS,
   listResourceProjectableAppIds,
   isAgentInstalled,
+  warmAgentInstalledCache,
+  invalidateAgentInstalledCache,
   isCodexDesktopPresent,
   isWorkbuddyPresent,
   getAgentTarget,

@@ -439,7 +439,14 @@ function getSyncStatus() {
   const state = readState();
   const scanIndex = buildScanIndex();
   let isAgentInstalled = () => false;
-  try { isAgentInstalled = require('./resource-agent-targets').isAgentInstalled; } catch { /* ignore */ }
+  let warmInstalled = () => {};
+  try {
+    const targets = require('./resource-agent-targets');
+    isAgentInstalled = targets.isAgentInstalled;
+    warmInstalled = targets.warmAgentInstalledCache || (() => {});
+  } catch { /* ignore */ }
+  // 预热各 Agent 安装探测，避免 targets.map 里反复 spawn
+  warmInstalled(Object.keys(CLIENT_TARGETS));
 
   return {
     state,
@@ -496,7 +503,16 @@ function enrichServersWithClientInstalls(servers) {
   const scanIndex = buildScanIndex();
   const allClients = Object.entries(CLIENT_TARGETS).map(([id, t]) => ({ id, label: t.label }));
   let isAgentInstalled = () => false;
-  try { isAgentInstalled = require('./resource-agent-targets').isAgentInstalled; } catch { /* ignore */ }
+  try {
+    const targets = require('./resource-agent-targets');
+    isAgentInstalled = targets.isAgentInstalled;
+    // 一次预热：避免 servers×clients 笛卡尔积重复探测
+    if (typeof targets.warmAgentInstalledCache === 'function') {
+      targets.warmAgentInstalledCache(allClients.map((c) => c.id));
+    }
+  } catch { /* ignore */ }
+  // 每客户端只算一次
+  const installedByClient = new Map(allClients.map((c) => [c.id, !!isAgentInstalled(c.id)]));
 
   return (servers || []).map(s => {
     // 以配置文件扫描为准：sync-state 残留绑定若文件已删，不算「已安装」
@@ -541,7 +557,7 @@ function enrichServersWithClientInstalls(servers) {
       clientInstalls: installs,
       clientTargets: allClients.map(c => {
         const inConfig = inConfigSet.has(c.id);
-        const agentOk = !!isAgentInstalled(c.id);
+        const agentOk = !!installedByClient.get(c.id);
         return {
           ...c,
           syncAssigned: getServerSyncClients(s).includes(c.id) && CLIENT_TARGETS[c.id]?.sync !== false,
@@ -821,7 +837,14 @@ function discoverExternalMcps(managedServers = []) {
 
   const allClients = Object.entries(CLIENT_TARGETS).map(([id, t]) => ({ id, label: t.label }));
   let isAgentInstalled = () => false;
-  try { isAgentInstalled = require('./resource-agent-targets').isAgentInstalled; } catch { /* ignore */ }
+  try {
+    const targets = require('./resource-agent-targets');
+    isAgentInstalled = targets.isAgentInstalled;
+    if (typeof targets.warmAgentInstalledCache === 'function') {
+      targets.warmAgentInstalledCache(allClients.map((c) => c.id));
+    }
+  } catch { /* ignore */ }
+  const installedByClient = new Map(allClients.map((c) => [c.id, !!isAgentInstalled(c.id)]));
 
   return Array.from(byKey.values())
     .map(group => {
@@ -854,7 +877,7 @@ function discoverExternalMcps(managedServers = []) {
           return {
             ...c,
             inConfig,
-            installed: inConfig && !!isAgentInstalled(c.id),
+            installed: inConfig && !!installedByClient.get(c.id),
             clientKey: inConfig ? group.clientKey : null,
           };
         }),

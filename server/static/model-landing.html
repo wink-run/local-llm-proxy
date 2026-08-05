@@ -25,8 +25,7 @@ a{color:inherit;text-decoration:none}
 .shell{max-width:720px;margin:0 auto;padding:24px 16px 48px;min-height:100vh;display:flex;flex-direction:column}
 header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:600}
-.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center}
-.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
+.brand-mark{width:28px;height:28px;border-radius:8px;object-fit:contain;display:block;flex-shrink:0}
 .lang-btn,.ghost-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;color:var(--text-muted)}
 .card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 24px;box-shadow:0 8px 24px rgba(0,0,0,.03)}
 .h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px;font-family:var(--mono)}
@@ -82,7 +81,7 @@ textarea:focus,input:focus{border-color:var(--text)}
 <div id="app" class="shell">
   <header>
     <a class="brand" href="/network">
-      <span class="brand-mark"></span>
+      <img class="brand-mark" src="/static/logo.svg" alt="Token Bank" width="28" height="28">
       <span>Token Bank</span>
     </a>
     <div class="row">

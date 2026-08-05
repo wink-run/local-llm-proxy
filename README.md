@@ -6,7 +6,7 @@
 >
 > One-click Claude / Cursor / Codex onboarding · one-stop trace & routing · portrait-driven discovery · community sharing
 
-[中文文档](./README.zh-CN.md) · [Download Latest](https://github.com/wink-run/local-llm-proxy/releases/latest) · [Architecture](./DESIGN.md) · [Privacy Policy](./docs/PRIVACY_POLICY.md)
+[中文文档](./README.zh-CN.md) · [Download Latest](https://github.com/wink-run/tokenbank/releases/latest) · [Architecture](./DESIGN.md) · [Privacy Policy](./docs/PRIVACY_POLICY.md)
 
 ---
 
@@ -253,7 +253,7 @@ Contribute rate > consume rate; plus check-in, wheel, and referrals. Circles sha
 
 ### Desktop app (Mac / Windows — recommended)
 
-Download the installer from [Releases](https://github.com/wink-run/local-llm-proxy/releases/latest):
+Download the installer from [Releases](https://github.com/wink-run/tokenbank/releases/latest):
 
 - **macOS** `.dmg` — double-click to install, lives in the menu bar, auto-updates
 - **Windows** `.exe` — NSIS installer, auto-updates
@@ -273,7 +273,7 @@ Create a local API key in the **Gateway** tab, or use an existing upstream key.
 ### CLI mode (Linux / servers)
 
 ```bash
-git clone https://github.com/wink-run/local-llm-proxy.git
+git clone https://github.com/wink-run/tokenbank.git
 cd local-llm-proxy/client
 npm install
 node cli/gateway.js start
@@ -294,7 +294,7 @@ pm2 start cli/gateway.js -- start
 ### Docker (containerised)
 
 ```bash
-git clone https://github.com/wink-run/local-llm-proxy.git
+git clone https://github.com/wink-run/tokenbank.git
 cd local-llm-proxy
 
 docker compose up gateway -d
@@ -457,7 +457,7 @@ python agent.py start
 
 Apache License 2.0 — see [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).  
 Redistribution and derivative works must retain the NOTICE and credit the source:  
-**Token Bank · https://github.com/wink-run/local-llm-proxy**
+**Token Bank · https://github.com/wink-run/tokenbank**
 
 ---
 

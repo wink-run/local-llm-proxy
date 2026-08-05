@@ -6,7 +6,7 @@ import { DEFAULT_TOKEN_SERVER_URL } from '../config';
 const W = 1080;
 const H = 1440;
 const OFFICIAL_URL = DEFAULT_TOKEN_SERVER_URL;
-const GITHUB_URL = 'https://github.com/wink-run/local-llm-proxy';
+const GITHUB_URL = 'https://github.com/wink-run/tokenbank';
 const PRODUCT_SLOGAN = '个人AI中枢 · Token 管家';
 
 /**

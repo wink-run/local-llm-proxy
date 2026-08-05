@@ -6,6 +6,8 @@ function applyTheme(theme) {
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const useDark = theme === 'dark' || (theme === 'system' && prefersDark);
   document.documentElement.classList.toggle('dark', useDark);
+  // 同步 Electron 原生标题栏（Windows 默认 frame 跟随 nativeTheme）
+  try { window.electronAPI?.app?.setThemeSource?.(theme); } catch { /* ignore */ }
 }
 
 export function ThemeProvider({ children }) {

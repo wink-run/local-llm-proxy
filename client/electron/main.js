@@ -464,16 +464,45 @@ function openExternalSafe(url) {
   });
 }
 
+/** 渲染进程主题偏好（与 localStorage theme 对齐），供 Windows 标题栏启动前恢复 */
+function uiThemePath() {
+  return path.join(app.getPath('userData'), 'ui-theme.json');
+}
+function readSavedUiTheme() {
+  try {
+    const t = JSON.parse(fs.readFileSync(uiThemePath(), 'utf8'))?.theme;
+    if (t === 'light' || t === 'dark' || t === 'system') return t;
+  } catch { /* ignore */ }
+  return 'system';
+}
+/** 同步 Electron nativeTheme → Windows 原生标题栏颜色跟随应用 light/dark */
+function applyNativeThemeSource(source) {
+  const theme = (source === 'light' || source === 'dark' || source === 'system') ? source : 'system';
+  try { nativeTheme.themeSource = theme; } catch { /* ignore */ }
+  try {
+    fs.writeFileSync(uiThemePath(), JSON.stringify({ theme }, null, 2), 'utf8');
+  } catch { /* ignore */ }
+  const dark = !!nativeTheme.shouldUseDarkColors;
+  if (mainWindow && !mainWindow.isDestroyed() && process.platform !== 'darwin') {
+    try { mainWindow.setBackgroundColor(dark ? '#09090b' : '#fafafa'); } catch { /* ignore */ }
+  }
+  return { ok: true, themeSource: theme, shouldUseDarkColors: dark };
+}
+
 function createWindow() {
   // 屏蔽默认应用菜单栏（File / Edit / View / Window / Help）
   Menu.setApplicationMenu(null);
+  // 启动前恢复上次主题，避免 Windows 标题栏先按系统深色闪一下
+  applyNativeThemeSource(readSavedUiTheme());
+  const winDark = nativeTheme.shouldUseDarkColors;
   mainWindow = new BrowserWindow({
-    // 默认以最小宽度打开，用户可再拉宽
-    width: 900,
+    // 默认以最小宽高打开；略大于 900，避免 Windows 上网关列表出现横向滚动条
+    width: 920,
     height: 600,
-    minWidth: 900,
+    minWidth: 920,
     minHeight: 600,
     autoHideMenuBar: true,
+    backgroundColor: winDark ? '#09090b' : '#fafafa',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1486,7 +1515,7 @@ function resetUpdaterFeedDefault(allowPrerelease) {
   autoUpdater.setFeedURL({
     provider: 'github',
     owner: 'wink-run',
-    repo: 'local-llm-proxy',
+    repo: 'tokenbank',
   });
   autoUpdater.allowPrerelease = allowPrerelease;
 }
@@ -1685,7 +1714,7 @@ function openManualUpdateDmg(version) {
   const ver = String(version || '').replace(/^v/i, '');
   if (!ver) return;
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-  const url = `https://github.com/wink-run/local-llm-proxy/releases/download/v${ver}/Token-Bank-${ver}-${arch}.dmg`;
+  const url = `https://github.com/wink-run/tokenbank/releases/download/v${ver}/Token-Bank-${ver}-${arch}.dmg`;
   console.warn('[updater] opening manual update dmg:', url);
   shell.openExternal(url).catch((e) => console.error('[updater] open dmg failed:', e.message));
 }
@@ -1954,6 +1983,39 @@ function workbuddyStrongPresent() {
     return !!require('./resource-agent-targets').isWorkbuddyPresent?.();
   } catch {
     return false;
+  }
+}
+
+/** Codex Desktop 强信号：桌面 userData / App bundle（不用 config.toml） */
+function codexDesktopStrongPresent() {
+  try {
+    if (require('./resource-agent-targets').isCodexDesktopPresent?.()) return true;
+  } catch { /* ignore */ }
+  return commandInstalled('codex');
+}
+
+/**
+ * 配置文件缺失时是否允许新建。
+ * 前提：该应用安装探测已只认强信号，自写 config 不会反证「已安装」。
+ * Claude Desktop：设计上就在 configLibrary 新建 UUID 配置。
+ */
+function allowCreateMissingProxyConfig(handlerId, { isClaudeDesktop } = {}) {
+  if (isClaudeDesktop || handlerId === 'claude-desktop-api') return true;
+  if (handlerId === 'workbuddy-stats') return workbuddyStrongPresent();
+  if (handlerId === 'openclaw-api') return commandInstalled('openclaw');
+  if (handlerId === 'codex-desktop-api') return codexDesktopStrongPresent();
+  return false;
+}
+
+/** 确保代理配置可写：缺文件时按策略建父目录（整份覆盖路径随后 writeFileSync，勿预写空文件以免误备份） */
+function ensureProxyConfigWritable(file, { allowCreate } = {}) {
+  if (fs.existsSync(file)) return { ok: true };
+  if (!allowCreate) return { ok: false, error: 'config-missing', file };
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    return { ok: true, created: true };
+  } catch (e) {
+    return { ok: false, error: e.message || 'mkdir-failed', file };
   }
 }
 
@@ -2426,6 +2488,8 @@ function registerIPC() {
     writeAgentConfig(cfg);
     return { ok: true, hide_dock_icon: !!cfg.hide_dock_icon };
   });
+  // 同步渲染进程主题 → Windows 原生标题栏 / 系统 chrome（light 模式下标题栏不再留黑）
+  ipcMain.handle('app:setThemeSource', (_e, source) => applyNativeThemeSource(source));
   ipcMain.handle('config:scan',  () => scanLLMConfigs());
   ipcMain.handle('config:importKeys', () => scanProviderKeys());
 
@@ -4593,9 +4657,12 @@ function registerIPC() {
         const codexCfg = require('./codex-config');
         const { getRouteModels, modelVision } = require('./app-handlers');
         const codexHome = path.dirname(file);
-        // config.toml 不存在则不新建（避免自写后再被判已安装）
+        // 缺 config.toml：强信号已确认安装时可新建（探测不认 config.toml，不会自证循环）
+        const allowCreate = allowCreateMissingProxyConfig(handlerId);
         if (!fs.existsSync(file)) {
-          return { ok: false, error: 'config-missing', file };
+          if (!allowCreate) return { ok: false, error: 'config-missing', file };
+          try { fs.mkdirSync(codexHome, { recursive: true }); }
+          catch (e) { return { ok: false, error: e.message || 'mkdir-failed', file }; }
         }
         const baseUrl = resolvedPatch['model_providers.tokenbank.base_url'] || `${patchCtx.base}/v1`;
         const models = getRouteModels(appRec, readLocalConfig().scene_routes || []);
@@ -4608,6 +4675,7 @@ function registerIPC() {
         const applied = codexCfg.applyCodexProvider(file, {
           providerId: 'tokenbank', name: 'Tokenbank',
           baseUrl, model, bearerToken: appRec?.api_key || '', catalogFile: codexCfg.CATALOG_FILE,
+          allowCreate,
         });
         if (!applied?.ok) return { ok: false, error: applied?.error || 'codex-write-failed', file };
         codexCfg.cleanupThirdPartyAuthKey(codexHome);   // 清第三方残留 key，不动官方 tokens.*
@@ -4622,9 +4690,13 @@ function registerIPC() {
       // Trae：模型配置由用户在 IDE 内手工填写，此处不写入 state.vscdb
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
-      // 配置文件不存在则不新建（避免自写 models.json / config 后再被判已安装）
-      if (!fs.existsSync(file)) {
-        return { ok: false, error: 'config-missing', file };
+      // 缺配置默认不新建（避免自写后再被判已安装）；强信号应用（WorkBuddy /
+      // OpenClaw / Claude Desktop）允许首次创建——探测已不认这些配置文件。
+      {
+        const ensured = ensureProxyConfigWritable(file, {
+          allowCreate: allowCreateMissingProxyConfig(handlerId, { isClaudeDesktop }),
+        });
+        if (!ensured.ok) return { ok: false, error: ensured.error || 'config-missing', file };
       }
       const bak = file + '.tokenbank-bak';
       // 只备份"真正的原始配置"：既有文件若已是 tokenbank 托管配置，绝不备份——否则会把网关配置

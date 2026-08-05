@@ -13,14 +13,17 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const STATE_DIR = path.join(os.homedir(), '.tokenbank', 'applied');
+const STATE_DIR = () => path.join(os.homedir(), '.tokenbank', 'applied');
 const CATALOG_FILE = 'tokenbank-codex-catalog.json';
 
-function ensureStateDir() { if (!fs.existsSync(STATE_DIR)) fs.mkdirSync(STATE_DIR, { recursive: true }); }
+function ensureStateDir() {
+  const d = STATE_DIR();
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+}
 function statePath(configPath) {
   // 单机通常单个 codex 实例；用 config 路径做 key 以防多实例
   const tag = Buffer.from(String(configPath)).toString('hex').slice(0, 16);
-  return path.join(STATE_DIR, `codex-${tag}.json`);
+  return path.join(STATE_DIR(), `codex-${tag}.json`);
 }
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -76,17 +79,19 @@ function applyCodexProvider(configPath, opts = {}) {
   const {
     providerId = 'tokenbank', name = 'Tokenbank',
     baseUrl, model, bearerToken, catalogFile = CATALOG_FILE,
+    allowCreate = false,
   } = opts;
   const dir = path.dirname(configPath);
-  // 配置文件不存在则不新建：避免「自写 config.toml → 再判已安装」
-  if (!fs.existsSync(configPath)) {
+  // 缺省不新建（避免自写 config.toml → 再判已安装）；调用方确认强信号后可 allowCreate
+  const existed = fs.existsSync(configPath);
+  if (!existed && !allowCreate) {
     return { ok: false, error: 'config-missing', path: configPath };
   }
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const existed = true;
-  const original = fs.readFileSync(configPath, 'utf8');
+  const original = existed ? fs.readFileSync(configPath, 'utf8') : '';
   const bak = configPath + '.tokenbank-bak';
-  if (!fs.existsSync(bak)) fs.copyFileSync(configPath, bak);
+  // 仅备份「原本就有」的配置；新建的 config.toml 还原时直接删除
+  if (existed && !fs.existsSync(bak)) fs.copyFileSync(configPath, bak);
 
   const topKeys = {
     model_provider: q(providerId),

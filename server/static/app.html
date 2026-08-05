@@ -46,8 +46,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--text)}
 header{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:rgba(255,255,255,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border-light);flex-shrink:0;position:sticky;top:0;z-index:40}
 .header-title{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;color:var(--text);letter-spacing:-.01em}
 .header-title span{color:var(--text-muted);font-weight:500}
-.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
-.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
+.brand-mark{width:28px;height:28px;border-radius:8px;object-fit:contain;display:block;flex-shrink:0}
 .header-user{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .header-user .email{color:var(--text-muted);font-size:13px}
 .credit-badge{background:var(--accent);color:var(--text);padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600}
@@ -156,7 +155,7 @@ td{padding:10px 12px;vertical-align:middle}
   <!-- Auth -->
   <div v-if="!loggedIn" class="auth-overlay">
     <div class="auth-box">
-      <div style="display:flex;justify-content:center;margin-bottom:10px"><span class="brand-mark" style="width:32px;height:32px"></span></div>
+      <div style="display:flex;justify-content:center;margin-bottom:10px"><img class="brand-mark" src="/static/logo.svg" alt="Token Bank" width="32" height="32" style="width:32px;height:32px"></div>
       <h2>Token Bank</h2>
       <p class="subtitle">{{ T.authSubtitle }}</p>
       <div class="auth-tabs">
@@ -194,7 +193,7 @@ td{padding:10px 12px;vertical-align:middle}
       <p style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:24px">{{ T.circleGuideDesc }}</p>
       <a :href="circleGuideHref" class="btn-block" style="display:block;text-decoration:none;margin-bottom:10px">{{ T.circleGuideEnter }}</a>
       <button type="button" class="btn-sm" style="width:100%;padding:10px;margin-bottom:8px" @click="dismissCircleGuide">{{ T.circleGuideContinue }}</button>
-      <a href="https://github.com/wink-run/local-llm-proxy/releases" target="_blank" rel="noopener noreferrer"
+      <a href="https://github.com/wink-run/tokenbank/releases" target="_blank" rel="noopener noreferrer"
         style="font-size:12px;color:var(--text-muted)">{{ T.circleGuideDownload }}</a>
     </div>
   </div>
@@ -202,7 +201,7 @@ td{padding:10px 12px;vertical-align:middle}
   <!-- Main -->
   <div v-else-if="loggedIn" class="app">
     <header>
-      <div class="header-title"><span class="brand-mark"></span> Token Bank <span>{{ T.portalTitle }}</span></div>
+      <div class="header-title"><img class="brand-mark" src="/static/logo.svg" alt="Token Bank" width="28" height="28"> Token Bank <span>{{ T.portalTitle }}</span></div>
       <div class="header-user">
         <a class="btn-sm" href="/circles" style="text-decoration:none">{{ T.navCircles }}</a>
         <a class="btn-sm" href="/network" style="text-decoration:none">{{ T.navNetwork }}</a>

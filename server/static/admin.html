@@ -36,8 +36,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 header{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:rgba(255,255,255,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border-light);flex-shrink:0;position:sticky;top:0;z-index:40}
 .header-title{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;color:var(--text);letter-spacing:-.01em}
 .header-title span{color:var(--text-muted);font-weight:500}
-.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
-.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
+.brand-mark{width:28px;height:28px;border-radius:8px;object-fit:contain;display:block;flex-shrink:0}
 .header-right{display:flex;align-items:center;gap:8px}
 nav{display:flex;gap:6px;padding:12px 24px;background:var(--bg);border-bottom:1px solid var(--border-light);flex-shrink:0;overflow-x:auto}
 nav button{padding:8px 14px;white-space:nowrap;background:transparent;border:none;border-radius:8px;color:var(--text-muted);cursor:pointer;font-size:14px;transition:all .15s;font-family:inherit}
@@ -154,7 +153,7 @@ select.form-input{cursor:pointer}
   <!-- Login -->
   <div v-if="!loggedIn" class="login-overlay">
     <div class="login-box">
-      <div style="display:flex;justify-content:center;margin-bottom:10px"><span class="brand-mark" style="width:32px;height:32px"></span></div>
+      <div style="display:flex;justify-content:center;margin-bottom:10px"><img class="brand-mark" src="/static/logo.svg" alt="Token Bank" width="32" height="32" style="width:32px;height:32px"></div>
       <h2>Token Bank</h2>
       <p>{{ T.loginHint }}</p>
       <input v-model="loginKey" type="password" :placeholder="T.adminKey" @keyup.enter="login" autofocus />
@@ -169,7 +168,7 @@ select.form-input{cursor:pointer}
   <!-- Main -->
   <div v-else class="app">
     <header>
-      <div class="header-title"><span class="brand-mark"></span> Token Bank <span>{{ T.adminTitle }}</span></div>
+      <div class="header-title"><img class="brand-mark" src="/static/logo.svg" alt="Token Bank" width="28" height="28"> Token Bank <span>{{ T.adminTitle }}</span></div>
       <div class="header-right">
         <button class="btn-lang" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中' }}</button>
         <button class="btn-sm" @click="logout">{{ T.logout }}</button>
