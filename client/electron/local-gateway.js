@@ -10,6 +10,7 @@ const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
 const routingStrategies = require('./routing-strategies');
 const cooldown = require('./gateway-cooldown');
+const upstreamHints = require('./gateway-upstream-hints');
 const { TIER_ROUTE_RE, parseRoute, STRATEGY_NAMES, SCOPE_NAMES, TIER_NAMES, SHARER_RE } = require('../shared/route-binding');
 const _STRAT_SET = new Set(STRATEGY_NAMES || []);
 const _SCOPE_SET = new Set(SCOPE_NAMES || []);
@@ -2366,8 +2367,9 @@ function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
 // Claude Code 2.x 会在 /v1/messages body 里带较新的顶层参数（如 context_management 上下文自动编辑）。
 // 官方 api.anthropic.com 支持；三方 / p2p 的 anthropic 兼容端点多用严格 schema，遇到未知顶层字段直接 400
 // （"context_management: Extra inputs are not permitted"）。转发给非官方 anthropic 上游前剥掉这些字段。
+// 内置名单 + 学习表 strip（gateway-upstream-hints）合并应用。
 const ANTHROPIC_EXTRA_FIELDS = ['context_management'];
-function stripUnsupportedAnthropicFields(body, provider) {
+function stripUnsupportedAnthropicFields(body, provider, model) {
   if (!body || typeof body !== 'object') return body;
   if (/api\.anthropic\.com/i.test(String(provider && provider.base_url || ''))) return body; // 官方支持，原样透传
   let out = body;
@@ -2376,6 +2378,11 @@ function stripUnsupportedAnthropicFields(body, provider) {
       if (out === body) out = { ...body };
       delete out[k];
     }
+  }
+  // 学习到的 strip（同供给源 * 与具体 model）
+  const learned = upstreamHints.getMerged(provider && provider.id, model);
+  if (learned && learned.strip && learned.strip.length) {
+    out = upstreamHints.applyMutations(out, { strip: learned.strip });
   }
   return out;
 }
@@ -2408,7 +2415,45 @@ function clampOutputTokens(model, body) {
   return body;
 }
 
+// 上游 400 报文约束：可解析则同源改参重试并学习；429/401/403/402 等硬错误原样抛出，
+// 由路由层 noteCooldown + sink 做候选降级（见 gateway-cooldown / gateway-upstream-hints 头注）。
+function parseFixedTemperatureError(err) {
+  const m = upstreamHints.parseBodyConstraintError(err);
+  const v = m && m.set && m.set.temperature;
+  return Number.isFinite(v) ? v : null;
+}
+
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res, routeMeta = null) {
+  const providerId = provider && provider.id;
+  // 已学习的 set/strip：首包改写，避免每次先 400 再同源重试
+  let reqBody = upstreamHints.applyHints(body, providerId, attemptModel);
+  if (reqBody !== body) {
+    const desc = upstreamHints.describeMutations(upstreamHints.getMerged(providerId, attemptModel));
+    debugLog('上游约束按学习表首包改参', { model: attemptModel, provider: providerId, desc });
+    console.log(`[gateway] body-fix (learned) ${desc} model="${attemptModel}" via "${providerId}"`);
+  }
+
+  try {
+    return await callProviderOnce(provider, isAnthropic, streaming, reqPath, reqBody, attemptModel, res, routeMeta);
+  } catch (err) {
+    // 响应已开始写出则无法改参重试；429 等硬错误交给外层 cooldown 降级
+    if (res && res.headersSent) throw err;
+    const mutations = upstreamHints.parseBodyConstraintError(err);
+    if (!mutations) throw err;
+    const fixedBody = upstreamHints.applyMutations(reqBody, mutations);
+    if (fixedBody === reqBody) throw err; // 改无可改 → failover
+    upstreamHints.noteHints(providerId, attemptModel, mutations);
+    const desc = upstreamHints.describeMutations(mutations);
+    debugLog('上游约束自动降级重试', { model: attemptModel, provider: providerId, desc });
+    console.log(`[gateway] body-fix 重试 ${desc} model="${attemptModel}" via "${providerId}"`);
+    return await callProviderOnce(
+      provider, isAnthropic, streaming, reqPath,
+      fixedBody, attemptModel, res, routeMeta,
+    );
+  }
+}
+
+async function callProviderOnce(provider, isAnthropic, streaming, reqPath, body, attemptModel, res, routeMeta = null) {
   // OAuth 供给源：确保 access_token 有效（必要时刷新并回写 config），附加 _oauth 模块
   provider = await oauth.prepare(provider, _getConfig, _saveConfig);
   // p2p 派发：把本次路由指令（auto 排序 / 钉分享者）挂到 provider 副本，供各 p2p 代理注入 X-TB-Route。
@@ -2461,7 +2506,7 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
     if (isAnthropic) {
       // Anthropic client → Anthropic provider: direct proxy to /v1/messages
       // 剥掉非官方上游不认的新字段（context_management 等），避免严格 schema 400
-      return await proxyRequest(provider, '/v1/messages', stripUnsupportedAnthropicFields(attemptBody, provider), res);
+      return await proxyRequest(provider, '/v1/messages', stripUnsupportedAnthropicFields(attemptBody, provider, attemptModel), res);
     } else {
       // OpenAI client → Anthropic provider: convert request/response format
       return streaming
@@ -3794,4 +3839,6 @@ module.exports = {
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
   // Gemini 转换（供单测/复用，含 tool-calling）
   oaiToGeminiBody, geminiExtractParts, sanitizeGeminiSchema,
+  // 上游 400 报文约束解析（供单测；完整 API 见 gateway-upstream-hints）
+  parseFixedTemperatureError,
 };
