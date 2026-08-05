@@ -268,6 +268,20 @@ td{padding:10px 12px;vertical-align:middle}
             <button type="button" class="btn-sm" @click="copy(profile.worker_key)">{{ T.copy }}</button>
           </div>
         </div>
+        <!-- 概览也展示邀请码，避免用户找不到推荐分享入口 -->
+        <div class="card">
+          <div class="section-title">{{ T.myReferralCode }}</div>
+          <p style="color:#7b7b7b;font-size:13px;margin-bottom:12px">{{ T.referralDesc }}</p>
+          <div class="copy-row" style="margin-bottom:16px">
+            <div class="copy-val mono" style="font-size:18px;letter-spacing:2px">{{ profile.referral_code || '—' }}</div>
+            <button type="button" class="btn-sm" :disabled="!profile.referral_code" @click="copy(profile.referral_code)">{{ T.copy }}</button>
+          </div>
+          <div class="section-title">{{ T.referralLink }}</div>
+          <div class="copy-row">
+            <div class="copy-val" style="font-size:12px">{{ referralLink || '—' }}</div>
+            <button type="button" class="btn-sm" :disabled="!referralLink" @click="copy(referralLink)">{{ T.copy }}</button>
+          </div>
+        </div>
       </template>
 
       <!-- 积分流水 -->

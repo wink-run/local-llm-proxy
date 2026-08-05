@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useLang } from '../store/lang';
 import {
@@ -307,10 +308,10 @@ export default function Circles() {
           ))
         }
       </section>
-      {/* 邀请同好弹框 */}
-      {inviteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setInviteModal(null)}>
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-80 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+      {/* 邀请同好弹框：挂 body，避开主栏 backdrop-filter 裁切 fixed */}
+      {inviteModal && createPortal(
+        <div className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 p-4" onClick={() => setInviteModal(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('circles.inviteTitle')}</h3>
             <div className="flex items-center gap-3">
               <div className={`w-12 h-12 rounded-full ${avatarColor(inviteModal.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
@@ -335,13 +336,14 @@ export default function Circles() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {/* 加入圈子弹框 */}
-      {joinPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setJoinPreview(null)}>
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-80 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+      {/* 加入圈子弹框：同样挂 body */}
+      {joinPreview && createPortal(
+        <div className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 p-4" onClick={() => setJoinPreview(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('circles.joinModalTitle')}</h3>
             <div className="flex items-center gap-3">
               <div className={`w-12 h-12 rounded-full ${avatarColor(joinPreview.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
@@ -375,7 +377,8 @@ export default function Circles() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
