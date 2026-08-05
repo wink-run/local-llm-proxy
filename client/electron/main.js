@@ -434,19 +434,29 @@ function getTrayIcon(state) {
     }
     return nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64.stopped, 'base64'));
   }
+  // Windows / Linux：彩色品牌 logo（纯色圆点会被当成状态灯，认不出 Token Bank）
+  // 优先 electron/assets（随 asar 打包）；其次 client/assets 开发态
+  const candidates = [
+    path.join(__dirname, 'assets', 'tray-win@2x.png'),
+    path.join(__dirname, 'assets', 'tray-win.png'),
+    path.join(__dirname, '..', 'assets', 'tray-win@2x.png'),
+    path.join(__dirname, '..', 'assets', 'tray-win.png'),
+  ];
+  for (const iconPath of candidates) {
+    if (!fs.existsSync(iconPath)) continue;
+    try {
+      const raw = nativeImage.createFromPath(iconPath);
+      if (raw.isEmpty()) continue;
+      // @2x 文件按 2 倍缩放因子交给托盘，高分屏更清晰
+      if (/@2x\.png$/i.test(iconPath)) {
+        return nativeImage.createFromBuffer(raw.toPNG(), { scaleFactor: 2 });
+      }
+      return raw;
+    } catch { /* try next */ }
+  }
+  // 极端兜底：旧纯色圆（几乎不该走到）
   const running = state === 'running';
-  const name = running ? 'tray-green.png' : 'tray-gray.png';
-  const iconPath = path.join(__dirname, '..', 'assets', name);
-  let img;
-  if (fs.existsSync(iconPath)) {
-    img = nativeImage.createFromPath(iconPath);
-  } else {
-    img = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64[running ? 'running' : 'stopped'], 'base64'));
-  }
-  if (img.isEmpty()) {
-    img = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64.stopped, 'base64'));
-  }
-  return img;
+  return nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64[running ? 'running' : 'stopped'], 'base64'));
 }
 
 // ── Window ────────────────────────────────────────────────────────────────────
@@ -475,7 +485,18 @@ function readSavedUiTheme() {
   } catch { /* ignore */ }
   return 'system';
 }
-/** 同步 Electron nativeTheme → Windows 原生标题栏颜色跟随应用 light/dark */
+/** 与 .tb-app-shell 底色一致，Windows 标题栏叠层不另起一套色 */
+function titleBarOverlayOpts(dark) {
+  return {
+    color: dark ? '#09090b' : '#e8e9ec',
+    symbolColor: dark ? '#e4e4e7' : '#52525b',
+    height: 36,
+  };
+}
+function shellBackgroundColor(dark) {
+  return dark ? '#09090b' : '#e8e9ec';
+}
+/** 同步 Electron nativeTheme + Windows titleBarOverlay，与应用 light/dark 一致 */
 function applyNativeThemeSource(source) {
   const theme = (source === 'light' || source === 'dark' || source === 'system') ? source : 'system';
   try { nativeTheme.themeSource = theme; } catch { /* ignore */ }
@@ -483,8 +504,11 @@ function applyNativeThemeSource(source) {
     fs.writeFileSync(uiThemePath(), JSON.stringify({ theme }, null, 2), 'utf8');
   } catch { /* ignore */ }
   const dark = !!nativeTheme.shouldUseDarkColors;
-  if (mainWindow && !mainWindow.isDestroyed() && process.platform !== 'darwin') {
-    try { mainWindow.setBackgroundColor(dark ? '#09090b' : '#fafafa'); } catch { /* ignore */ }
+  if (mainWindow && !mainWindow.isDestroyed() && process.platform === 'win32') {
+    try {
+      mainWindow.setBackgroundColor(shellBackgroundColor(dark));
+      mainWindow.setTitleBarOverlay(titleBarOverlayOpts(dark));
+    } catch { /* ignore */ }
   }
   return { ok: true, themeSource: theme, shouldUseDarkColors: dark };
 }
@@ -495,6 +519,8 @@ function createWindow() {
   // 启动前恢复上次主题，避免 Windows 标题栏先按系统深色闪一下
   applyNativeThemeSource(readSavedUiTheme());
   const winDark = nativeTheme.shouldUseDarkColors;
+  const isWin = process.platform === 'win32';
+  const isMac = process.platform === 'darwin';
   mainWindow = new BrowserWindow({
     // 默认以最小宽高打开；略大于 900，避免 Windows 上网关列表出现横向滚动条
     width: 920,
@@ -502,17 +528,26 @@ function createWindow() {
     minWidth: 920,
     minHeight: 600,
     autoHideMenuBar: true,
-    backgroundColor: winDark ? '#09090b' : '#fafafa',
+    backgroundColor: shellBackgroundColor(winDark),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    // macOS 毛玻璃质感：窗口背景用系统材质，侧栏在 CSS 里透出（内容区保持实底）。
-    ...(process.platform === 'darwin'
-      ? { vibrancy: 'sidebar', visualEffectState: 'active', backgroundColor: '#00000000' }
-      : {}),
+    // macOS：hiddenInset + 交通灯；Windows：hidden + overlay，颜色跟壳层，去掉系统黑条
+    ...(isMac
+      ? {
+          titleBarStyle: 'hiddenInset',
+          vibrancy: 'sidebar',
+          visualEffectState: 'active',
+          backgroundColor: '#00000000',
+        }
+      : isWin
+        ? {
+            titleBarStyle: 'hidden',
+            titleBarOverlay: titleBarOverlayOpts(winDark),
+          }
+        : { titleBarStyle: 'default' }),
     show: false,
   });
 

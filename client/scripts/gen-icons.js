@@ -28,14 +28,33 @@ function makeTrayGlyphPNG(size) {
   return Buffer.from(out.render().asPng());
 }
 
+/** Windows/Linux 托盘：彩色品牌金币 logo（系统托盘不支持 Template） */
+function makeBrandTrayPNG(size) {
+  const svg = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'logo.svg'), 'utf-8');
+  const out = new Resvg(svg, { fitTo: { mode: 'width', value: size } });
+  return Buffer.from(out.render().asPng());
+}
+
 const assetsDir = path.join(__dirname, '..', 'assets');
+const electronAssetsDir = path.join(__dirname, '..', 'electron', 'assets');
 fs.mkdirSync(assetsDir, { recursive: true });
+fs.mkdirSync(electronAssetsDir, { recursive: true });
+
+// 兼容旧路径的纯色圆（仅作极端兜底）；正式托盘图用下方品牌 logo
 fs.writeFileSync(path.join(assetsDir, 'tray-green.png'), makeCirclePNG(34, 197, 94));
 fs.writeFileSync(path.join(assetsDir, 'tray-gray.png'), makeCirclePNG(107, 114, 128));
 // macOS 菜单栏：20@1x + 40@2x
 fs.writeFileSync(path.join(assetsDir, 'tray-mac.png'), makeTrayGlyphPNG(20));
 fs.writeFileSync(path.join(assetsDir, 'tray-mac@2x.png'), makeTrayGlyphPNG(40));
-console.log('Tray icons generated in assets/');
+
+// Windows/Linux：写入 electron/assets（随 asar 打包），16/32 两套
+const trayWin16 = makeBrandTrayPNG(16);
+const trayWin32 = makeBrandTrayPNG(32);
+for (const dir of [assetsDir, electronAssetsDir]) {
+  fs.writeFileSync(path.join(dir, 'tray-win.png'), trayWin16);
+  fs.writeFileSync(path.join(dir, 'tray-win@2x.png'), trayWin32);
+}
+console.log('Tray icons generated in assets/ and electron/assets/');
 
 // ── App icons from SVG logo ───────────────────────────────────────────────────
 

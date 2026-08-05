@@ -53,6 +53,9 @@ function Layout() {
   const authed = user || guest;   // 登录用户 或 游客模式：可进入「中心」
   const navigate = useNavigate();
   const cliMode = !isElectron();
+  // Windows titleBarOverlay 右侧约 138px 系统按钮，拖拽区须让开
+  const isWin = isElectron() && window.electronAPI?.platform === 'win32';
+  const dragRight = isWin ? 'right-36' : 'right-2.5';
   // CLI / Docker Web：侧边栏可收起，偏好写入 localStorage
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (cliMode ? readSidebarCollapsed() : false));
   const toggleSidebar = useCallback(() => {
@@ -103,10 +106,10 @@ function Layout() {
   return (
     <div className="tb-app-shell flex h-screen text-zinc-700 dark:text-zinc-200">
       {isElectron() && !authed && (
-        <div className="electron-drag fixed inset-x-0 top-0 h-11 z-50" aria-hidden />
+        <div className={`electron-drag fixed top-0 left-0 ${dragRight} h-11 z-50`} aria-hidden />
       )}
       {isElectron() && authed && !sidebarCollapsed && (
-        <div className="electron-drag fixed top-0 left-[11rem] right-2.5 h-9 z-40" aria-hidden />
+        <div className={`electron-drag fixed top-0 left-40 ${dragRight} h-9 z-40`} aria-hidden />
       )}
       {authed && !sidebarCollapsed && (
         <Sidebar onToggleCollapse={cliMode ? toggleSidebar : undefined} />

@@ -105,14 +105,14 @@ export default function Sidebar({ onToggleCollapse }) {
           onClick={onToggleCollapse}
           title={t('sidebar.collapse')}
           aria-label={t('sidebar.collapse')}
-          className="tb-press absolute top-3 right-2 z-10 flex items-center justify-center w-8 h-8 rounded-xl text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-white/70 dark:hover:bg-white/10"
+          className="tb-press electron-no-drag absolute top-3 right-2 z-10 flex items-center justify-center w-8 h-8 rounded-xl text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-white/70 dark:hover:bg-white/10"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
             <path d="M15 18 9 12l6-6" />
           </svg>
         </button>
       )}
-      {/* Logo — pt-9 避开 macOS 交通灯；electron-drag 允许拖动窗口 */}
+      {/* Logo — pt-14 避开 macOS 交通灯 / Windows 标题栏按钮；electron-drag 允许拖动窗口 */}
       <div className="electron-drag flex items-center gap-2.5 pt-14 pb-4 px-3.5 select-none mb-2">
         <img src={logoSvg} alt="Token Bank" className="w-10 h-10 shrink-0 rounded-2xl" />
         <div className="min-w-0">

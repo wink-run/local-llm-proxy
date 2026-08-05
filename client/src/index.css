@@ -951,7 +951,7 @@
   100% { transform: scale(10); opacity: 0; }
 }
 
-/* Electron macOS hiddenInset：指定区域可拖动窗口 */
+/* Electron：macOS hiddenInset / Windows titleBarOverlay — 指定区域可拖动窗口 */
 .electron-drag {
   -webkit-app-region: drag;
 }

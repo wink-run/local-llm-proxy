@@ -97,6 +97,21 @@
         .shell { background: #242426; }
       }
     }
+    /* Windows / Linux：无原生 vibrancy，用不透明底，避免背后窗口文字透出 */
+    html.platform-win, html.platform-linux {
+      --fill: #f2f2f4;
+      --fill-hover: rgba(0, 0, 0, 0.06);
+      --fill-active: rgba(0, 0, 0, 0.1);
+      --shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+    }
+    @media (prefers-color-scheme: dark) {
+      html.platform-win, html.platform-linux {
+        --fill: #2c2c30;
+        --fill-hover: rgba(255, 255, 255, 0.08);
+        --fill-active: rgba(255, 255, 255, 0.14);
+        --shadow: 0 14px 44px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+      }
+    }
 
     /* ── Header（AIUsage：图标 + 标题/状态点 + 副标题 + 圆形测速） ── */
     .header {
@@ -542,6 +557,14 @@
   </style>
 </head>
 <body>
+  <script>
+    // 尽早标记平台：Windows/Linux 用不透明底，避免首帧透出背后内容
+    (function () {
+      var p = (window.trayAPI && window.trayAPI.platform) || '';
+      var cls = p === 'win32' ? 'platform-win' : p === 'linux' ? 'platform-linux' : p === 'darwin' ? 'platform-mac' : '';
+      if (cls) document.documentElement.classList.add(cls);
+    })();
+  </script>
   <div class="shell">
     <header class="header">
       <img class="logo" src="./assets/logo.svg" alt="" width="26" height="26" />

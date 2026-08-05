@@ -323,6 +323,7 @@ function ensureWindow() {
     opts.visualEffectState = 'active';
     opts.backgroundColor = '#00000000';
   } else {
+    // Windows/Linux 无 vibrancy：窗口仍 transparent 以露出圆角，实底由 HTML .shell 承担
     opts.backgroundColor = '#00000000';
   }
 
@@ -334,6 +335,14 @@ function ensureWindow() {
 
   win.webContents.on('did-finish-load', () => {
     ready = true;
+    // 标记平台：无 vibrancy 时用高不透明度底，避免背后内容透出
+    try {
+      const cls = process.platform === 'win32' ? 'platform-win'
+        : process.platform === 'linux' ? 'platform-linux' : 'platform-mac';
+      win.webContents.executeJavaScript(
+        `document.documentElement.classList.add(${JSON.stringify(cls)})`,
+      ).catch(() => {});
+    } catch { /* ignore */ }
     pushState();
   });
 
