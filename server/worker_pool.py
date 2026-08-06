@@ -266,6 +266,10 @@ async def offline_contributor_model(worker, model: str, reason: str) -> bool:
 
 class WorkerPool:
     _STICKY_TTL = 3600   # 粘性会话有效期（秒）
+    # 节点冷却（与客户端 gateway-cooldown 对齐的简化档）：限流/瞬时 45s，配额 10min，鉴权/欠费 30min
+    _COOL_TRANSIENT_S = 45
+    _COOL_QUOTA_S = 10 * 60
+    _COOL_AUTH_S = 30 * 60
 
     def __init__(self):
         self._workers: list[WorkerConnection] = []
@@ -274,6 +278,70 @@ class WorkerPool:
         self._sticky: dict[str, tuple[str, float]] = {}
         # 智能体被雇佣次数（进程内；重启清零）
         self._agent_hire_counts: dict[str, int] = {}
+        # 节点×模型冷却：key=worker_id::model → until epoch 秒（失败下沉，成功清除）
+        self._cooldowns: dict[str, float] = {}
+
+    @staticmethod
+    def _cool_key(worker_id: str, model: str) -> str:
+        return f"{worker_id}::{model}"
+
+    def is_cooling(self, worker_id: str, model: str, now: float | None = None) -> bool:
+        """节点对该模型是否仍在冷却期内。"""
+        key = self._cool_key(worker_id, model)
+        until = self._cooldowns.get(key)
+        if until is None:
+            return False
+        t = time.time() if now is None else now
+        if until <= t:
+            self._cooldowns.pop(key, None)
+            return False
+        return True
+
+    def clear_cooldown(self, worker_id: str, model: str) -> None:
+        """成功服务后清除该节点×模型冷却。"""
+        self._cooldowns.pop(self._cool_key(worker_id, model), None)
+
+    def note_cooldown(self, worker_id: str, model: str, err: str = "",
+                      now: float | None = None) -> float | None:
+        """按错误类型给节点×模型记冷却；返回 until（epoch 秒），无需冷却则 None。"""
+        t = time.time() if now is None else now
+        low = str(err or "").lower()
+        # 鉴权 / 欠费：长冷却
+        if "http_401" in low or "http 401" in low or "unauthorized" in low or "invalid api key" in low:
+            secs = self._COOL_AUTH_S
+        elif "http_403" in low or "http 403" in low or "forbidden" in low:
+            secs = self._COOL_AUTH_S
+        elif "http_402" in low or "http 402" in low or "insufficient credits" in low:
+            secs = self._COOL_AUTH_S
+        # 配额耗尽：中等冷却；纯限流 / 超时 / 连不上：短冷却
+        elif "quota" in low or "billing" in low:
+            secs = self._COOL_QUOTA_S
+        elif "http_429" in low or "http 429" in low or "rate" in low:
+            secs = self._COOL_TRANSIENT_S if "quota" not in low else self._COOL_QUOTA_S
+        elif "timeout" in low or "failed to reach" in low or "http_5" in low or "http 5" in low:
+            secs = self._COOL_TRANSIENT_S
+        else:
+            # 其它上游错误也短冷，避免连续打同一坏节点
+            secs = self._COOL_TRANSIENT_S
+        until = t + secs
+        key = self._cool_key(worker_id, model)
+        prev = self._cooldowns.get(key, 0)
+        if until > prev:
+            self._cooldowns[key] = until
+        logger.info(
+            "[p2p] worker cooldown key=%s until=+%.0fs reason=%s",
+            key, max(0, self._cooldowns[key] - t), str(err or "")[:160],
+        )
+        return self._cooldowns[key]
+
+    def _sink_cooled(self, ordered: list, model: str) -> list:
+        """冷却中的节点下沉到末尾（fresh 先试，仍保留兜底）。"""
+        if len(ordered) < 2:
+            return list(ordered)
+        fresh, cooled = [], []
+        for w in ordered:
+            (cooled if self.is_cooling(getattr(w, "worker_id", ""), model) else fresh).append(w)
+        return fresh + cooled if cooled else fresh
 
     def add(self, worker: WorkerConnection) -> None:
         """接入真实节点；同 user_id 只保留最新连接，避免重连竞态残留旧 agents 名片。"""
@@ -447,7 +515,8 @@ class WorkerPool:
                     if w.worker_id == bound:
                         ordered.insert(0, ordered.pop(i))
                         break
-        return ordered
+        # 冷却中的节点下沉：可用节点优先，不可用节点仍作兜底
+        return self._sink_cooled(ordered, model)
 
     def has_owned_worker(self, models: list, owner_user_id: Optional[int]) -> bool:
         """该用户是否拥有可服务 models 中任一模型的个人供给源（用于计费预检豁免）。"""

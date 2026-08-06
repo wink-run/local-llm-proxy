@@ -23,6 +23,8 @@
   --mono:'Space Mono',ui-monospace,monospace;
 }
 body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased}
+/* Vue 挂载前隐藏未编译模板，避免 {{ }} 闪烁 */
+[v-cloak]{display:none!important}
 .login-overlay{position:fixed;inset:0;background:var(--bg-subtle);display:flex;align-items:center;justify-content:center;padding:24px}
 .login-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:40px;width:380px;max-width:100%;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.04)}
 .login-box h2{font-size:22px;margin-bottom:8px;color:var(--text);font-weight:700;letter-spacing:-.02em}
@@ -138,7 +140,7 @@ select.form-input{cursor:pointer}
 .modal-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:18px}
 .oauth-box{background:var(--bg-muted);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px}
 .type-toggle{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;flex-shrink:0}
-.type-toggle button{padding:4px 10px;font-size:12px;border:none;cursor:pointer;font-family:inherit}
+.type-toggle button{padding:4px 6px;font-size:11px;border:none;cursor:pointer;font-family:inherit;white-space:nowrap}
 .type-toggle button.on{background:var(--primary);color:var(--primary-fg)}
 .type-toggle button.off{background:var(--bg-muted);color:var(--text-muted)}
 .btn-approve{background:#dcfce7;color:#166534;border:none;cursor:pointer}
@@ -148,7 +150,7 @@ select.form-input{cursor:pointer}
 </style>
 </head>
 <body>
-<div id="app">
+<div id="app" v-cloak>
 
   <!-- Login -->
   <div v-if="!loggedIn" class="login-overlay">
@@ -589,7 +591,7 @@ select.form-input{cursor:pointer}
               <span v-else>{{ a.base_url }}</span>
             </td>
             <td><span class="tag">{{ a.api_style }}</span></td>
-            <td><span v-for="m in a.models" :key="vaModelName(m)" class="tag">{{ vaModelName(m) }}<span v-if="vaModelType(m)==='image'" style="margin-left:3px;color:#9333ea;font-size:10px">图</span></span></td>
+            <td><span v-for="m in a.models" :key="vaModelName(m)" class="tag">{{ vaModelName(m) }}<span v-if="vaModelType(m)==='image'" style="margin-left:3px;color:#9333ea;font-size:10px">{{ lang==='zh'?'生图':'ImgGen' }}</span><span v-else-if="vaModelType(m)==='vision'" style="margin-left:3px;color:#2563eb;font-size:10px">{{ lang==='zh'?'图文':'Vision' }}</span><span v-else-if="vaModelType(m)==='embedding'" style="margin-left:3px;color:#64748b;font-size:10px">{{ lang==='zh'?'嵌入':'Embed' }}</span></span></td>
             <td><span :class="a.enabled ? 'badge badge-on' : 'badge badge-off'">{{ a.enabled ? T.enabled : T.disabled }}</span></td>
             <td>
               <button class="btn-xs" @click="openVaModal(a)">{{ T.edit }}</button>
@@ -662,9 +664,12 @@ select.form-input{cursor:pointer}
             <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
               <div v-for="(m, i) in vaForm.models" :key="i" style="display:flex;align-items:center;gap:6px">
                 <input v-model="vaForm.models[i].name" class="form-input" style="flex:1;min-width:0" placeholder="模型 ID" />
+                <!-- 与客户端对齐：文本 / 图文 / 生图 / 嵌入 -->
                 <div class="type-toggle">
-                  <button type="button" :class="m.type==='chat' ? 'on' : 'off'" @click="vaSetModelType(i,'chat')">对话</button>
-                  <button type="button" :class="m.type==='image' ? 'on' : 'off'" @click="vaSetModelType(i,'image')">图像</button>
+                  <button type="button" :class="m.type==='chat' ? 'on' : 'off'" @click="vaSetModelType(i,'chat')">{{ lang==='zh'?'文本':'Text' }}</button>
+                  <button type="button" :class="m.type==='vision' ? 'on' : 'off'" @click="vaSetModelType(i,'vision')">{{ lang==='zh'?'图文':'Vision' }}</button>
+                  <button type="button" :class="m.type==='image' ? 'on' : 'off'" @click="vaSetModelType(i,'image')">{{ lang==='zh'?'生图':'ImgGen' }}</button>
+                  <button type="button" :class="m.type==='embedding' ? 'on' : 'off'" @click="vaSetModelType(i,'embedding')">{{ lang==='zh'?'嵌入':'Embed' }}</button>
                 </div>
                 <button type="button" @click="vaRemoveModel(i)"
                   style="background:none;border:none;color:#7b7b7b;cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
@@ -1549,11 +1554,20 @@ createApp({
     async function fetchVirtualAgents() {
       try { const d = await (await api('/admin/virtual-agents')).json(); virtualAgents.value = d.agents||[] } catch {}
     }
+    // 与客户端对齐：chat=文本 / vision=图文 / image=生图 / embedding=嵌入
+    const VA_MODEL_TYPES = ['chat', 'vision', 'image', 'embedding']
     function normalizeVaModels(raw) {
-      return (raw||[]).map(m => typeof m === 'string' ? {name:m, type:'chat'} : {name:m.name||'', type:m.type||'chat'})
+      return (raw||[]).map(m => {
+        if (typeof m === 'string') return {name:m, type:'chat'}
+        const t = (m.type || 'chat').toLowerCase()
+        return {name:m.name||'', type: VA_MODEL_TYPES.includes(t) ? t : 'chat'}
+      })
     }
     function vaModelName(m) { return typeof m === 'string' ? m : (m.name || '') }
-    function vaModelType(m) { return typeof m === 'string' ? 'chat' : (m.type || 'chat') }
+    function vaModelType(m) {
+      const t = typeof m === 'string' ? 'chat' : (m.type || 'chat')
+      return VA_MODEL_TYPES.includes(t) ? t : 'chat'
+    }
     function openVaModal(agent) {
       vaMsg.value = ''
       resetVaOAuth()
@@ -1596,7 +1610,11 @@ createApp({
     function closeVaModal() { vaModalOpen.value = false }
     function vaAddModel() { vaForm.value.models.push({name:'', type:'chat'}) }
     function vaRemoveModel(i) { vaForm.value.models.splice(i, 1) }
-    function vaSetModelType(i, t) { vaForm.value.models[i].type = t }
+    function vaSetModelType(i, t) {
+      // 仅接受四类合法类型，防止脏值写入
+      if (!VA_MODEL_TYPES.includes(t)) return
+      vaForm.value.models[i].type = t
+    }
     async function saveVirtualAgent() {
       vaMsg.value = ''
       const isOauth = vaForm.value.api_style === 'claude_oauth'

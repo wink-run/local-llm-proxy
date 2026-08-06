@@ -11,10 +11,14 @@ const https = require('https');
 const http  = require('http');
 const { TIER_ROUTE_RE } = require('../../shared/route-binding');
 const { resolveOutboundProxyAgent } = require('../../shared/outbound-proxy');
+const cooldown = require('../gateway-cooldown');
 
 /** 图像生成默认超时（上游轮询型 API 常需 30–120s 才有首字节） */
 const DEFAULT_IMAGE_TIMEOUT_MS = 300_000;
 const MIN_IMAGE_TIMEOUT_MS = 180_000;
+
+/** 与服务端 infer_model_type_from_name 对齐：裸名像生图 */
+const IMAGE_NAME_RE = /(?:^|[\-_/])image(?:[\-_/]|$|\d)|gpt-image|dall-e|dalle|stable-diffusion|flux-|midjourney|sdxl/i;
 
 /** 从网关 config.req_timeout（秒）解析图像超时，至少 3 分钟 */
 function resolveImageRequestTimeoutMs(config) {
@@ -361,6 +365,45 @@ function hasImageModel(provider, modelStr) {
   );
 }
 
+/** 社区 P2P 供给源（tokenbank-p2p） */
+function isP2pProvider(p) {
+  return !!p && (p.type === 'p2p' || p.id === 'tokenbank-p2p');
+}
+
+/** 供给源模型列表是否含该模型名（不看 type） */
+function providerHasNamedModel(provider, modelStr) {
+  return (provider.models || []).some(m => modelEntryName(m) === modelStr);
+}
+
+function isLikelyImageModelName(name) {
+  return IMAGE_NAME_RE.test(String(name || ''));
+}
+
+/** 冷却键：p2p 按 provider::model；个人源整源 */
+function coolKey(provider, model) {
+  return isP2pProvider(provider) ? `${provider.id}::${model}` : provider.id;
+}
+
+/**
+ * P2P 生图候选模型：首选 + 其它生图名（类型或名称启发式），供失败轮询。
+ */
+function listP2pImageFailoverModels(provider, preferred) {
+  const names = [];
+  const seen = new Set();
+  const push = (n) => {
+    if (!n || seen.has(n)) return;
+    seen.add(n);
+    names.push(n);
+  };
+  push(preferred);
+  for (const m of provider.models || []) {
+    const n = modelEntryName(m);
+    if (!n || n === preferred) continue;
+    if (modelEntryType(m) === 'image' || isLikelyImageModelName(n)) push(n);
+  }
+  return names;
+}
+
 function isAgnesImageModel(modelStr) {
   return /agnes[-_]image|^agnes-image/i.test(modelStr || '');
 }
@@ -394,6 +437,9 @@ function resolveProvider(modelStr, providers) {
   // Match by image model list entry first
   const byModel = providers.find(p => hasImageModel(p, modelStr));
   if (byModel) return { provider: byModel, model: modelStr };
+  // P2P：在线列表多为裸字符串（无 type），按名称命中即可；服务端再筛 image worker
+  const byP2p = providers.find(p => isP2pProvider(p) && providerHasNamedModel(p, modelStr));
+  if (byP2p) return { provider: byP2p, model: modelStr };
   // agnes-image-* 必须走 Agnes 供给源，避免误选 volcengine 等首个 BODY_CONFIGS 命中项
   if (isAgnesImageModel(modelStr)) {
     const p = providers.find(isAgnesProvider);
@@ -414,6 +460,17 @@ function getAdapter(provider) {
   if (ADAPTERS[provider.id]) return ADAPTERS[provider.id];
   // Gemini 图像模型走 generateContent，不能用 /images/generations
   if (isGeminiImageProvider(provider)) return GEMINI_IMAGE_ADAPTER;
+  // 社区 P2P：云端根地址常无 /v1，与 chat 转发一致补版本段
+  if (isP2pProvider(provider)) {
+    return {
+      ...ADAPTERS.openai,
+      buildUrl: (_model, p) => {
+        let base = (p.base_url || '').replace(/\/+$/, '');
+        if (!/\/v\d+$/.test(base)) base += '/v1';
+        return `${base}/images/generations`;
+      },
+    };
+  }
   // OpenAI-compatible base, with per-provider overrides from BODY_CONFIGS
   // (mirrors 9router PROVIDER_MEDIA.imageConfig — detail diffs like Doubao sizing,
   //  Agnes /v1 path + extra_body.response_format).
@@ -441,6 +498,73 @@ function getAdapter(provider) {
 }
 
 // ── Public handler ────────────────────────────────────────────────────────────
+
+/** 对单个 (provider, model) 发起上游生图；成功返回 { ok, normalized }，失败返回 { ok:false, status, msg } */
+async function tryImageModel(provider, model, body, { networkProxy, requestTimeoutMs }) {
+  const adapter = getAdapter(provider);
+  if (!adapter) {
+    return { ok: false, status: 400, msg: `Provider "${provider.id}" has no image generation adapter.` };
+  }
+  const attempts = typeof adapter.getAttempts === 'function'
+    ? adapter.getAttempts(model, provider, body)
+    : [{
+        url: adapter.buildUrl(model, provider),
+        headers: adapter.buildHeaders(provider),
+        body: adapter.buildBody(model, body, provider),
+        normalize: adapter.normalize.bind(adapter),
+      }];
+
+  console.log(`[image] → ${provider.id}/${model} prompt="${String(body.prompt || '').slice(0, 50)}..."`);
+
+  let lastFail = null;
+  for (let i = 0; i < attempts.length; i++) {
+    const { url, headers, body: reqBody, normalize } = attempts[i];
+    const upstream = await postJson(url, headers, reqBody, { provider, networkProxy, timeoutMs: requestTimeoutMs });
+
+    if (upstream.statusCode >= 400) {
+      const raw = await readResponseText(upstream);
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+      const msg = extractErrorDetail(parsed, raw, upstream.statusCode);
+      lastFail = { status: upstream.statusCode, url, msg, raw };
+      if (upstream.statusCode === 404 && i < attempts.length - 1) {
+        console.log(`[image] ${provider.id}/${model} 404 on ${url}, trying fallback...`);
+        continue;
+      }
+      return { ok: false, status: upstream.statusCode, msg, url, raw };
+    }
+
+    let parsed = await readJsonFull(upstream);
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed); } catch {
+        return { ok: false, status: 502, msg: 'Invalid image upstream response (string body)', url };
+      }
+    }
+    if (parsed && typeof parsed === 'object' && parsed.data == null
+        && (parsed.message || parsed.error || (parsed.code != null && Number(parsed.code) !== 0))) {
+      const msg = extractErrorDetail(parsed, null, upstream.statusCode);
+      return { ok: false, status: 502, msg, url };
+    }
+    const normalized = normalize(parsed, body.prompt);
+    if (normalized?.data?.length) return { ok: true, normalized };
+    lastFail = { status: 200, url, msg: 'empty image list in upstream response' };
+    if (i < attempts.length - 1) continue;
+  }
+  return { ok: false, status: 502, msg: lastFail?.msg || 'No image data in upstream response', url: lastFail?.url };
+}
+
+function noteImageCooldown(provider, model, status, msg) {
+  const key = coolKey(provider, model);
+  const err = { status, message: msg };
+  // p2p 池：短瞬时冷却；个人源：硬失败长冷却
+  const e = isP2pProvider(provider)
+    ? cooldown.noteTransient(key, err)
+    : cooldown.noteFailure(key, err);
+  if (e && e._new) {
+    console.log(`[image-cooldown] ${key} 冷却至 ${new Date(e.until).toLocaleString()}（${e.reason}）`);
+  }
+}
+
 async function handleImageGeneration(body, res, getProviders, { skipP2P = false, networkProxy = null, requestTimeoutMs = DEFAULT_IMAGE_TIMEOUT_MS } = {}) {
   if (!body.prompt) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -471,99 +595,66 @@ async function handleImageGeneration(body, res, getProviders, { skipP2P = false,
   }
 
   const { provider, model } = resolved;
-  const adapter = getAdapter(provider);
-
-  if (!adapter) {
+  if (!getAdapter(provider)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: `Provider "${provider.id}" has no image generation adapter.` }));
     return;
   }
 
+  // P2P：多生图模型轮询兜底；冷却中的模型下沉到末尾
+  const candModels = isP2pProvider(provider)
+    ? listP2pImageFailoverModels(provider, model)
+    : [model];
+  const ordered = cooldown.sink(
+    candModels.map(m => ({ provider, model: m })),
+    (c) => coolKey(c.provider, c.model),
+  );
+
+  let lastFail = null;
   try {
-    const attempts = typeof adapter.getAttempts === 'function'
-      ? adapter.getAttempts(model, provider, body)
-      : [{
-          url: adapter.buildUrl(model, provider),
-          headers: adapter.buildHeaders(provider),
-          body: adapter.buildBody(model, body, provider),
-          normalize: adapter.normalize.bind(adapter),
-        }];
-
-    console.log(`[image] → ${provider.id}/${model} prompt="${body.prompt.slice(0, 50)}..."`);
-
-    let normalized = null;
-    let lastFail = null;
-
-    for (let i = 0; i < attempts.length; i++) {
-      const { url, headers, body: reqBody, normalize } = attempts[i];
-      const upstream = await postJson(url, headers, reqBody, { provider, networkProxy, timeoutMs: requestTimeoutMs });
-
-      if (upstream.statusCode >= 400) {
-        const raw = await readResponseText(upstream);
-        let parsed;
-        try { parsed = JSON.parse(raw); } catch { parsed = raw; }
-        const msg = extractErrorDetail(parsed, raw, upstream.statusCode);
-        lastFail = { status: upstream.statusCode, url, msg, raw };
-        // 404 且还有备用端点时继续尝试
-        if (upstream.statusCode === 404 && i < attempts.length - 1) {
-          console.log(`[image] ${provider.id}/${model} 404 on ${url}, trying fallback...`);
-          continue;
+    for (let i = 0; i < ordered.length; i++) {
+      const cand = ordered[i];
+      const result = await tryImageModel(cand.provider, cand.model, body, { networkProxy, requestTimeoutMs });
+      if (result.ok) {
+        cooldown.clear(coolKey(cand.provider, cand.model));
+        const normalized = result.normalized;
+        if (typeof normalized === 'string') {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(normalized);
+          return;
         }
-        logImageError('upstream HTTP error', msg, {
-          status: upstream.statusCode,
-          url,
-          provider: provider.id,
-          model,
-          body: typeof raw === 'string' ? raw.slice(0, 2000) : undefined,
-        });
-        res.writeHead(upstream.statusCode, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: msg }));
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify(normalized));
         return;
       }
 
-      let parsed = await readJsonFull(upstream);
-      if (typeof parsed === 'string') {
-        try { parsed = JSON.parse(parsed); } catch {
-          throw new Error('Invalid image upstream response (string body)');
-        }
+      lastFail = result;
+      noteImageCooldown(cand.provider, cand.model, result.status, result.msg);
+      logImageError('upstream fail', result.msg, {
+        status: result.status,
+        url: result.url,
+        provider: cand.provider.id,
+        model: cand.model,
+        body: typeof result.raw === 'string' ? result.raw.slice(0, 2000) : undefined,
+        will_failover: i < ordered.length - 1,
+      });
+      if (i < ordered.length - 1) {
+        console.log(`[image] failover ${cand.model} → ${ordered[i + 1].model}`);
       }
-      // 部分上游 HTTP 200 但 data=null，并在 message/code 中说明（如拒绝 size）
-      if (parsed && typeof parsed === 'object' && parsed.data == null
-          && (parsed.message || parsed.error || (parsed.code != null && Number(parsed.code) !== 0))) {
-        const msg = extractErrorDetail(parsed, null, upstream.statusCode);
-        lastFail = { status: upstream.statusCode, url, msg };
-        logImageError('upstream logical error', msg, { status: upstream.statusCode, url, provider: provider.id, model });
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: msg }));
-        return;
-      }
-      normalized = normalize(parsed, body.prompt);
-      if (normalized?.data?.length) break;
-      lastFail = { status: 200, url, msg: 'empty image list in upstream response' };
-      if (i < attempts.length - 1) continue;
     }
 
-    if (!normalized?.data?.length) {
-      const msg = lastFail?.msg || 'No image data in upstream response';
-      logImageError('empty result', msg, { provider: provider.id, model, url: lastFail?.url });
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: msg }));
-      return;
-    }
-    if (typeof normalized === 'string') {
-      // 防御：normalize 不应返回字符串；若已是 JSON 字符串则直接写出
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(normalized);
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(normalized));
+    const msg = lastFail?.msg || 'Image generation failed';
+    res.writeHead(lastFail?.status && lastFail.status >= 400 ? lastFail.status : 502, {
+      'Content-Type': 'application/json',
+    });
+    res.end(JSON.stringify({ error: msg }));
   } catch (err) {
     logImageError('error', formatImageErr(err), {
       provider: provider?.id,
       model,
     });
     if (err?.stack) console.error('[image] stack:', err.stack);
+    if (provider && model) noteImageCooldown(provider, model, err?.status || 502, formatImageErr(err));
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: formatImageErr(err) || 'Image generation failed' }));
@@ -576,6 +667,9 @@ module.exports = {
   ADAPTERS,
   getAdapter,
   resolveProvider,
+  listP2pImageFailoverModels,
+  isLikelyImageModelName,
+  coolKey,
   geminiBase,
   isGeminiImageProvider,
   normalizeGeminiImageResponse,

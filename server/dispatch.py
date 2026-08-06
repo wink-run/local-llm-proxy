@@ -191,6 +191,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 worker.active_requests = max(0, worker.active_requests - 1)
                 last_error = f"Failed to reach worker for '{attempt_model}'"
                 last_failed_worker = worker.worker_id
+                pool.note_cooldown(worker.worker_id, attempt_model, last_error)
                 logger.warning(
                     "[p2p] send failed req=%s model=%s worker=%s err=%s",
                     req_id[:8], attempt_model, _p2p_worker_summary(worker), e,
@@ -288,6 +289,8 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                             P2P_TTFT_TIMEOUT_MSG if awaiting_first
                             else f"Timeout on '{attempt_model}'"
                         )
+                        last_failed_worker = worker.worker_id
+                        pool.note_cooldown(worker.worker_id, attempt_model, last_error)
                         logger.warning(
                             "[p2p] sync timeout req=%s model=%s worker=%s ttft=%s err=%s",
                             req_id[:8], attempt_model, _p2p_worker_summary(worker),
@@ -298,6 +301,8 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                     if kind == "error":
                         worker.pending.pop(req_id, None)
                         last_error = str(data)
+                        last_failed_worker = worker.worker_id
+                        pool.note_cooldown(worker.worker_id, attempt_model, last_error)
                         logger.warning(
                             "[p2p] sync error req=%s model=%s worker=%s err=%s",
                             req_id[:8], attempt_model, _p2p_worker_summary(worker), last_error,
@@ -330,6 +335,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 worker.pending.pop(req_id, None)
                 last_error = f"Timeout on '{attempt_model}'"
                 last_failed_worker = worker.worker_id
+                pool.note_cooldown(worker.worker_id, attempt_model, last_error)
                 continue  # 换下一个账号
 
             if got_error:
@@ -352,6 +358,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                     )
                 if session_key:
                     pool.bind_sticky(session_key, worker.worker_id)
+                pool.clear_cooldown(worker.worker_id, attempt_model)
                 # 成功：把服务的具体 worker 用响应头带回客户端（X-TB-Worker）
                 return JSONResponse(result_data, headers={"X-TB-Worker": worker.worker_id})
 
