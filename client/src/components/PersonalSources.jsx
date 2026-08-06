@@ -3,12 +3,12 @@
 // direct_source_instances / sync_diff / user_subscriptions / user_payg_providers。
 // 保存统一走父级传入的 onSave(patch)（= saveAccounts），写 source_template_overrides /
 // direct_source_billing / user_payg_providers 等字段。
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { getGateway, isElectron } from '../api/adapter';
 import ServiceIcon from './ServiceIcon';
-import { resolveBrandIcon } from '../lib/brandIcons';
+import { resolveProviderBrandIcon } from '../lib/brandIcons';
 import { speedDotClass, bucketFromMs } from '../lib/speed';
 
 // 服务质量(上次转发结果)：成功=绿 / 429=红 / 失败=红 / 无请求=灰。文字区分 429 与 失败。
@@ -46,8 +46,12 @@ function modelEntryName(m) {
 
 /** 供给源 logo 去重键：同一 provider 多账户只显示一个图标 */
 function providerDedupKey(inst) {
-  const hay = `${inst.source_id || inst.provider_id || ''} ${inst.gateway_id || ''} ${inst.label || inst.name || ''}`;
-  const brand = resolveBrandIcon(hay);
+  const brand = resolveProviderBrandIcon({
+    id: inst.source_id || inst.provider_id,
+    name: inst.label || inst.name,
+    base_url: inst.base_url,
+    signup_url: inst.signup_url,
+  });
   if (brand) return brand;
   return String(inst.source_id || inst.provider_id || inst.gateway_id || inst.id || '');
 }
@@ -67,12 +71,17 @@ function dedupeByProvider(insts) {
 /** 供给源 logo（紧凑图标，hover 显示名称） */
 function SourceProviderLogo({ inst }) {
   const name = inst.name || inst.label || inst.source_id;
-  const brand = resolveBrandIcon(`${inst.source_id || inst.provider_id || ''} ${name || ''}`);
   return (
     <span title={name} className="inline-flex items-center justify-center w-4 h-4 shrink-0">
-      {brand
-        ? <img src={brand} alt="" className="w-3.5 h-3.5 object-contain" draggable={false} />
-        : <span className="text-[10px] leading-none">{inst.icon || '🔧'}</span>}
+      <ServiceIcon
+        id={inst.source_id || inst.provider_id}
+        name={name}
+        icon={inst.icon}
+        baseUrl={inst.base_url}
+        signupUrl={inst.signup_url}
+        boxClass="w-4 h-4 !rounded !bg-transparent"
+        imgClass="w-3.5 h-3.5"
+      />
     </span>
   );
 }
@@ -121,12 +130,13 @@ export function modelTypeBtnClass(type) {
 }
 
 /** 计费表格（模型 → 模态相关刊例价字段）。图像：image（$/张）；对话：in/out/cacheRead；嵌入：in/out。 */
-export function PricingTable({
+export const PricingTable = memo(function PricingTable({
   rows, onCell, onAddModel, onRemoveModel, t,
   withModality = false, modelTypes = {}, onToggleType,
 }) {
   const [newModel, setNewModel] = useState('');
   const [inputType, setInputType] = useState('chat');
+  // 编辑中用本地 draft，避免父级轮询/乐观更新打断输入导致闪动
   const [draft, setDraft] = useState({});   // 'model:field' → 编辑中的原始字符串
   const keyOf = (m, f) => `${m}:${f}`;
   const cellVal = (m, f, num) => {
@@ -294,7 +304,16 @@ export function PricingTable({
       </div>
     </div>
   );
-}
+}, (prev, next) => (
+  // 忽略回调引用变化：父级延迟轮询重渲染时不应打断输入 draft
+  prev.rows === next.rows
+  && prev.withModality === next.withModality
+  && prev.modelTypes === next.modelTypes
+  && prev.t === next.t
+  && !!prev.onAddModel === !!next.onAddModel
+  && !!prev.onRemoveModel === !!next.onRemoveModel
+  && !!prev.onToggleType === !!next.onToggleType
+));
 
 // ── 第1块：账户统计 ────────────────────────────────────────────────────────────
 export function AccountStatsView({ data, t, filter = 'all', onFilter }) {
@@ -556,7 +575,7 @@ export function DirectSourceCard({
     <div className="tb-soft-tile rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-3.5">
         <div className="w-8 h-8 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/70 backdrop-blur-sm flex items-center justify-center text-[15px] shrink-0 mt-0.5">
-          <ServiceIcon id={instance.source_id} name={instance.label} icon={instance.icon} />
+          <ServiceIcon id={instance.source_id} name={instance.label} icon={instance.icon} baseUrl={instance.base_url} signupUrl={instance.signup_url} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
@@ -601,7 +620,7 @@ export function DirectSourceCard({
             <>
               <span className="text-xs text-zinc-400">$</span>
               <input type="text" inputMode="decimal" value={monthly} placeholder="0"
-                onChange={e => { const v = e.target.value; setMonthly(v); scheduleSave(v, pricing, isApi); }}
+                onChange={e => setMonthly(e.target.value)}
                 onBlur={() => flushSave(monthly, pricing, isApi)}
                 className="w-24 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 tabular-nums" />
               <span className="text-xs text-zinc-400">{t('psrc.direct.monthlyUnit')}</span>
@@ -627,7 +646,7 @@ export function UnenrolledInstanceCard({ instance, onRemove, t }) {
   const i = instance;
   return (
     <div className="tb-soft-tile flex items-center gap-2 px-3 py-2 rounded-xl">
-      <ServiceIcon id={i.source_id} name={i.label} icon={i.icon} />
+      <ServiceIcon id={i.source_id} name={i.label} icon={i.icon} baseUrl={i.base_url} signupUrl={i.signup_url} />
       <div className="min-w-0 flex-1">
         <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300 truncate">{i.name}</div>
         <div className="text-[10px] text-zinc-400 truncate">
@@ -945,7 +964,7 @@ export function SourceTemplateGrid({
                 added ? '' : 'opacity-70'
               }`}>
               <span className={added ? '' : 'grayscale opacity-60'}>
-                <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} />
+                <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} baseUrl={tpl.base_url} signupUrl={tpl.signup_url} />
               </span>
               <span className="min-w-0 flex-1">
                 <span className={`block text-xs font-medium truncate ${added ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-500'}`}>{tpl.label}</span>
@@ -991,7 +1010,7 @@ export function SourcePickerModal({ templates, onPick, onClose, t }) {
                   ready ? '' : 'opacity-60'
                 }`}>
                 <span className={ready ? '' : 'grayscale opacity-60'}>
-                  <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} />
+                  <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} baseUrl={tpl.base_url} signupUrl={tpl.signup_url} />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className={`block text-xs font-medium truncate ${ready ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-500'}`}>{tpl.label}</span>
@@ -1275,7 +1294,7 @@ export function TemplateEditModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-4 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2">
-          <ServiceIcon id={template.key} name={template.label} icon={template.icon} />
+          <ServiceIcon id={template.key} name={template.label} icon={template.icon} baseUrl={template.base_url} signupUrl={template.signup_url} />
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('psrc.tpl.editTitle', { name: template.label })}</h3>
         </div>
         {isAppSub && isCustomTpl && (

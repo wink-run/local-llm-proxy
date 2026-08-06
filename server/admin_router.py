@@ -148,6 +148,8 @@ class UpdateUserRequest(BaseModel):
     credit_delta: float | None = None
     credit_note: str = ""
     nickname: str | None = None
+    # 管理员直接重置密码（忘记密码兜底）
+    new_password: str | None = None
 
 
 @router.patch("/users/{user_id}", dependencies=[Depends(auth_admin)])
@@ -156,6 +158,12 @@ async def update_user(user_id: int, req: UpdateUserRequest):
         await db.set_user_apikey_permission(user_id, req.can_create_apikey)
     if req.nickname is not None:
         await db.set_user_nickname(user_id, req.nickname.strip())
+    if req.new_password is not None:
+        pw = req.new_password.strip()
+        if len(pw) < 6:
+            raise HTTPException(400, "密码至少 6 位")
+        from auth import hash_password
+        await db.set_user_password(user_id, hash_password(pw))
     if req.credit_delta is not None:
         new_bal = await db.adjust_user_credits(user_id, req.credit_delta, req.credit_note)
         return {"ok": True, "new_balance": new_bal}

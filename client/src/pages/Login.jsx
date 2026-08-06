@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { login, register, getProfile, joinCircle, formatApiError } from '../api/client';
+import { login, register, getProfile, joinCircle, formatApiError, forgotPassword, resetPassword } from '../api/client';
 import { useAuth } from '../store/index';
 import logo from '../assets/logo.svg';
 import { useLang } from '../store/lang';
@@ -37,7 +37,7 @@ function safeReturnPath(from) {
   return from;
 }
 
-/** 登录 / 注册页（与设置页分离，未登录也可从侧栏进入） */
+/** 登录 / 注册 / 找回密码页（与设置页分离，未登录也可从侧栏进入） */
 export default function Login() {
   const { user, loginSuccess, enterGuest } = useAuth();
   const { t } = useLang();
@@ -53,14 +53,22 @@ export default function Login() {
   const [serverUrl, setServerUrl] = useState(
     () => normalizeServerBase(localStorage.getItem('serverUrl') || '')
   );
+  // login | register | forgot
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
   const [referralCode, setReferralCode] = useState(inviteRefCode);
   const [error, setError] = useState('');
+  const [okMsg, setOkMsg] = useState('');
   const [saving, setSaving] = useState(false);
   const [firstRun, setFirstRun] = useState(false);
+  // 找回密码：发码后进入第二步
+  const [forgotStep, setForgotStep] = useState(1);
+  const [resetCode, setResetCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [contactInfo, setContactInfo] = useState('');
 
   // 已登录则无需停留登录页
   useEffect(() => {
@@ -143,9 +151,59 @@ export default function Login() {
     }
   }
 
+  async function handleSendCode(e) {
+    e.preventDefault();
+    setError('');
+    setOkMsg('');
+    const base = persistServerUrl(serverUrl);
+    if (!base) { setError(t('config.serverRequired')); return; }
+    if (!email.trim()) { setError(t('config.email')); return; }
+    setSaving(true);
+    try {
+      setServerUrl(base);
+      const res = await forgotPassword(email.trim());
+      setContactInfo(res.data?.contact_info || '');
+      setOkMsg(res.data?.message || t('config.codeSent'));
+      setForgotStep(2);
+    } catch (err) {
+      setError(formatApiError(err, t('config.resetFailed')));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleResetPassword(e) {
+    e.preventDefault();
+    setError('');
+    setOkMsg('');
+    if (newPassword.length < 6) { setError(t('config.passwordMin')); return; }
+    if (newPassword !== confirmPassword) { setError(t('config.passwordMismatch')); return; }
+    setSaving(true);
+    try {
+      await resetPassword(email.trim(), resetCode.trim(), newPassword);
+      setOkMsg(t('config.resetSuccess'));
+      setPassword('');
+      setResetCode('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setForgotStep(1);
+      setMode('login');
+    } catch (err) {
+      setError(formatApiError(err, t('config.resetFailed')));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function switchMode(m) {
     setMode(m);
     setError('');
+    setOkMsg('');
+    setForgotStep(1);
+    setResetCode('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setContactInfo('');
   }
 
   /** 跳过登录，以游客身份进入主界面 */
@@ -167,9 +225,11 @@ export default function Login() {
           </div>
         </div>
 
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center leading-relaxed px-1">
-          {t('config.loginBenefits')}
-        </p>
+        {mode !== 'forgot' && (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center leading-relaxed px-1">
+            {t('config.loginBenefits')}
+          </p>
+        )}
 
         {firstRun && (
           <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
@@ -196,7 +256,12 @@ export default function Login() {
           <form onSubmit={handleLogin} className="space-y-3">
             <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
             <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
+            <div className="flex justify-end -mt-1">
+              <button type="button" onClick={() => switchMode('forgot')}
+                className="text-xs text-blue-500 hover:underline">{t('config.forgotPassword')}</button>
+            </div>
             {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
+            {okMsg && <p className="text-green-600 dark:text-green-400 text-sm">{okMsg}</p>}
             <button type="submit" disabled={saving}
               className="tb-press w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-xl text-[13px] font-semibold text-white">
               {saving ? t('config.loggingIn') : t('config.login')}
@@ -207,7 +272,7 @@ export default function Login() {
                 className="text-blue-500 hover:underline ml-1">{t('config.register')}</button>
             </p>
           </form>
-        ) : (
+        ) : mode === 'register' ? (
           <form onSubmit={handleRegister} className="space-y-3">
             <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
             <Field label={t('config.nickname')} type="text" value={nickname} onChange={setNickname} placeholder={t('config.nicknamePh')} />
@@ -229,6 +294,50 @@ export default function Login() {
                 className="text-blue-500 hover:underline ml-1">{t('config.goLogin')}</button>
             </p>
           </form>
+        ) : (
+          /* 找回密码：① 发码 → ② 验证码 + 新密码 */
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 text-center">{t('config.forgotTitle')}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center leading-relaxed">{t('config.forgotHint')}</p>
+            {forgotStep === 1 ? (
+              <form onSubmit={handleSendCode} className="space-y-3">
+                <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
+                {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
+                <button type="submit" disabled={saving}
+                  className="tb-press w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-xl text-[13px] font-semibold text-white">
+                  {saving ? t('config.sendingCode') : t('config.sendCode')}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleResetPassword} className="space-y-3">
+                <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
+                <Field label={t('config.resetCode')} type="text" value={resetCode} onChange={setResetCode} placeholder={t('config.resetCodePh')} />
+                <Field label={t('config.newPassword')} type="password" value={newPassword} onChange={setNewPassword} placeholder={t('config.passwordMin')} />
+                <Field label={t('config.confirmPassword')} type="password" value={confirmPassword} onChange={setConfirmPassword} placeholder={t('config.passwordMin')} />
+                {okMsg && <p className="text-green-600 dark:text-green-400 text-sm">{okMsg}</p>}
+                {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
+                {contactInfo ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                    {t('config.contactAdmin')} <span className="text-zinc-700 dark:text-zinc-300">{contactInfo}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('config.contactAdmin')}{t('config.noContact')}</p>
+                )}
+                <button type="submit" disabled={saving}
+                  className="tb-press w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-xl text-[13px] font-semibold text-white">
+                  {saving ? t('config.resetting') : t('config.resetBtn')}
+                </button>
+                <button type="button" onClick={() => { setForgotStep(1); setError(''); setOkMsg(''); }}
+                  className="w-full text-center text-xs text-blue-500 hover:underline">
+                  {t('config.sendCode')}
+                </button>
+              </form>
+            )}
+            <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
+              <button type="button" onClick={() => switchMode('login')}
+                className="text-blue-500 hover:underline">{t('config.backToLogin')}</button>
+            </p>
+          </div>
         )}
 
       </div>

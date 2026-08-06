@@ -64,6 +64,16 @@ export function register(email, password, nickname = '', referral_code = '', cir
   return authRequest('POST', '/user/register', { body: { email, password, nickname, referral_code, circle_code } });
 }
 
+/** 申请密码重置验证码 */
+export function forgotPassword(email) {
+  return authRequest('POST', '/user/forgot-password', { body: { email } });
+}
+
+/** 用验证码设置新密码 */
+export function resetPassword(email, code, new_password) {
+  return authRequest('POST', '/user/reset-password', { body: { email, code, new_password } });
+}
+
 export function getProfile() {
   const token = localStorage.getItem('token');
   return authRequest('GET', '/user/profile', { token });

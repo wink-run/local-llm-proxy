@@ -158,7 +158,7 @@ td{padding:10px 12px;vertical-align:middle}
       <div style="display:flex;justify-content:center;margin-bottom:10px"><img class="brand-mark" src="/static/logo.svg" alt="Token Bank" width="32" height="32" style="width:32px;height:32px"></div>
       <h2>Token Bank</h2>
       <p class="subtitle">{{ T.authSubtitle }}</p>
-      <div class="auth-tabs">
+      <div class="auth-tabs" v-if="authTab !== 'forgot'">
         <button :class="{ active: authTab === 'login' }"    @click="authTab='login'">{{ T.login }}</button>
         <button :class="{ active: authTab === 'register' }" @click="authTab='register'">{{ T.register }}</button>
       </div>
@@ -166,15 +166,33 @@ td{padding:10px 12px;vertical-align:middle}
         <div v-if="inviteCircleCode" class="ok" style="text-align:left;margin-bottom:12px;line-height:1.5">{{ T.circleInviteHint }}</div>
         <div class="field"><label>{{ T.email }}</label><input v-model="form.email" type="email" placeholder="you@example.com" @keyup.enter="doLogin" /></div>
         <div class="field"><label>{{ T.password }}</label><input v-model="form.password" type="password" placeholder="••••••" @keyup.enter="doLogin" /></div>
+        <div style="text-align:right;margin:-4px 0 10px"><button type="button" class="btn-lang" style="font-size:12px" @click="authTab='forgot'; authErr=''; authOk=''; forgotStep=1">{{ T.forgotPassword }}</button></div>
         <button class="btn-block" :disabled="authLoading" @click="doLogin">{{ authLoading ? T.loggingIn : T.login }}</button>
       </div>
-      <div v-else>
+      <div v-else-if="authTab === 'register'">
         <div v-if="inviteCircleCode" class="ok" style="text-align:left;margin-bottom:12px;line-height:1.5">{{ T.circleInviteHint }}</div>
         <div class="field"><label>{{ T.email }}</label><input v-model="form.email" type="email" placeholder="you@example.com" /></div>
         <div class="field"><label>{{ T.nickname }}</label><input v-model="form.nickname" type="text" :placeholder="T.nicknamePlaceholder" /></div>
         <div class="field"><label>{{ T.password }} (≥6)</label><input v-model="form.password" type="password" placeholder="••••••" /></div>
         <div class="field"><label>{{ T.referralCode }}</label><input v-model="form.referral_code" type="text" :placeholder="T.referralPlaceholder" /></div>
         <button class="btn-block" :disabled="authLoading" @click="doRegister">{{ authLoading ? T.registering : T.register }}</button>
+      </div>
+      <div v-else>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;line-height:1.5">{{ T.forgotHint }}</p>
+        <template v-if="forgotStep===1">
+          <div class="field"><label>{{ T.email }}</label><input v-model="form.email" type="email" placeholder="you@example.com" @keyup.enter="doForgotSend" /></div>
+          <button class="btn-block" :disabled="authLoading" @click="doForgotSend">{{ authLoading ? T.sendingCode : T.sendCode }}</button>
+        </template>
+        <template v-else>
+          <div class="field"><label>{{ T.email }}</label><input v-model="form.email" type="email" placeholder="you@example.com" /></div>
+          <div class="field"><label>{{ T.resetCode }}</label><input v-model="form.reset_code" type="text" :placeholder="T.resetCodePh" /></div>
+          <div class="field"><label>{{ T.newPassword }}</label><input v-model="form.new_password" type="password" placeholder="••••••" /></div>
+          <div class="field"><label>{{ T.confirmPassword }}</label><input v-model="form.confirm_password" type="password" placeholder="••••••" /></div>
+          <p v-if="forgotContact" style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">{{ T.contactAdmin }} {{ forgotContact }}</p>
+          <button class="btn-block" :disabled="authLoading" @click="doResetPassword">{{ authLoading ? T.resetting : T.resetBtn }}</button>
+          <div style="text-align:center;margin-top:10px"><button type="button" class="btn-lang" style="font-size:12px" @click="forgotStep=1;authErr='';authOk=''">{{ T.sendCode }}</button></div>
+        </template>
+        <div style="text-align:center;margin-top:12px"><button type="button" class="btn-lang" @click="authTab='login'; authErr=''; authOk=''">{{ T.backToLogin }}</button></div>
       </div>
       <div v-if="authErr" class="err">{{ authErr }}</div>
       <div v-if="authOk"  class="ok">{{ authOk }}</div>
@@ -648,6 +666,11 @@ const LANGS = {
     login: '登录', register: '注册', loggingIn: '登录中…', registering: '注册中…',
     email: '邮箱', password: '密码', nickname: '昵称（可选）', nicknamePlaceholder: '留空使用邮箱前缀',
     referralCode: '推荐码（可选）', referralPlaceholder: '好友推荐码',
+    forgotPassword: '忘记密码？', forgotHint: '输入注册邮箱，我们将发送验证码（约 15 分钟有效）',
+    sendCode: '发送验证码', sendingCode: '发送中…', resetCode: '验证码', resetCodePh: '6 位数字',
+    newPassword: '新密码', confirmPassword: '确认新密码', resetBtn: '重置密码', resetting: '重置中…',
+    resetSuccess: '密码已重置，请登录', passwordMismatch: '两次密码不一致',
+    contactAdmin: '邮件未送达时可联系管理员：', backToLogin: '返回登录',
     portalTitle: '用户中心', logout: '退出',
     tabs: { credits:'积分账户', subscription:'订阅账户', payg:'按量付费', usage:'用量情况', keys:'API Keys' },
     creditsSubs: { overview:'概览', transactions:'流水', settlements:'结算', purchase:'购买', rates:'换算', referral:'推荐' },
@@ -714,6 +737,11 @@ const LANGS = {
     login: 'Sign In', register: 'Sign Up', loggingIn: 'Signing in…', registering: 'Registering…',
     email: 'Email', password: 'Password', nickname: 'Nickname (optional)', nicknamePlaceholder: 'Defaults to email prefix',
     referralCode: 'Referral code (optional)', referralPlaceholder: "Friend's referral code",
+    forgotPassword: 'Forgot password?', forgotHint: 'Enter your email and we’ll send a verification code (valid ~15 min)',
+    sendCode: 'Send code', sendingCode: 'Sending…', resetCode: 'Code', resetCodePh: '6-digit code',
+    newPassword: 'New password', confirmPassword: 'Confirm password', resetBtn: 'Reset password', resetting: 'Resetting…',
+    resetSuccess: 'Password updated — please sign in', passwordMismatch: 'Passwords do not match',
+    contactAdmin: 'If email wasn’t delivered, contact admin:', backToLogin: 'Back to sign in',
     portalTitle: 'User Portal', logout: 'Sign Out',
     tabs: { credits:'Credits', subscription:'Subscriptions', payg:'Pay-as-you-go', usage:'Usage', keys:'API Keys' },
     creditsSubs: { overview:'Overview', transactions:'Ledger', settlements:'Settlements', purchase:'Purchase', rates:'Rates', referral:'Referral' },
@@ -791,7 +819,9 @@ createApp({
     const authTab = ref('login')
     const authLoading = ref(false)
     const authErr = ref(''), authOk = ref('')
-    const form = ref({ email:'', password:'', nickname:'', referral_code:'' })
+    const form = ref({ email:'', password:'', nickname:'', referral_code:'', reset_code:'', new_password:'', confirm_password:'' })
+    const forgotStep = ref(1)
+    const forgotContact = ref('')
     // 邀请链接 ?c= 圈子码；登录/注册成功后展示导引页
     const inviteCircleCode = ref('')
     const circleGuide = ref(null)  // { circleName, status: 'joined'|'already_member'|'full' }
@@ -972,6 +1002,52 @@ createApp({
             })
           }
         }, 800)
+      } catch { authErr.value = 'Network error' }
+      finally { authLoading.value = false }
+    }
+
+    async function doForgotSend() {
+      authErr.value = ''; authOk.value = ''; forgotContact.value = ''
+      if (!form.value.email) { authErr.value = T.value.email; return }
+      authLoading.value = true
+      try {
+        const r = await fetch('/user/forgot-password', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: form.value.email }),
+        })
+        const d = await r.json()
+        if (!r.ok) { authErr.value = d.detail || 'Error'; return }
+        authOk.value = d.message || T.value.sendCode
+        forgotContact.value = d.contact_info || ''
+        forgotStep.value = 2
+      } catch { authErr.value = 'Network error' }
+      finally { authLoading.value = false }
+    }
+
+    async function doResetPassword() {
+      authErr.value = ''; authOk.value = ''
+      if (!form.value.email || !form.value.reset_code) { authErr.value = T.value.resetCode; return }
+      if ((form.value.new_password || '').length < 6) { authErr.value = '≥6'; return }
+      if (form.value.new_password !== form.value.confirm_password) { authErr.value = T.value.passwordMismatch; return }
+      authLoading.value = true
+      try {
+        const r = await fetch('/user/reset-password', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: form.value.email,
+            code: form.value.reset_code,
+            new_password: form.value.new_password,
+          }),
+        })
+        const d = await r.json()
+        if (!r.ok) { authErr.value = d.detail || 'Error'; return }
+        authOk.value = T.value.resetSuccess
+        form.value.password = ''
+        form.value.reset_code = ''
+        form.value.new_password = ''
+        form.value.confirm_password = ''
+        forgotStep.value = 1
+        authTab.value = 'login'
       } catch { authErr.value = 'Network error' }
       finally { authLoading.value = false }
     }
@@ -1356,6 +1432,7 @@ createApp({
     return {
       lang, T, toggleLang, brandIconFor, isAppIcon, appIconSvg,
       loggedIn, authTab, authLoading, authErr, authOk, form, doLogin, doRegister, logout,
+      forgotStep, forgotContact, doForgotSend, doResetPassword,
       inviteCircleCode, circleGuide, circleGuideMessage, circleGuideHref, dismissCircleGuide,
       profile, activeTab, visibleTabs, switchTab, creditsSub, creditsSubTabs, switchCreditsSub,
       myKeys, newKeyNote, createKey, toggleKey, deleteKey, maskKey,

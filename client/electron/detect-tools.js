@@ -96,12 +96,25 @@ async function detectClaude() {
   };
 }
 
-// Codex：命令 `codex --version`；配置 CODEX_HOME 或 ~/.codex/config.toml；
+// Codex：优先 PATH 上的 `codex`；否则回落 ChatGPT.app / CODEX_CLI_PATH（Desktop 内嵌）。
 // 接入靠 config.toml 里 base_url 指向网关。
 async function detectCodex() {
-  const probe = await runProbe('codex', ['--version']);
-  const installed = probe.ok;
-  const version = installed ? (probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout) : null;
+  let probe = await runProbe('codex', ['--version']);
+  let installed = probe.ok;
+  // PATH 未命中时查内嵌 CLI（与 shim-installer.resolveRealCommand 一致）
+  if (!installed) {
+    try {
+      const shim = require('./shim-installer');
+      const bundled = shim.resolveRealCommand?.('codex');
+      if (bundled) {
+        probe = await runProbe(bundled, ['--version']);
+        installed = true; // 内嵌二进制存在即视为已装
+      }
+    } catch { /* ignore */ }
+  }
+  const version = installed && probe.ok
+    ? (probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout)
+    : null;
 
   const configDir = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   const configPath = path.join(configDir, 'config.toml');

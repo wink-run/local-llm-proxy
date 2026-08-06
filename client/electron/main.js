@@ -10,6 +10,13 @@ const {
   feedUrlForTag,
   isRemoteNewer,
 } = require('./updater-release');
+// GUI 启动通常无 shell 的 HTTP(S)_PROXY；启动前注入系统代理环境变量，供出站请求使用
+try {
+  const injected = require('../shared/inject-proxy-env').injectProxyEnv();
+  if (injected) console.log('[proxy-env] injected', injected);
+} catch (e) {
+  console.warn('[proxy-env] inject failed:', e && e.message);
+}
 const agent = require('./agent-worker');
 const gateway = require('./local-gateway');
 const localStats = require('./local-stats');
@@ -1790,15 +1797,20 @@ function readAgentConfig() {
 function writeAgentConfig(cfg) {
   fs.mkdirSync(path.dirname(AGENT_CONFIG_PATH), { recursive: true });
   fs.writeFileSync(AGENT_CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf-8');
-  // 配置变更后立即应用 Dock 可见性（默认显示，仅用户开启时隐藏）
-  try { applyDockIconVisibility(!!cfg?.hide_dock_icon); } catch { /* ignore */ }
+  // 不在每次写配置时动 Dock：app.dock.show() 会导致窗口整体闪一下；
+  // Dock 可见性仅在启动 / 用户切换 hide_dock_icon 时应用。
 }
 
 /** macOS：按用户设置显示/隐藏 Dock 图标（默认显示，不随托盘/浮窗自动隐藏） */
+let _dockHiddenApplied = null;
 function applyDockIconVisibility(hide) {
   if (process.platform !== 'darwin' || !app.dock) return;
+  const wantHide = !!hide;
+  // 状态未变则跳过，避免重复 show/hide 触发窗口闪动
+  if (_dockHiddenApplied === wantHide) return;
+  _dockHiddenApplied = wantHide;
   try {
-    if (hide) app.dock.hide();
+    if (wantHide) app.dock.hide();
     else app.dock.show();
   } catch (e) {
     console.warn('[dock] apply failed:', e.message);
@@ -2521,6 +2533,7 @@ function registerIPC() {
     const cfg = readAgentConfig() || {};
     cfg.hide_dock_icon = !!hide;
     writeAgentConfig(cfg);
+    applyDockIconVisibility(!!hide);
     return { ok: true, hide_dock_icon: !!cfg.hide_dock_icon };
   });
   // 同步渲染进程主题 → Windows 原生标题栏 / 系统 chrome（light 模式下标题栏不再留黑）

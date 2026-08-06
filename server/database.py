@@ -1,9 +1,10 @@
 """PostgreSQL 数据库操作层（全部异步）"""
 
+import hashlib
 import logging
 import random
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 
@@ -249,6 +250,22 @@ async def init_db() -> None:
             )
         """)
 
+        # 忘记密码验证码（短时有效，code_hash 存 SHA-256）
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS password_reset_codes (
+                id         SERIAL PRIMARY KEY,
+                email      TEXT NOT NULL,
+                code_hash  TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                attempts   INTEGER DEFAULT 0,
+                used       INTEGER DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pwd_reset_email ON password_reset_codes(email)"
+        )
+
         # 默认配置项
         for k, v in [
             ("referral_reward", "100"),
@@ -278,7 +295,27 @@ async def init_db() -> None:
     await _migrate_circles()
     await _migrate_user_avatars()
     await _migrate_user_persona()
+    await _migrate_password_reset_codes()
 
+
+async def _migrate_password_reset_codes() -> None:
+    """早期库补齐忘记密码验证码表。"""
+    async with connect() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS password_reset_codes (
+                id         SERIAL PRIMARY KEY,
+                email      TEXT NOT NULL,
+                code_hash  TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                attempts   INTEGER DEFAULT 0,
+                used       INTEGER DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pwd_reset_email ON password_reset_codes(email)"
+        )
+        await db.commit()
 
 
 async def _migrate() -> None:
@@ -474,8 +511,13 @@ async def create_user(email: str, nickname: str, password_hash: str, referred_by
 
 
 async def get_user_by_email(email: str) -> Optional[dict]:
+    # 大小写不敏感，便于找回密码时输入
+    email_n = (email or "").strip()
     async with connect() as db:
-        async with db.execute("SELECT * FROM users WHERE email=?", (email,)) as cur:
+        async with db.execute(
+            "SELECT * FROM users WHERE LOWER(email)=LOWER(?)",
+            (email_n,),
+        ) as cur:
             r = await cur.fetchone()
             return dict(r) if r else None
 
@@ -521,6 +563,103 @@ async def set_user_nickname(user_id: int, nickname: str) -> None:
     async with connect() as db:
         await db.execute("UPDATE users SET nickname=? WHERE id=?", (nickname, user_id))
         await db.commit()
+
+
+async def set_user_password(user_id: int, password_hash: str) -> None:
+    """更新用户密码哈希（找回密码 / 管理员重置）"""
+    async with connect() as db:
+        await db.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (password_hash, user_id),
+        )
+        await db.commit()
+
+
+# ── 忘记密码验证码 ────────────────────────────────────────────────────────────
+
+def _hash_reset_code(code: str) -> str:
+    return hashlib.sha256(code.strip().encode()).hexdigest()
+
+
+async def create_password_reset_code(email: str, ttl_minutes: int = 15) -> str:
+    """作废该邮箱旧码，生成 6 位数字验证码并入库，返回明文 code。"""
+    email_n = email.strip().lower()
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    code_hash = _hash_reset_code(code)
+    # asyncpg 要求 TIMESTAMPTZ 传 datetime，不能传 ISO 字符串
+    expires = datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
+    async with connect() as db:
+        # 旧码一律作废，避免多码并存
+        await db.execute(
+            "UPDATE password_reset_codes SET used=1 WHERE email=? AND used=0",
+            (email_n,),
+        )
+        await db.execute(
+            "INSERT INTO password_reset_codes(email, code_hash, expires_at) VALUES(?,?,?)",
+            (email_n, code_hash, expires),
+        )
+        await db.commit()
+    return code
+
+
+async def recent_password_reset_count(email: str, within_seconds: int = 60) -> int:
+    """统计近期发码次数（用于限流）。"""
+    email_n = email.strip().lower()
+    since = datetime.now(timezone.utc) - timedelta(seconds=within_seconds)
+    async with connect() as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM password_reset_codes WHERE email=? AND created_at>=?",
+            (email_n, since),
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0
+
+
+async def consume_password_reset_code(email: str, code: str, max_attempts: int = 5) -> bool:
+    """校验验证码；成功则标记已用。过期 / 用尽 / 错误均返回 False。"""
+    email_n = email.strip().lower()
+    code_hash = _hash_reset_code(code)
+    now = datetime.now(timezone.utc)
+    async with connect() as db:
+        async with db.execute(
+            "SELECT id, code_hash, expires_at, attempts, used FROM password_reset_codes "
+            "WHERE email=? AND used=0 ORDER BY id DESC LIMIT 1",
+            (email_n,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        rid = row["id"] if hasattr(row, "keys") else row[0]
+        stored = row["code_hash"] if hasattr(row, "keys") else row[1]
+        expires_raw = row["expires_at"] if hasattr(row, "keys") else row[2]
+        attempts = int(row["attempts"] if hasattr(row, "keys") else row[3])
+        used = int(row["used"] if hasattr(row, "keys") else row[4])
+        if used:
+            return False
+        # 兼容字符串 / datetime
+        if isinstance(expires_raw, str):
+            exp = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+        else:
+            exp = expires_raw
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+        if exp < now or attempts >= max_attempts:
+            await db.execute("UPDATE password_reset_codes SET used=1 WHERE id=?", (rid,))
+            await db.commit()
+            return False
+        if stored != code_hash:
+            await db.execute(
+                "UPDATE password_reset_codes SET attempts=attempts+1 WHERE id=?",
+                (rid,),
+            )
+            await db.commit()
+            return False
+        await db.execute(
+            "UPDATE password_reset_codes SET used=1 WHERE id=?",
+            (rid,),
+        )
+        await db.commit()
+        return True
 
 
 async def adjust_user_credits(user_id: int, delta: float, note: str = "") -> float:

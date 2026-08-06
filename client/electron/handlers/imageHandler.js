@@ -109,6 +109,8 @@ function needsRatioResolution(provider, model) {
   if (provider?.image_config?.sizeParams === 'ratio_resolution') return true;
   const url = String(provider?.base_url || '');
   const id = String(provider?.id || '');
+  // WorldRouter：官方统一 OpenAI /images/generations，用 size，不用 Agnes 的 ratio/resolution
+  if (/worldrouter\.ai|worldclaw\.ai/i.test(url) || /^worldrouter$/i.test(id)) return false;
   if (/apihub\.agnes-ai\.com/i.test(url) || /agnes/i.test(id)) return true;
   if (/agnes[-_]image|^agnes-image|-image$/i.test(model || '')) return true;
   return false;

@@ -96,6 +96,91 @@ async def login(req: LoginRequest):
     return {"token": token, "user_id": user["id"], "email": user["email"]}
 
 
+# ── 忘记密码 ──────────────────────────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+@router.post("/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    """申请重置：无论邮箱是否存在都返回相同文案，防枚举。"""
+    import logging
+
+    from mailutil import send_email, smtp_configured
+
+    logger = logging.getLogger(__name__)
+    email = (req.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "请输入有效邮箱")
+
+    contact = await db.get_config("contact_info", "")
+    # 统一响应，不泄露邮箱是否注册
+    generic = {
+        "ok": True,
+        "message": "若该邮箱已注册，验证码将发送至邮箱（约 15 分钟有效）",
+        "email_sent": False,
+        "smtp_configured": smtp_configured(),
+        "contact_info": contact,
+    }
+
+    user = await db.get_user_by_email(email)
+    if not user:
+        return generic
+
+    # 限流：同一邮箱 60 秒内最多 1 次
+    if await db.recent_password_reset_count(email, within_seconds=60) > 0:
+        raise HTTPException(429, "请求过于频繁，请稍后再试")
+
+    code = await db.create_password_reset_code(email, ttl_minutes=15)
+    subject = "Token Bank 密码重置验证码"
+    body = (
+        f"您的密码重置验证码是：{code}\n\n"
+        f"有效期 15 分钟。如非本人操作，请忽略本邮件。\n\n"
+        f"官方网址：https://tokenbank.wink.run\n"
+    )
+    sent = send_email(email, subject, body)
+    if not sent:
+        # 未配置 SMTP 时写入日志，便于自托管管理员协助找回
+        logger.info("[forgot-password] email=%s code=%s (smtp not sent)", email, code)
+
+    generic["email_sent"] = sent
+    return generic
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def pw_len(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("密码至少 6 位")
+        return v
+
+
+@router.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    """用邮箱 + 验证码设置新密码。"""
+    email = (req.email or "").strip().lower()
+    code = (req.code or "").strip()
+    if not email or not code:
+        raise HTTPException(400, "请填写邮箱与验证码")
+
+    user = await db.get_user_by_email(email)
+    if not user:
+        raise HTTPException(400, "验证码无效或已过期")
+
+    ok = await db.consume_password_reset_code(email, code)
+    if not ok:
+        raise HTTPException(400, "验证码无效或已过期")
+
+    await db.set_user_password(user["id"], hash_password(req.new_password))
+    return {"ok": True, "message": "密码已重置，请使用新密码登录"}
+
+
 # ── 个人资料 ──────────────────────────────────────────────────────────────────
 
 @router.get("/profile")

@@ -97,6 +97,32 @@ function npmGlobalBinDirs() {
   ];
 }
 
+/**
+ * Codex CLI 常不进 PATH：嵌在 ChatGPT.app，或由 config.toml 的 CODEX_CLI_PATH 指定。
+ * 仅作 resolveRealCommand('codex') 的兜底，避免 Desktop 已装却被标成「未安装」。
+ */
+function resolveBundledCodexPath() {
+  const candidates = [];
+  const envPath = (process.env.CODEX_CLI_PATH || '').trim();
+  if (envPath) candidates.push(envPath);
+  try {
+    const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+    const toml = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
+    const m = toml.match(/^\s*CODEX_CLI_PATH\s*=\s*["']([^"']+)["']/m);
+    if (m?.[1]) candidates.push(m[1].trim());
+  } catch { /* 无 config 忽略 */ }
+  if (!IS_WIN) {
+    candidates.push('/Applications/ChatGPT.app/Contents/Resources/codex');
+    candidates.push(path.join(os.homedir(), '.codex', 'plugins', '.plugin-appserver', 'codex'));
+  }
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) return p;
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
 function resolveRealCommand(command) {
   const now = Date.now();
   const cached = _cmdCache.get(command);
@@ -134,6 +160,10 @@ function resolveRealCommand(command) {
         try { if (fs.existsSync(p)) { result = p; break outer; } } catch {}
       }
     }
+  }
+  // Codex Desktop（ChatGPT.app）内嵌 CLI：PATH 里通常没有 `codex`
+  if (!result && command === 'codex') {
+    result = resolveBundledCodexPath();
   }
   _cmdCache.set(command, { ts: now, path: result });
   return result;

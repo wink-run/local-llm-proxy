@@ -54,8 +54,10 @@ const { handleTts }             = require('./handlers/ttsHandler');
 const { handleImageGeneration, resolveImageRequestTimeoutMs } = require('./handlers/imageHandler');
 const { handleEmbedding }       = require('./handlers/embeddingHandler');
 
-// 出站代理：境外供给源（如 Google Gemini）常需走本机代理才能连通。
+// 出站代理：境外供给源常需走本机代理才能连通。
 // 优先级：provider.proxy > 全局 cfg.network_proxy > 环境变量(HTTPS_PROXY/HTTP_PROXY，遵守 NO_PROXY)。
+// CLI 入口也可能不经 main.js，此处再确保系统代理已注入到环境变量。
+try { require('../shared/inject-proxy-env').injectProxyEnv(); } catch {}
 const { resolveOutboundProxyAgent } = require('../shared/outbound-proxy');
 function resolveProxyAgent(provider, urlStr) {
   let networkProxy;
@@ -1035,8 +1037,11 @@ function proxyRequest(provider, reqPath, body, res) {
     headers['Content-Length'] = Buffer.byteLength(bodyStr);
 
     let u;
-    try { u = new URL(resolveUpstreamUrl(effectiveBase, reqPath)); }
-    catch { return reject(new Error('invalid_url')); }
+    let fullUrl;
+    try {
+      fullUrl = resolveUpstreamUrl(effectiveBase, reqPath);
+      u = new URL(fullUrl);
+    } catch { return reject(new Error('invalid_url')); }
 
     const mod = u.protocol === 'https:' ? https : http;
     const opts = {
@@ -1046,6 +1051,8 @@ function proxyRequest(provider, reqPath, body, res) {
       method:  'POST',
       headers,
       timeout: 120_000,
+      // 走环境变量 / network_proxy 出站代理（与 Gemini 路径一致）
+      agent: resolveProxyAgent(provider, fullUrl),
     };
 
     const t0 = Date.now();
@@ -1191,6 +1198,7 @@ function proxyConvertSync(provider, oaiBody, model, res) {
       port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''),
       method: 'POST', headers, timeout: 120_000,
+      agent: resolveProxyAgent(provider, fullUrl),
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
         // 捕获上游错误体（含 "no worker available" 等信息）→ 供错误分类识别，
@@ -1252,6 +1260,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''),
       method: 'POST', headers, timeout: 120_000,
+      agent: resolveProxyAgent(provider, fullUrl),
     }, (proxyRes) => {
       ttftGuard?.setProxyRes(proxyRes);
       if (proxyRes.statusCode >= 400) {
@@ -1445,6 +1454,7 @@ function proxyAnthropicSync(provider, oaiBody, model, res) {
     const proxyReq = mod.request({
       hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+      agent: resolveProxyAgent(provider, fullUrl),
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
         const errChunks = [];
@@ -1503,6 +1513,7 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
     const proxyReq = mod.request({
       hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+      agent: resolveProxyAgent(provider, fullUrl),
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
         proxyRes.resume();
@@ -1991,6 +2002,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
       port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''),
       method: 'POST', headers, timeout: 120_000,
+      agent: resolveProxyAgent(provider, fullUrl),
     }, (proxyRes) => {
       ttftGuard?.setProxyRes(proxyRes);
       if (proxyRes.statusCode >= 400) {
@@ -2176,6 +2188,7 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
     const proxyReq = mod.request({
       hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+      agent: resolveProxyAgent(provider, fullUrl),
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
         const ec = [];
@@ -2288,6 +2301,7 @@ function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
     const proxyReq = mod.request({
       hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+      agent: resolveProxyAgent(provider, fullUrl),
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
         const ec = [];
@@ -2638,7 +2652,9 @@ function internalComplete(provider, model, prompt, maxTokens = 8) {
     }
     const mod = u.protocol === 'https:' ? https : http;
     const req = mod.request({ hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 15000 }, (rs) => {
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 15000,
+      agent: resolveProxyAgent(provider, u.href),
+    }, (rs) => {
       let data = '';
       rs.on('data', c => data += c);
       rs.on('end', () => {

@@ -157,7 +157,7 @@ export default function AgentTabBar({
     );
   }
 
-  const mainAgent = agents.find(a => a.id === mainAgentId && !a.custom && a.type !== 'assistant');
+  const mainAgent = agents.find(a => a.id === mainAgentId && !a.custom && a.type !== 'assistant' && a.installed !== false);
   const hubActive = !selectedAgent;
 
   return (
@@ -201,18 +201,24 @@ export default function AgentTabBar({
           const isCommunity = agent.type === 'community' || !!agent.community;
           const isCustom = !isCommunity && (agent.custom || agent.type === 'assistant');
           const isRunning = running.has(agent.id);
-          const subLine = isCommunity
-            ? t('debug.tabs.communityRemote')
-            : (isCustom && agent.runtimeName)
-              ? `→ ${agent.runtimeName}`
-              : (!isCustom && agent.version ? `v${agent.version}` : '');
+          // 内置 CLI 未安装 → 灰色（对齐网关工具箱）
+          const missing = !isCustom && !isCommunity && agent.installed === false;
+          const subLine = missing
+            ? t('debug.tabs.notInstalled')
+            : isCommunity
+              ? t('debug.tabs.communityRemote')
+              : (isCustom && agent.runtimeName)
+                ? `→ ${agent.runtimeName}`
+                : (!isCustom && agent.version ? `v${agent.version}` : '');
           return (
-            <div key={agent.id} className="relative group">
+            <div key={agent.id} className={`relative group ${missing ? 'opacity-45' : ''}`}>
               <button
                 type="button"
                 onClick={() => onSelect(agent)}
                 title={
-                  isCommunity
+                  missing
+                    ? t('debug.tabs.notInstalledHint', { name: agent.name })
+                    : isCommunity
                     ? (agent.description || t('debug.tabs.communityHint'))
                     : isCustom && agent.runtimeName
                     ? (agent.execRuntimeName && agent.execRuntimeName !== agent.runtimeName
@@ -222,13 +228,14 @@ export default function AgentTabBar({
                 }
                 className={`
                   w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] rounded-lg ${pressCls}
+                  ${missing ? 'grayscale' : ''}
                   ${active
                     ? 'tb-soft-bubble text-zinc-900 dark:text-zinc-100 font-medium'
                     : 'text-zinc-600 dark:text-zinc-400 font-medium hover:bg-black/[0.05] dark:hover:bg-white/[0.06] hover:text-zinc-900 dark:hover:text-zinc-200'
                   }
                 `}
               >
-                <span className="relative shrink-0 flex items-center justify-center w-3.5 h-3.5">
+                <span className={`relative shrink-0 flex items-center justify-center w-3.5 h-3.5 ${missing ? 'grayscale' : ''}`}>
                   <AgentBrandIcon agent={agent} isCustom={isCustom || isCommunity} />
                 </span>
                 <span className="min-w-0 flex-1 text-left">
@@ -239,13 +246,15 @@ export default function AgentTabBar({
                         {t('debug.tabs.communityBadge')}
                       </span>
                     )}
-                    {isMain && (
+                    {isMain && !missing && (
                       <span className="shrink-0 text-[10px] text-amber-500" title={t('debug.tabs.mainAgent')}>★</span>
                     )}
                   </span>
                   {subLine ? (
                     <span className={`block text-[10px] font-normal truncate mt-0.5 leading-tight ${
-                      active ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-400 dark:text-zinc-500'
+                      missing
+                        ? 'text-zinc-400 dark:text-zinc-500'
+                        : active ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-400 dark:text-zinc-500'
                     }`}>
                       {subLine}
                     </span>
@@ -253,7 +262,7 @@ export default function AgentTabBar({
                 </span>
                 {isRunning && <RunningDot label={t('debug.tabs.runningNamed', { name: agent.name })} />}
               </button>
-              {!isMain && !isCustom && !isCommunity && onSetMainAgent && (
+              {!isMain && !isCustom && !isCommunity && !missing && onSetMainAgent && (
                 <button
                   type="button"
                   title={t('debug.tabs.setMain', { name: agent.name })}

@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { resolveBrandIcon } from '../lib/brandIcons';
 import ServiceIcon from '../components/ServiceIcon';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/client';
 import { modelStatsForIds, workersForModel, normalizeNetworkPayload } from '../lib/networkModelStats';
@@ -1011,10 +1010,19 @@ const FRESH_PROVIDER_CREDENTIALS = {
   test_verified: false,
 };
 
+/** 目录默认为空 Base URL 的自定义兼容源：新增不得继承历史/同类型地址 */
+function isBlankCompatibleSourceId(id) {
+  return id === 'openai-compatible' || id === 'anthropic-compatible';
+}
+
 /** 添加供给源时从模板 / catalog / 已有 provider 解析 base_url */
 function resolveSeedBaseUrl(entry, { providers = [], paygCatalog = [], meta = {} } = {}) {
   const tpl = entry?.template;
   const catalogId = tpl?.key || entry?.providerId;
+  // OpenAI/Anthropic Compatible：始终从空地址起填，避免带上上次自定义的历史 URL
+  if (isBlankCompatibleSourceId(catalogId) || isBlankCompatibleSourceId(entry?.providerId)) {
+    return tpl?.base_url || '';
+  }
   if (tpl?.base_url) return tpl.base_url;
   const sibling = providers.find(p => p.id === catalogId || p.id === entry?.providerId);
   if (sibling?.base_url) return sibling.base_url;
@@ -1043,6 +1051,7 @@ function resolveProviderStubForInstance(inst, providers, meta, userPayg, userSub
   const m = meta[gwId] || meta[catalogId] || {};
   const independent = isIndependentGatewayInstance(gwId, catalogId);
   const fallbackModels = instModels;
+  const blankCompat = isBlankCompatibleSourceId(catalogId);
   return {
     ...(fb || { type: 'paid', enabled: false, base_url: '', models: [] }),
     id: gwId,
@@ -1055,7 +1064,10 @@ function resolveProviderStubForInstance(inst, providers, meta, userPayg, userSub
       auth_type: sibling?.auth_type || 'api_key',
       test_verified: sibling?.test_verified === true,
     }),
-    base_url: fb?.base_url || m.base_url || sibling?.base_url || '',
+    // 自定义兼容源：不继承 sibling 历史 base_url
+    base_url: blankCompat
+      ? (fb?.base_url || m.base_url || '')
+      : (fb?.base_url || m.base_url || sibling?.base_url || ''),
     api_format: fb?.api_format || m.api_format || sibling?.api_format || 'openai',
     models: fallbackModels,
     displayName: inst.name,
@@ -2511,12 +2523,26 @@ function formatProviderTestMsg(result, t) {
   };
 }
 
-function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistTier, cooldown = null, onRetryCooldown = null }) {
+function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPersist, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistTier, cooldown = null, onRetryCooldown = null }) {
   const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState('');
   const testClearTimer = useRef(null);
+  // API Key 本地草稿：失焦静默落盘，不走 onUpdate（避免整表 setProviders 闪动）
+  const [tokenDraft, setTokenDraft] = useState(() => provider.token || '');
+  const tokenFocusedRef = useRef(false);
+  useEffect(() => {
+    if (!tokenFocusedRef.current) setTokenDraft(provider.token || '');
+  }, [provider.id, provider.token]);
+
+  function commitTokenDraft() {
+    tokenFocusedRef.current = false;
+    const next = tokenDraft || '';
+    if (next === (provider.token || '')) return;
+    if (onSilentPersist) onSilentPersist(provider.id, { token: next });
+    else onUpdate(provider.id, { token: next });
+  }
 
   const displayLabel = provider.displayName || provider.label || (() => {
     try { const h = new URL(provider.base_url || '').hostname; return h || t('providers.custom.defaultName'); } catch { return t('providers.custom.defaultName'); }
@@ -2526,15 +2552,17 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
-    if (!provider.token && provider.auth_type !== 'oauth') {
+    const key = (tokenFocusedRef.current ? tokenDraft : provider.token) || '';
+    if (!key && provider.auth_type !== 'oauth') {
       setTestMsg(t('providers.test.needToken'));
       return;
     }
+    if (tokenFocusedRef.current) commitTokenDraft();
     setTesting(true);
     if (testClearTimer.current) clearTimeout(testClearTimer.current);
     setTestMsg('');
     try {
-      const result = await onTest(provider);
+      const result = await onTest({ ...provider, token: key || provider.token });
       if (result.ok) onUpdate(provider.id, { test_verified: true });
       else onUpdate(provider.id, { test_verified: false });
       const { ok, msg } = formatProviderTestMsg(result, t);
@@ -2551,7 +2579,14 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   return (
     <div className="tb-soft-tile rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-4">
-        <div className="w-9 h-9 rounded-xl bg-zinc-100/70 dark:bg-zinc-800/70 backdrop-blur-sm flex items-center justify-center text-base shrink-0">🔗</div>
+        <ServiceIcon
+          id={accountInst?.source_id || provider.id}
+          name={displayLabel}
+          icon="🔗"
+          baseUrl={provider.base_url}
+          boxClass="w-9 h-9 !rounded-xl !bg-zinc-100/70 dark:!bg-zinc-800/70 backdrop-blur-sm"
+          imgClass="w-5 h-5"
+        />
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
@@ -2612,14 +2647,16 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
             </div>
             <div className="flex gap-2">
               <input
-                value={provider.token || ''}
-                onChange={e => onUpdate(provider.id, { token: e.target.value })}
+                value={tokenDraft}
+                onChange={e => setTokenDraft(e.target.value)}
+                onFocus={() => { tokenFocusedRef.current = true; }}
+                onBlur={commitTokenDraft}
                 type={showKey ? 'text' : 'password'}
                 placeholder={t('providers.custom.apiKeyOptional')}
                 autoComplete="off"
                 className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:border-blue-500"
               />
-              <button onClick={() => setShowKey(v => !v)}
+              <button type="button" onClick={() => setShowKey(v => !v)}
                 className="shrink-0 px-2.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
                 {showKey ? t('providers.common.hide') : t('providers.common.show')}
               </button>
@@ -2776,13 +2813,30 @@ function UsageMeter({ provider }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl, onPersistTier, cooldown = null, onRetryCooldown = null }) {
+function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPersist, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl, onPersistTier, cooldown = null, onRetryCooldown = null }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
   const [testing,    setTesting]    = useState(false);
   const [testMsg,    setTestMsg]    = useState('');
   const testClearTimer = useRef(null);
+  // API Key 本地草稿：失焦静默落盘，不走 onUpdate
+  const [tokenDraft, setTokenDraft] = useState(() => provider.token || '');
+  const [tokenEditing, setTokenEditing] = useState(false);
+  const tokenFocusedRef = useRef(false);
+  useEffect(() => {
+    if (!tokenFocusedRef.current) setTokenDraft(provider.token || '');
+  }, [provider.id, provider.token]);
+
+  function commitTokenDraft() {
+    tokenFocusedRef.current = false;
+    const next = tokenDraft || '';
+    if (next !== (provider.token || '')) {
+      if (onSilentPersist) onSilentPersist(provider.id, { token: next, auth_type: 'api_key' });
+      else onUpdate(provider.id, { token: next, auth_type: 'api_key' });
+    }
+    setTokenEditing(false);
+  }
 
   meta = meta || {};
   const isP2P    = provider.type === 'p2p';
@@ -2792,7 +2846,8 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
   const forceApiKey = gatewayAuthMode === 'api_key';
   const isOauthCfg = forceOauth || provider.auth_type === 'oauth';
   const hasOauth = !!(provider.credentials && provider.credentials.refresh_token);
-  const hasKey   = !isOauthCfg && !!provider.token;
+  // 草稿也算已填 Key（静默保存不推父级时仍能正确显示配置态）
+  const hasKey   = !isOauthCfg && !!(tokenDraft || provider.token);
   const billingType    = forceApiKey ? 'api-key' : (provider.billing_type || 'api-key');
   const subMode        = isSubToApiInst ? 'api-proxy' : (forceOauth ? 'api-proxy' : (provider.sub_mode || 'accounting'));
   const isSubscription = forceOauth || isSubToApiInst || billingType === 'subscription';
@@ -2809,6 +2864,8 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
   const hasSubscriptionOption = subscriptionCatalog.some(c => c.plan_provider_id === provider.id && c.subscription_to_api === true);
   const personalTag = getPersonalSourceTag(provider, { [provider.id]: meta }, userPayg, userSubscriptions);
   const tierEditable = !isP2P && (personalTag === 'free' || personalTag === 'payg');
+  // 正在编辑 Key 时保持展开表单，避免首字符后 configured=true 立刻折叠
+  const showSetupPanel = !isP2P && (showApiKeyUi || showOauthUi) && (!configured || expanded || tokenEditing);
 
   // 添加方式：api_key / oauth（按量可切换；订阅转 API 固定 OAuth）
   const [method, setMethod] = useState(forceOauth || isOauthCfg ? 'oauth' : 'api_key');
@@ -2878,15 +2935,17 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
-    if (!provider.token && provider.auth_type !== 'oauth') {
+    const key = (tokenFocusedRef.current ? tokenDraft : provider.token) || '';
+    if (!key && provider.auth_type !== 'oauth') {
       setTestMsg(t('providers.test.needToken'));
       return;
     }
+    if (tokenFocusedRef.current) commitTokenDraft();
     setTesting(true);
     if (testClearTimer.current) clearTimeout(testClearTimer.current);
     setTestMsg('');
     try {
-      const result = await onTest(provider);
+      const result = await onTest({ ...provider, token: key || provider.token });
       if (result.ok) onUpdate(provider.id, { test_verified: true });
       else onUpdate(provider.id, { test_verified: false });
       const { ok, msg } = formatProviderTestMsg(result, t);
@@ -2903,16 +2962,16 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
   return (
     <div className="tb-soft-tile rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-3.5">
-        {/* Icon（命中品牌用 lobehub logo，否则回退预设 emoji）*/}
-        <div className="w-8 h-8 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/70 backdrop-blur-sm flex items-center justify-center text-[15px] shrink-0 mt-0.5">
-          {(() => {
-            // 名称/图标对齐账户实例（与统计一致）：实例名优先，品牌 logo 按实例名解析，回退实例 emoji
-            const brand = resolveBrandIcon(`${provider.id || ''} ${displayName || meta.label || ''}`);
-            return brand
-              ? <img src={brand} alt="" className="w-5 h-5 object-contain" />
-              : (displayIcon || meta.icon);
-          })()}
-        </div>
+        {/* Icon：本地品牌 / 供给源 logo，失败回退 emoji */}
+        <ServiceIcon
+          id={accountInst?.source_id || accountInst?.provider_id || provider.id}
+          name={displayName || meta.label}
+          icon={displayIcon || meta.icon}
+          baseUrl={provider.base_url}
+          signupUrl={meta.signup_url}
+          boxClass="w-8 h-8 !bg-zinc-100/70 dark:!bg-zinc-800/70 backdrop-blur-sm mt-0.5"
+          imgClass="w-5 h-5"
+        />
         {/* Body */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
@@ -2954,7 +3013,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
           )}
 
           {/* Configured (collapsed) row */}
-          {!isP2P && !(meta.keyless && !oauthCap) && configured && !expanded && (
+          {!isP2P && !(meta.keyless && !oauthCap) && configured && !expanded && !tokenEditing && (
             <div className="mt-2 space-y-1">
               <div className="flex items-center gap-2">
                 {isSubscription ? (
@@ -2980,7 +3039,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
           )}
 
           {/* Inline setup / edit panel */}
-          {!isP2P && (showApiKeyUi || showOauthUi) && (!configured || expanded) && (
+          {showSetupPanel && (
             <div className="mt-3 space-y-2">
               {/* 计费方式切换（转API）：模板锁定时只读，由模板的「能否转API」决定 */}
               {hasSubscriptionOption && canApiKey && !forceOauth && !forceApiKey && !lockTemplate && (
@@ -3028,14 +3087,23 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
                 <>
                   <div className="flex gap-2">
                     <input
-                      value={provider.token}
-                      onChange={e => onUpdate(provider.id, { token: e.target.value, auth_type: 'api_key' })}
+                      value={tokenDraft}
+                      onChange={e => {
+                        setTokenDraft(e.target.value);
+                        setExpanded(true);
+                      }}
+                      onFocus={() => {
+                        tokenFocusedRef.current = true;
+                        setTokenEditing(true);
+                        setExpanded(true);
+                      }}
+                      onBlur={commitTokenDraft}
                       type={showKey ? 'text' : 'password'}
                       placeholder={t('providers.card.pasteApiKey')}
                       autoComplete="off"
                       className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:border-blue-500"
                     />
-                    <button onClick={() => setShowKey(v => !v)}
+                    <button type="button" onClick={() => setShowKey(v => !v)}
                       className="shrink-0 px-2.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
                       {showKey ? t('providers.common.hide') : t('providers.common.show')}
                     </button>
@@ -3347,6 +3415,7 @@ export default function Providers() {
         const instModels = seedModelsFromNames(payg?.models || sub?.models || []);
         // 目录 tier=free 时默认进免费层（如 jimeng-api），避免个人页按量登记强制 paid
         const seedType = catDef?.type || tpl?.tier || fb?.type || 'paid';
+        const blankCompat = isBlankCompatibleSourceId(catalogId);
         next.push({
           ...(fb || { type: seedType, enabled: true, base_url: '', models: [] }),
           id: gid,
@@ -3355,7 +3424,9 @@ export default function Providers() {
           enabled: true,
           ...FRESH_PROVIDER_CREDENTIALS,
           models: instModels,
-          base_url: fb?.base_url || tpl?.base_url || catDef?.base_url || sibling?.base_url || '',
+          base_url: blankCompat
+            ? (fb?.base_url || tpl?.base_url || catDef?.base_url || '')
+            : (fb?.base_url || tpl?.base_url || catDef?.base_url || sibling?.base_url || ''),
           api_format: fb?.api_format || tpl?.api_format || catDef?.api_format || sibling?.api_format || 'openai',
         });
         changed = true;
@@ -3383,8 +3454,20 @@ export default function Providers() {
     // 乐观更新，避免计费区添加模型后被 filterPaygModels 用旧账户列表裁掉
     if (Array.isArray(patch.user_payg_providers)) setUserPayg(patch.user_payg_providers);
     if (Array.isArray(patch.user_subscriptions)) setUserSubscriptions(patch.user_subscriptions);
+    if (patch.direct_source_billing && typeof patch.direct_source_billing === 'object') {
+      setDirectBilling(patch.direct_source_billing);
+    }
     await saveUserAccounts(patch);
-    await loadUserPaidAccounts();
+    // 刊例价 / 直连计费已乐观写入本地 state：再整页 reload 会打断输入框焦点并闪动
+    const structuralKeys = Object.keys(patch).filter((k) => (
+      k !== 'provider_pricing_overrides'
+      && k !== 'direct_source_billing'
+      && k !== 'token'
+      && k !== 'serverUrl'
+    ));
+    if (structuralKeys.length > 0) {
+      await loadUserPaidAccounts();
+    }
   }
 
   function adoptServerTemplate(key) {
@@ -3549,7 +3632,22 @@ export default function Providers() {
       lastSaved.current = withCustomSubs.providers;
       setProviders(prev => {
         const loaded = withCustomSubs.providers;
-        return loaded.map(p => mergeProviderAfterReload(p, prev.find(x => x.id === p.id)));
+        const next = loaded.map(p => mergeProviderAfterReload(p, prev.find(x => x.id === p.id)));
+        // 内容未变则保留原引用，避免账户重载/保存后整表闪动
+        if (prev.length === next.length
+          && prev.every((p, i) => (
+            p === next[i]
+            || (p.id === next[i].id
+              && (p.token || '') === (next[i].token || '')
+              && (p.base_url || '') === (next[i].base_url || '')
+              && !!p.enabled === !!next[i].enabled
+              && p.test_verified === next[i].test_verified
+              && (p.models || []).map(m => normModel(m).name).join('\0')
+                === (next[i].models || []).map(m => normModel(m).name).join('\0'))
+          ))) {
+          return prev;
+        }
+        return next;
       });
       setMeta(localizeProviderMeta(withCustomSubs.meta, t));
     })();
@@ -3562,12 +3660,14 @@ export default function Providers() {
   }, [t]);
 
   // Auto-save with 500 ms debounce; skip initial load
+  // 静默落盘：只写磁盘，绝不 setProviders，避免整表闪动
   useEffect(() => {
     if (lastSaved.current === null || providers === lastSaved.current) return;
     const timer = setTimeout(async () => {
       try {
         const cfg = (await getConfig().read()) || {};
-        const normalizedProviders = providers.map(p => {
+        const snapshot = providers;
+        const normalizedProviders = snapshot.map(p => {
           const base = normalizeProviderBaseUrlForSave(p, catalogDefaultsById, meta);
           if (isPaygManagedProvider(p.id, userPayg)) {
             return { ...base, models: filterPaygModels(base.models, p.id, userPayg, mergedProviderPricing, paygCatalog) };
@@ -3575,8 +3675,8 @@ export default function Providers() {
           return base;
         });
         await getConfig().write({ ...cfg, providers: normalizedProviders });
-        lastSaved.current = normalizedProviders;
-        setProviders(normalizedProviders);
+        // 以当前 UI 引用标记已保存，磁盘侧规范化差异下次写时再对齐
+        lastSaved.current = snapshot;
       } catch {}
     }, 500);
     return () => clearTimeout(timer);
@@ -3628,6 +3728,33 @@ export default function Providers() {
     });
   }, [userPayg, mergedProviderPricing, paygCatalog]);
 
+  /**
+   * 静默落盘凭证：写磁盘 + 就地补丁内存，setState 返回原引用以跳过重渲染。
+   * API Key / base_url 失焦保存走此路径，避免整表闪动。
+   */
+  const silentPersistProviderPatch = useCallback(async (id, patch) => {
+    let cleared = patch;
+    if (patchClearsTestVerified(patch) && patch.test_verified === undefined) {
+      cleared = { ...patch, test_verified: false };
+    }
+    try {
+      const cfg = (await getConfig().read()) || {};
+      const list = [...(cfg.providers || [])];
+      const i = list.findIndex(p => p.id === id);
+      if (i >= 0) list[i] = { ...list[i], ...cleared };
+      else list.push({ id, type: 'paid', enabled: true, token: '', base_url: '', models: [], ...cleared });
+      await getConfig().write({ ...cfg, providers: list });
+    } catch { /* 离线时仍写内存 */ }
+    // 同引用返回 → React 不重渲染；对象就地更新供后续读盘/合并使用
+    setProviders(prev => {
+      const idx = prev.findIndex(p => p.id === id);
+      if (idx >= 0) Object.assign(prev[idx], cleared);
+      else prev.push({ id, type: 'paid', enabled: true, token: '', base_url: '', models: [], ...cleared });
+      lastSaved.current = prev;
+      return prev;
+    });
+  }, []);
+
   /** 立即落盘 enabled，避免 debounce 未完成时网关页仍读到旧开关 */
   const persistProviderEnabled = useCallback(async (id, enabled) => {
     const stub = id === 'tokenbank-p2p'
@@ -3675,24 +3802,12 @@ export default function Providers() {
     } catch { /* 离线时仍保留内存态 */ }
   }, []);
 
-  /** 立即落盘 base_url，避免折叠/切换视图时 debounce 尚未写入 */
+  /** 立即落盘 base_url（静默，不触发整表重渲染） */
   const persistProviderBaseUrl = useCallback(async (id, base_url) => {
     const cur = providers.find(p => p.id === id) || { id, type: 'paid', enabled: true, token: '', models: [] };
     const normalized = normalizeProviderBaseUrlForSave({ ...cur, base_url }, catalogDefaultsById, meta);
-    try {
-      const cfg = (await getConfig().read()) || {};
-      const list = [...(cfg.providers || [])];
-      const i = list.findIndex(p => p.id === id);
-      if (i >= 0) list[i] = { ...list[i], base_url: normalized.base_url };
-      else list.push({ ...normalized, models: normalized.models || [] });
-      await getConfig().write({ ...cfg, providers: list });
-      setProviders(prev => {
-        const next = prev.map(p => (p.id === id ? { ...p, base_url: normalized.base_url } : p));
-        lastSaved.current = next;
-        return next;
-      });
-    } catch { /* 离线时仍保留内存态 */ }
-  }, [providers, catalogDefaultsById, meta]);
+    await silentPersistProviderPatch(id, { base_url: normalized.base_url });
+  }, [providers, catalogDefaultsById, meta, silentPersistProviderPatch]);
 
   /** 选中选择器条目：每次点击登记新实例（支持同类型多账户），配置在上方列表卡片完成 */
   const selectPickerEntry = useCallback(async (entry) => {
@@ -3839,7 +3954,17 @@ export default function Providers() {
   const loadPersonalLatency = useCallback(async () => {
     try {
       const map = await getGateway().getModelProviderLatency(7);
-      if (map && typeof map === 'object') setPersonalLatencyMap({ ...map });
+      if (!map || typeof map !== 'object') return;
+      // 内容未变则不 setState，避免 5s 轮询打断计费输入框
+      setPersonalLatencyMap((prev) => {
+        const prevKeys = Object.keys(prev || {});
+        const nextKeys = Object.keys(map);
+        if (prevKeys.length === nextKeys.length
+          && nextKeys.every((k) => prev[k] === map[k] || JSON.stringify(prev[k]) === JSON.stringify(map[k]))) {
+          return prev;
+        }
+        return { ...map };
+      });
     } catch { /* 网关未就绪 */ }
   }, []);
 
@@ -4077,7 +4202,10 @@ export default function Providers() {
   // 卡片按 provider_id 或 agent_id 匹配。低频轮询（10s，倒计时用粗粒度显示，无需秒级）。
   const [cooldowns, setCooldowns] = useState([]);
   const loadCooldowns = useCallback(async () => {
-    try { setCooldowns((await window.electronAPI?.gateway?.cooldowns?.()) || []); } catch { /* ignore */ }
+    try {
+      const next = (await window.electronAPI?.gateway?.cooldowns?.()) || [];
+      setCooldowns((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    } catch { /* ignore */ }
   }, []);
   useEffect(() => {
     loadCooldowns();
@@ -4112,6 +4240,7 @@ export default function Providers() {
     onPersistModels: persistProviderModels,
     onPersistBaseUrl: persistProviderBaseUrl,
     onRetryCooldown: handleRetryCooldown,
+    onSilentPersist: silentPersistProviderPatch,
   };
 
   function renderAddSourcePicker() {
@@ -4201,6 +4330,8 @@ export default function Providers() {
           id={entry.providerId || entry.templateKey}
           name={entry.label}
           icon={entry.icon}
+          baseUrl={entry.template?.base_url}
+          signupUrl={entry.template?.signup_url}
           boxClass="w-10 h-10"
           imgClass="w-6 h-6"
         />
@@ -4336,7 +4467,7 @@ export default function Providers() {
                   onConvertToApi={convertDirectToApi}
                   cooldown={cooldownFor(d.agent_id, d.source_id, d.id)}
                   onRetryCooldown={handleRetryCooldown}
-                  onSave={async (patch) => { await saveUserAccounts(patch); loadUserPaidAccounts(); }}
+                  onSave={async (patch) => { await saveAccountsPatch(patch); }}
                   onRemove={removeDirectSource} />
               );
             }

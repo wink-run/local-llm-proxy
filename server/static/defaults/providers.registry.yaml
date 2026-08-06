@@ -95,6 +95,104 @@ providers:
   - sk-or-
   signup_url: https://openrouter.ai/keys
   payg: true
+
+- id: worldrouter
+  label: WorldRouter
+  icon: 🌐
+  tier: free
+  # 官方统一 OpenAI 兼容：https://inference-api.worldrouter.ai/v1
+  hint: OpenAI 兼容对话与生图：router.worldclaw.ai
+  base_url: https://inference-api.worldrouter.ai/v1
+  modalities:
+    language: true
+    image: true
+  models:
+  - name: claude-opus-4-8
+    type: chat
+  - name: claude-sonnet-4-6
+    type: chat
+  - name: claude-haiku-4-5
+    type: chat
+  - name: gpt-5.5
+    type: chat
+  - name: gpt-5.4
+    type: chat
+  - name: gpt-5.4-mini
+    type: chat
+  - name: gemini-3.1-pro-preview
+    type: chat
+  - name: gemini-3.1-flash-lite-preview
+    type: chat
+  - name: deepseek-v4-pro
+    type: chat
+  - name: deepseek-v4-flash
+    type: chat
+  - name: gemini-3.1-flash-image-preview
+    type: image
+  - name: gemini-3-pro-image-preview
+    type: image
+  - name: gemini-2.5-flash-image
+    type: image
+  - name: gpt-image-2
+    type: image
+  # 刊例价 ≈ 官方 Credits/1M ÷ 100（1 credit ≈ $0.01）；图像模型用 $/张估算
+  pricing:
+    claude-opus-4-8:
+      in: 3.5
+      out: 17.5
+      cacheRead: 0.35
+    claude-sonnet-4-6:
+      in: 2.1
+      out: 10.5
+      cacheRead: 0.21
+    claude-haiku-4-5:
+      in: 0.7
+      out: 3.5
+      cacheRead: 0.07
+    gpt-5.5:
+      in: 3.5
+      out: 21.0
+      cacheRead: 0.35
+    gpt-5.4:
+      in: 1.75
+      out: 10.5
+      cacheRead: 0.175
+    gpt-5.4-mini:
+      in: 0.525
+      out: 3.15
+      cacheRead: 0.0525
+    gemini-3.1-pro-preview:
+      in: 1.4
+      out: 8.4
+      cacheRead: 0.14
+    gemini-3.1-flash-lite-preview:
+      in: 0.175
+      out: 1.05
+      cacheRead: 0.0175
+    deepseek-v4-pro:
+      in: 1.218
+      out: 2.436
+      cacheRead: 0.1015
+    deepseek-v4-flash:
+      in: 0.098
+      out: 0.196
+      cacheRead: 0.0196
+    gemini-3.1-flash-image-preview:
+      image: 0.04
+    gemini-3-pro-image-preview:
+      image: 0.09
+    gemini-2.5-flash-image:
+      image: 0.02
+    gpt-image-2:
+      image: 0.04
+  handler: openai
+  api_format: openai
+  enabled_default: false
+  keyless: false
+  key_prefix:
+  - sk-
+  signup_url: https://router.worldclaw.ai/dashboard/api-keys
+  payg: true
 - id: siliconflow
   label: SiliconFlow
   icon: 🧪
@@ -1135,6 +1233,155 @@ billing_sources:
       in: 3.5
       out: 16.0
       cacheRead: 0.35
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+
+- id: worldrouter
+  sort_order: 12
+  category: payg
+  source_id: worldrouter
+  label: WorldRouter
+  icon: 🌐
+  tier: free
+  base_url: https://inference-api.worldrouter.ai/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: OpenAI 兼容对话与生图：router.worldclaw.ai
+  keyless: false
+  key_prefix:
+  - sk-
+  signup_url: https://router.worldclaw.ai/dashboard/api-keys
+  aliases: []
+  enabled_default: false
+  models:
+  - id: claude-opus-4-8
+    modality: chat
+    pricing:
+      in: 3.5
+      out: 17.5
+      cacheRead: 0.35
+  - id: claude-sonnet-4-6
+    modality: chat
+    pricing:
+      in: 2.1
+      out: 10.5
+      cacheRead: 0.21
+  - id: claude-haiku-4-5
+    modality: chat
+    pricing:
+      in: 0.7
+      out: 3.5
+      cacheRead: 0.07
+  - id: gpt-5.5
+    modality: chat
+    pricing:
+      in: 3.5
+      out: 21.0
+      cacheRead: 0.35
+  - id: gpt-5.4
+    modality: chat
+    pricing:
+      in: 1.75
+      out: 10.5
+      cacheRead: 0.175
+  - id: gpt-5.4-mini
+    modality: chat
+    pricing:
+      in: 0.525
+      out: 3.15
+      cacheRead: 0.0525
+  - id: gemini-3.1-pro-preview
+    modality: chat
+    pricing:
+      in: 1.4
+      out: 8.4
+      cacheRead: 0.14
+  - id: gemini-3.1-flash-lite-preview
+    modality: chat
+    pricing:
+      in: 0.175
+      out: 1.05
+      cacheRead: 0.0175
+  - id: deepseek-v4-pro
+    modality: chat
+    pricing:
+      in: 1.218
+      out: 2.436
+      cacheRead: 0.1015
+  - id: deepseek-v4-flash
+    modality: chat
+    pricing:
+      in: 0.098
+      out: 0.196
+      cacheRead: 0.0196
+  - id: gemini-3.1-flash-image-preview
+    modality: image
+    pricing:
+      image: 0.04
+  - id: gemini-3-pro-image-preview
+    modality: image
+    pricing:
+      image: 0.09
+  - id: gemini-2.5-flash-image
+    modality: image
+    pricing:
+      image: 0.02
+  - id: gpt-image-2
+    modality: image
+    pricing:
+      image: 0.04
+  pricing:
+    claude-opus-4-8:
+      in: 3.5
+      out: 17.5
+      cacheRead: 0.35
+    claude-sonnet-4-6:
+      in: 2.1
+      out: 10.5
+      cacheRead: 0.21
+    claude-haiku-4-5:
+      in: 0.7
+      out: 3.5
+      cacheRead: 0.07
+    gpt-5.5:
+      in: 3.5
+      out: 21.0
+      cacheRead: 0.35
+    gpt-5.4:
+      in: 1.75
+      out: 10.5
+      cacheRead: 0.175
+    gpt-5.4-mini:
+      in: 0.525
+      out: 3.15
+      cacheRead: 0.0525
+    gemini-3.1-pro-preview:
+      in: 1.4
+      out: 8.4
+      cacheRead: 0.14
+    gemini-3.1-flash-lite-preview:
+      in: 0.175
+      out: 1.05
+      cacheRead: 0.0175
+    deepseek-v4-pro:
+      in: 1.218
+      out: 2.436
+      cacheRead: 0.1015
+    deepseek-v4-flash:
+      in: 0.098
+      out: 0.196
+      cacheRead: 0.0196
+    gemini-3.1-flash-image-preview:
+      image: 0.04
+    gemini-3-pro-image-preview:
+      image: 0.09
+    gemini-2.5-flash-image:
+      image: 0.02
+    gpt-image-2:
+      image: 0.04
   plans: []
   agent_id: ''
   plan_provider_id: null

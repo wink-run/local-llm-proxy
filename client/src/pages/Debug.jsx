@@ -545,11 +545,66 @@ function providerOptions(cfg, localCfg, localGw, t) {
   return opts;
 }
 
-const defaultPanel = () => ({ conversation: [], input: '', systemPrompt: '', showSystem: false, streamMode: true, imageMode: false, imageRatio: '', imageResolution: '' });
-
 /** localStorage 键：调试页聊天记录（切换页面/重启后恢复） */
 const DEBUG_CHAT_KEY = 'tokenbank.debug.chat';
 const DEBUG_CHAT_MAX = 200;
+
+const defaultLane = () => ({
+  conversation: [],
+  input: '',
+  systemPrompt: '',
+  showSystem: false,
+  selectedPromptId: '',
+});
+
+/** 对话 / 图像分车道，避免切换模式时共用聊天记录与输入框 */
+const defaultPanel = () => ({
+  imageMode: false,
+  streamMode: true,
+  imageRatio: '',
+  imageResolution: '',
+  chat: defaultLane(),
+  image: defaultLane(),
+});
+
+const PANEL_LANE_KEYS = new Set(['conversation', 'input', 'systemPrompt', 'showSystem', 'selectedPromptId']);
+
+function panelLaneKey(imageMode) {
+  return imageMode ? 'image' : 'chat';
+}
+
+function normalizeLane(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const conversation = (Array.isArray(src.conversation) ? src.conversation : [])
+    .slice(-DEBUG_CHAT_MAX)
+    .map(m => ({ ...m, streaming: false, generating: false }));
+  return {
+    ...defaultLane(),
+    systemPrompt: src.systemPrompt || '',
+    showSystem: !!src.showSystem,
+    selectedPromptId: src.selectedPromptId || '',
+    input: typeof src.input === 'string' ? src.input : '',
+    conversation,
+  };
+}
+
+/** 合并 panel 补丁：车道字段写入当前（或补丁指定的）对话/图像车道 */
+function patchDebugPanel(prevMain, patch) {
+  const shared = {};
+  const lanePatch = {};
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (PANEL_LANE_KEYS.has(k)) lanePatch[k] = v;
+    else shared[k] = v;
+  }
+  let next = { ...prevMain, ...shared };
+  if (Object.keys(lanePatch).length) {
+    const key = panelLaneKey(
+      Object.prototype.hasOwnProperty.call(patch, 'imageMode') ? patch.imageMode : prevMain.imageMode,
+    );
+    next = { ...next, [key]: { ...(prevMain[key] || defaultLane()), ...lanePatch } };
+  }
+  return next;
+}
 
 /** 底部对话栏输入框高度（拖中间框线调整） */
 const COMPOSER_H_KEY = 'tokenbank.debug.composerTextH';
@@ -587,18 +642,32 @@ function loadDebugPanel() {
     const raw = localStorage.getItem(DEBUG_CHAT_KEY);
     if (!raw) return defaultPanel();
     const data = JSON.parse(raw);
-    const conversation = (Array.isArray(data.conversation) ? data.conversation : [])
-      .slice(-DEBUG_CHAT_MAX)
-      .map(m => ({ ...m, streaming: false, generating: false }));
-    return {
+    const imageMode = !!data.imageMode;
+    const base = {
       ...defaultPanel(),
-      conversation,
-      systemPrompt: data.systemPrompt || '',
-      showSystem: !!data.showSystem,
+      imageMode,
       streamMode: data.streamMode !== false,
-      imageMode: !!data.imageMode,
       imageRatio: data.imageRatio || '',
       imageResolution: data.imageResolution || '',
+    };
+    // 新格式：chat / image 分车道
+    if (data.chat || data.image) {
+      return {
+        ...base,
+        chat: normalizeLane(data.chat),
+        image: normalizeLane(data.image),
+      };
+    }
+    // 旧格式：单一 conversation → 归入当时模式对应车道
+    const legacy = normalizeLane({
+      conversation: data.conversation,
+      systemPrompt: data.systemPrompt,
+      showSystem: data.showSystem,
+    });
+    return {
+      ...base,
+      chat: imageMode ? defaultLane() : legacy,
+      image: imageMode ? legacy : defaultLane(),
     };
   } catch {
     return defaultPanel();
@@ -607,20 +676,20 @@ function loadDebugPanel() {
 
 function persistDebugPanel(panel) {
   try {
+    const serLane = (lane) => ({
+      conversation: (lane?.conversation || []).slice(-DEBUG_CHAT_MAX).map(serializeDebugMessage),
+      systemPrompt: lane?.systemPrompt || '',
+      showSystem: !!lane?.showSystem,
+    });
     localStorage.setItem(DEBUG_CHAT_KEY, JSON.stringify({
-      conversation: (panel.conversation || []).slice(-DEBUG_CHAT_MAX).map(serializeDebugMessage),
-      systemPrompt: panel.systemPrompt || '',
-      showSystem: !!panel.showSystem,
-      streamMode: panel.streamMode !== false,
       imageMode: !!panel.imageMode,
+      streamMode: panel.streamMode !== false,
       imageRatio: panel.imageRatio || '',
       imageResolution: panel.imageResolution || '',
+      chat: serLane(panel.chat),
+      image: serLane(panel.image),
     }));
   } catch { /* quota 超限等：忽略，不影响当前会话 */ }
-}
-
-function clearDebugPanelStorage() {
-  try { localStorage.removeItem(DEBUG_CHAT_KEY); } catch {}
 }
 
 // ── Agent 模式常量 ─────────────────────────────────────────────────────────────
@@ -691,9 +760,8 @@ export default function Debug() {
   const [pendingImages,  setPendingImages] = useState([]);
   const [attachError,    setAttachError]   = useState('');
   const fileInputRef = useRef(null);
-  // LLM 模式：从资产加载的提示词列表，选中后填入 System
+  // LLM 模式：从资产加载的提示词列表，选中后填入输入框（按对话/图像分车道）
   const [promptList,     setPromptList]    = useState([]);
-  const [selectedPromptId, setSelectedPromptId] = useState('');
 
   // Agent 模式状态
   const [agents, setAgents] = useState(() => getCachedAgentsList() || []);
@@ -730,8 +798,8 @@ export default function Debug() {
   const finishDelegatedChildRef = useRef(null);
 
   // 当前生效的 Agent：直调 tab 或聚合入口的主 Agent
-  const mainAgent = agents.find(a => a.id === mainAgentId && !a.custom)
-    || agents.find(a => !a.custom)
+  const mainAgent = agents.find(a => a.id === mainAgentId && !a.custom && a.installed !== false)
+    || agents.find(a => a.type === 'cli' && a.installed !== false)
     || null;
   const isHubMode = !selectedAgent;
   const activeAgent = isHubMode ? mainAgent : selectedAgent;
@@ -782,7 +850,14 @@ export default function Debug() {
   }
 
   const panel = panels.main;
-  const { conversation, input, systemPrompt, streamMode, imageMode, imageRatio, imageResolution } = panel;
+  const { streamMode, imageMode, imageRatio, imageResolution } = panel;
+  const activeLane = panel[panelLaneKey(imageMode)] || defaultLane();
+  const {
+    conversation,
+    input,
+    systemPrompt,
+    selectedPromptId = '',
+  } = activeLane;
 
   const messagesEndRef = useRef(null);
   const textareaRef    = useRef(null);
@@ -960,7 +1035,8 @@ export default function Debug() {
   // Agent 列表加载后，校验主 Agent 偏好并恢复上次选中的 Agent 标签
   useEffect(() => {
     if (!agents.length) return;
-    const cliAgents = agents.filter(a => !a.custom && a.type !== 'assistant');
+    // 主 Agent 仅从已安装 CLI 里选
+    const cliAgents = agents.filter(a => a.type === 'cli' && a.installed !== false);
     if (cliAgents.length) {
       if (!mainAgentId || !cliAgents.some(a => a.id === mainAgentId)) {
         const fallback = cliAgents[0].id;
@@ -982,6 +1058,7 @@ export default function Debug() {
 
   function setMainAgent(agent) {
     if (!agent?.id || agent.custom || agent.type === 'assistant') return;
+    if (agent.installed === false) return;
     setMainAgentId(agent.id);
     saveMainAgentId(agent.id);
   }
@@ -1693,7 +1770,11 @@ export default function Debug() {
     }
 
     const cached = getCachedAgentsList();
-    if (cached?.length && !force) {
+    // 旧缓存无 installed 字段时丢弃，避免未安装项误显示为彩色
+    const cacheOk = cached?.length && !cached.some(
+      (a) => a.type === 'cli' && typeof a.installed !== 'boolean',
+    );
+    if (cacheOk && !force) {
       setAgents(cached);
       setLoadingAgents(false);
     } else {
@@ -1721,10 +1802,18 @@ export default function Debug() {
       const res = await window.electronAPI.resource.listResources({ type: 'prompt' });
       if (res.success) {
         setPromptList(res.resources || []);
-        // 列表刷新后若原选项已删除，清空选中态（保留已填入的 system 正文）
-        setSelectedPromptId(prev => {
-          if (!prev) return '';
-          return (res.resources || []).some(p => p.id === prev) ? prev : '';
+        // 列表刷新后若原选项已删除，清空选中态（保留已填入正文）
+        setPanels(prev => {
+          const main = prev.main;
+          const key = panelLaneKey(main.imageMode);
+          const lane = main[key] || defaultLane();
+          const id = lane.selectedPromptId;
+          if (!id) return prev;
+          if ((res.resources || []).some(p => p.id === id)) return prev;
+          return {
+            ...prev,
+            main: { ...main, [key]: { ...lane, selectedPromptId: '' } },
+          };
         });
       }
     } catch (error) {
@@ -1732,13 +1821,15 @@ export default function Debug() {
     }
   }
 
-  /** 选择提示词 → 填入底部对话框（输入框） */
+  /** 选择提示词模版 → 用模版全文覆盖输入框（取消选择则清空） */
   function applyPromptSelection(promptId) {
-    setSelectedPromptId(promptId);
-    if (!promptId) return;
+    if (!promptId) {
+      setPanel({ selectedPromptId: '', input: '' });
+      return;
+    }
     const prompt = promptList.find(p => p.id === promptId);
     if (!prompt) return;
-    setPanel({ input: prompt.content || '' });
+    setPanel({ selectedPromptId: promptId, input: prompt.content || '' });
   }
 
   /** 当前轮仍有未闭合工具 / 任务未终态 → 视为进行中（可停止） */
@@ -1822,6 +1913,11 @@ export default function Debug() {
     }
     if (executing || taskCanStop) return;
     if (activeAgent.custom && isHubMode) {
+      return;
+    }
+    // 未安装的 CLI 不可执行
+    if (activeAgent.type === 'cli' && activeAgent.installed === false) {
+      alert(t('debug.agent.notInstalled', { name: activeAgent.name }));
       return;
     }
     if (!agentWorkingDir.trim()) {
@@ -2147,15 +2243,6 @@ export default function Debug() {
     setAttachError('');
   }, [mode]);
 
-  // 切换对话/图像时，清空与当前模式不符的提示词选中（保留已填入的正文）
-  useEffect(() => {
-    if (!selectedPromptId) return;
-    const p = promptList.find(x => x.id === selectedPromptId);
-    if (!p) return;
-    const kind = p?.metadata?.promptKind === 'image' ? 'image' : 'text';
-    if (imageMode ? kind !== 'image' : kind !== 'text') setSelectedPromptId('');
-  }, [imageMode, promptList, selectedPromptId]);
-
   // 聊天记录落盘：流式/生成中不写，避免频繁 IO
   useEffect(() => {
     if (sending) return;
@@ -2163,14 +2250,27 @@ export default function Debug() {
     persistDebugPanel(panel);
   }, [panel, sending, conversation]);
 
-  function setPanel(patch) { setPanels(prev => ({ ...prev, main: { ...prev.main, ...patch } })); }
+  function setPanel(patch) {
+    setPanels(prev => ({ ...prev, main: patchDebugPanel(prev.main, patch) }));
+  }
+
+  /** 更新当前模式车道的 conversation（流式/生图回调用） */
+  function patchActiveConversation(mutator) {
+    setPanels(prev => {
+      const main = prev.main;
+      const key = panelLaneKey(main.imageMode);
+      const lane = main[key] || defaultLane();
+      const nextConv = mutator([...(lane.conversation || [])]);
+      return { ...prev, main: { ...main, [key]: { ...lane, conversation: nextConv } } };
+    });
+  }
 
   function handleClearChat() {
     if (!window.confirm(t('debug.clearConfirm'))) return;
-    setPanel({ conversation: [], input: '' });
+    // 只清空当前模式车道，保留另一模式的聊天记录
+    setPanel({ conversation: [], input: '', selectedPromptId: '' });
     setPendingImages([]);
     setAttachError('');
-    clearDebugPanelStorage();
   }
 
   /** 用户消息是否可归档（有文字或附图） */
@@ -2191,10 +2291,9 @@ export default function Debug() {
         imageMode,
       });
     }
-    setPanel({ conversation: [], input: '' });
+    setPanel({ conversation: [], input: '', selectedPromptId: '' });
     setPendingImages([]);
     setAttachError('');
-    clearDebugPanelStorage();
   }
 
   /** 恢复历史：先归档当前，再载入快照 */
@@ -2213,11 +2312,13 @@ export default function Debug() {
       streaming: false,
       generating: false,
     }));
+    const nextImageMode = snapshot.imageMode != null ? !!snapshot.imageMode : imageMode;
     setPanel({
+      imageMode: nextImageMode,
       conversation: nextConv,
       input: '',
+      selectedPromptId: '',
       systemPrompt: snapshot.systemPrompt != null ? snapshot.systemPrompt : systemPrompt,
-      imageMode: snapshot.imageMode != null ? !!snapshot.imageMode : imageMode,
       showSystem: !!(snapshot.systemPrompt && String(snapshot.systemPrompt).trim()),
     });
     setPendingImages([]);
@@ -2247,18 +2348,16 @@ export default function Debug() {
         baseUrl: effectiveBase, token, model, prompt: imagePrompt,
         ratio: imageRatio || undefined, resolution: imageResolution || undefined, t,
         onDone: ({ images, totalMs }) => {
-          setPanels(prev => {
-            const p = prev.main; const next = [...p.conversation];
+          patchActiveConversation((next) => {
             next[idx] = { ...next[idx], images, generating: false, timing: { totalMs } };
-            return { ...prev, main: { ...p, conversation: next } };
+            return next;
           });
           setSending(false);
         },
         onError: msg => {
-          setPanels(prev => {
-            const p = prev.main; const next = [...p.conversation];
+          patchActiveConversation((next) => {
             next[idx] = { ...next[idx], generating: false, error: msg };
-            return { ...prev, main: { ...p, conversation: next } };
+            return next;
           });
           setSending(false);
         },
@@ -2292,25 +2391,22 @@ export default function Debug() {
       baseUrl: effectiveBase, token, model, messages: apiMessages, stream: streamMode, anthropic,
       emptyError: t('debug.emptyReply'),
       onChunk: delta => {
-        setPanels(prev => {
-          const p = prev.main; const next = [...p.conversation];
+        patchActiveConversation((next) => {
           next[assistantIdx] = { ...next[assistantIdx], content: next[assistantIdx].content + delta };
-          return { ...prev, main: { ...p, conversation: next } };
+          return next;
         });
       },
       onDone: timing => {
-        setPanels(prev => {
-          const p = prev.main; const next = [...p.conversation];
+        patchActiveConversation((next) => {
           next[assistantIdx] = { ...next[assistantIdx], streaming: false, timing };
-          return { ...prev, main: { ...p, conversation: next } };
+          return next;
         });
         setSending(false);
       },
       onError: msg => {
-        setPanels(prev => {
-          const p = prev.main; const next = [...p.conversation];
+        patchActiveConversation((next) => {
           next[assistantIdx] = { ...next[assistantIdx], streaming: false, error: msg };
-          return { ...prev, main: { ...p, conversation: next } };
+          return next;
         });
         setSending(false);
       },
@@ -2687,7 +2783,7 @@ export default function Debug() {
                         }}
                         className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-zinc-900 dark:text-zinc-100"
                       >
-                        {agents.filter(a => !a.custom).map(a => (
+                        {agents.filter(a => a.type === 'cli' && a.installed !== false).map(a => (
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
                       </select>

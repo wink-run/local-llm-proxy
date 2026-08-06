@@ -322,9 +322,9 @@ select.form-input{cursor:pointer}
         <button class="btn-sm toolbar-right" @click="fetchUsers">{{ T.refresh }}</button>
       </div>
       <table>
-        <thead><tr><th>ID</th><th>{{ T.email }}</th><th>{{ T.nickname }}</th><th>{{ T.balance }}</th><th>{{ T.earned }}</th><th>{{ T.apikeyPerm }}</th><th>{{ T.adjustCredits }}</th></tr></thead>
+        <thead><tr><th>ID</th><th>{{ T.email }}</th><th>{{ T.nickname }}</th><th>{{ T.balance }}</th><th>{{ T.earned }}</th><th>{{ T.apikeyPerm }}</th><th>{{ T.adjustCredits }}</th><th>{{ T.resetPassword }}</th></tr></thead>
         <tbody>
-          <tr v-if="users.length === 0" class="empty-row"><td colspan="7">{{ T.noUsers }}</td></tr>
+          <tr v-if="users.length === 0" class="empty-row"><td colspan="8">{{ T.noUsers }}</td></tr>
           <tr v-for="u in users" :key="u.id">
             <td style="color:#7b7b7b">{{ u.id }}</td>
             <td>{{ u.email }}</td>
@@ -350,6 +350,12 @@ select.form-input{cursor:pointer}
                 <input v-model="userCreditDelta[u.id]" class="form-input" type="number" style="width:90px" placeholder="±" />
                 <input v-model="userCreditNote[u.id]"  class="form-input" type="text" style="width:120px" :placeholder="T.note" />
                 <button class="btn-xs" @click="adjustCredit(u)">{{ T.adjust }}</button>
+              </div>
+            </td>
+            <td>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input v-model="userNewPassword[u.id]" class="form-input" type="password" style="width:120px" :placeholder="T.newPasswordPh" autocomplete="new-password" />
+                <button class="btn-xs" @click="resetUserPassword(u)">{{ T.reset }}</button>
               </div>
             </td>
           </tr>
@@ -997,6 +1003,9 @@ const LANGS = {
     apikeyPerm: 'API Key 权限', adjustCredits: '调整积分',
     totalUsers: (n) => `共 ${n} 位用户`, noUsers: '暂无用户',
     granted: '已开通', notGranted: '未开通', adjust: '调整',
+    resetPassword: '重置密码', newPasswordPh: '新密码≥6位', reset: '重置',
+    resetPasswordConfirm: (email) => `确认重置用户 ${email} 的密码？`,
+    resetPasswordOk: '密码已重置', resetPasswordFail: '重置失败',
     userId: '用户ID', credits: '积分', time: '时间', userNote: '用户备注', adminNote: '管理员备注',
     noOrders: '暂无购买申请', grantApikey: '开通 Key 权限', approve: '通过', reject: '拒绝',
     orderLabels: { pending:'待审核', approved:'已通过', rejected:'已拒绝' },
@@ -1040,6 +1049,9 @@ const LANGS = {
     apikeyPerm: 'API Key Access', adjustCredits: 'Adjust Credits',
     totalUsers: (n) => `${n} users total`, noUsers: 'No users',
     granted: 'Granted', notGranted: 'Not Granted', adjust: 'Apply',
+    resetPassword: 'Reset password', newPasswordPh: 'New password ≥6', reset: 'Reset',
+    resetPasswordConfirm: (email) => `Reset password for ${email}?`,
+    resetPasswordOk: 'Password reset', resetPasswordFail: 'Reset failed',
     userId: 'User ID', credits: 'Credits', time: 'Time', userNote: 'User Note', adminNote: 'Admin Note',
     noOrders: 'No purchase orders', grantApikey: 'Grant API key access', approve: 'Approve', reject: 'Reject',
     orderLabels: { pending:'Pending', approved:'Approved', rejected:'Rejected' },
@@ -1187,6 +1199,7 @@ createApp({
 
     /* ── Users ── */
     const users = ref([]), userCreditDelta = ref({}), userCreditNote = ref({}), userNicknameOrig = ref({})
+    const userNewPassword = ref({})
     async function fetchUsers() {
       try {
         const d = await (await api('/admin/users')).json()
@@ -1214,6 +1227,19 @@ createApp({
         const d = await r.json(); if (d.new_balance!=null) u.credits_balance=d.new_balance
         userCreditDelta.value[u.id]=''; userCreditNote.value[u.id]=''
       } catch {}
+    }
+    async function resetUserPassword(u) {
+      const pw = (userNewPassword.value[u.id] || '').trim()
+      if (pw.length < 6) { alert(T.value.newPasswordPh); return }
+      if (!confirm(T.value.resetPasswordConfirm(u.email))) return
+      try {
+        const r = await api(`/admin/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({ new_password: pw }) })
+        if (!r.ok) { alert(T.value.resetPasswordFail); return }
+        userNewPassword.value[u.id] = ''
+        alert(T.value.resetPasswordOk)
+      } catch {
+        alert(T.value.resetPasswordFail)
+      }
     }
 
     /* ── Orders ── */
@@ -1447,7 +1473,7 @@ createApp({
       workers, fetchWorkers,
       keys, newNote, createKey, toggleKey, removeKey, maskKey, copyKey,
       models, modelForm, modelMsg, upsertModel, deleteModel, editModel, onTierChange, crossPreview,
-      users, userCreditDelta, userCreditNote, fetchUsers, saveNickname, toggleApikey, adjustCredit,
+      users, userCreditDelta, userCreditNote, userNewPassword, fetchUsers, saveNickname, toggleApikey, adjustCredit, resetUserPassword,
       orders, orderNote, orderGrantApikey, fetchOrders, approveOrder, rejectOrder,
       sysConfig, configSaving, saveConfig,
       debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels, allModelTypes,

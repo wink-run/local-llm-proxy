@@ -429,7 +429,9 @@ class AgentExecutor extends EventEmitter {
   }
 
   /**
-   * 获取可用的 Agent 列表（仅返回本机已安装 CLI）
+   * 获取可用的 Agent 列表
+   * CLI 四件套（Claude Code / Codex / Cursor / Kimi Code）始终返回；
+   * 未安装的带 installed:false，游乐场侧栏显示为灰色。
    * @param {{ force?: boolean }} options - force 跳过缓存
    */
   async listAvailableAgents(options = {}) {
@@ -437,47 +439,80 @@ class AgentExecutor extends EventEmitter {
     const hiredEntries = () => require('./hired-community-agents').toAgentListEntries();
     if (!options.force && AGENT_LIST_CACHE.agents
       && (now - AGENT_LIST_CACHE.at) < AGENT_LIST_CACHE.ttlMs) {
-      // 雇佣名单可能刚写入：缓存里刷新 community 段
-      const base = AGENT_LIST_CACHE.agents.filter((a) => a.type !== 'community');
-      return [...base, ...hiredEntries()];
+      // 旧缓存无 installed 字段 → 视为过期，重新探测
+      const stale = AGENT_LIST_CACHE.agents.some(
+        (a) => a.type === 'cli' && typeof a.installed !== 'boolean',
+      );
+      if (!stale) {
+        // 雇佣名单可能刚写入：缓存里刷新 community 段
+        const base = AGENT_LIST_CACHE.agents.filter((a) => a.type !== 'community');
+        return [...base, ...hiredEntries()];
+      }
     }
 
-    // 并行探测各 CLI：先 resolve 可执行路径，避免慢速 npx 包下载探测
-    const cliAgents = (await Promise.all(
+    // 并行探测各 CLI：已安装才填 version；未安装仍返回条目（installed:false）
+    const cliAgents = await Promise.all(
       Object.entries(AGENT_CLI).map(async ([id, cfg]) => {
-        const launch = this._resolveLaunchSpec(id);
-        if (!launch?.executable) return null;
+        const names = Array.isArray(cfg.detectCommands) && cfg.detectCommands.length
+          ? cfg.detectCommands
+          : [cfg.detectCommand].filter(Boolean);
 
-        // 版本号仅作展示，短超时；探测失败不影响「已安装」判定
+        // 以 resolveRealCommand 命中为准（裸命令名回退不算已安装）
+        let resolvedPath = null;
+        let detectCommand = names[0] || cfg.detectCommand || id;
+        for (const name of names) {
+          const resolved = shim?.resolveRealCommand?.(name);
+          if (resolved) {
+            resolvedPath = resolved;
+            detectCommand = name;
+            break;
+          }
+        }
+        const installed = !!resolvedPath;
+
         let version = null;
-        try {
-          const probeCmd = launch.detectCommand || cfg.detectCommand;
-          if (runProbe) {
+        if (installed && runProbe) {
+          try {
+            // 用解析到的绝对路径探测版本（Codex 等可能不在 PATH）
+            const probeCmd = resolvedPath || detectCommand;
             const probe = await runProbe(probeCmd, ['--version'], 1800);
             if (probe.ok) {
               version = probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout;
             }
+          } catch {
+            // 版本探测失败不影响「已安装」判定
           }
-        } catch {
-          // 忽略版本探测失败
         }
 
+        const launch = installed ? this._resolveLaunchSpec(id) : null;
         return {
           id,
           name: cfg.name,
           type: 'cli',
-          executable: launch.executable,
+          executable: launch?.executable || resolvedPath || null,
           capabilities: cfg.capabilities,
-          version,
-          status: 'active',
+          version: installed ? version : null,
+          installed,
+          status: installed ? 'active' : 'missing',
         };
       }),
-    )).filter(Boolean);
+    );
 
-    const cliIds = new Set(cliAgents.map(a => a.id));
+    // 自定义智能体：已安装 CLI，或具备 npx 包回退的运行时均可挂载
+    const launchableCliIds = new Set();
+    for (const a of cliAgents) {
+      if (a.installed) {
+        launchableCliIds.add(a.id);
+        continue;
+      }
+      const cfg = AGENT_CLI[a.id];
+      if (cfg?.npxPackage && shim?.resolveRealCommand?.('npx')) {
+        launchableCliIds.add(a.id);
+      }
+    }
     const agents = [
       ...cliAgents,
-      ...this._listCustomAssistants(cliIds),
+      ...this._listCustomAssistants(launchableCliIds),
       // 已雇佣的社区武将（远程执行，无正文）
       ...require('./hired-community-agents').toAgentListEntries(),
     ];

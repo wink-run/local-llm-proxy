@@ -1,4 +1,5 @@
-import { resolveBrandIcon } from '../lib/brandIcons';
+import { useState } from 'react';
+import { resolveBrandIcon, resolveProviderBrandIcon } from '../lib/brandIcons';
 import KimiAvatar from './KimiAvatar';
 
 /** 从 Tailwind 尺寸类粗估像素（用于 KimiAvatar） */
@@ -11,19 +12,46 @@ function sizeFromClass(cls = '', fallback = 20) {
   return n * 4;
 }
 
-/** 产品 logo：与网关/供给源页一致，优先 lobehub 品牌 SVG，否则回退 emoji */
+/** 远程 logo 加载失败时回退 emoji */
+function BrandImg({ src, className, fallback }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return fallback || null;
+  return (
+    <img
+      src={src}
+      alt=""
+      className={className}
+      draggable={false}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+/**
+ * 产品 / 供给源 logo：
+ * - 应用类优先 lobehub 静态 SVG（本地打包）
+ * - 供给源走本地 provider-icons（无远程拉取）
+ */
 export default function ServiceIcon({
   id,
   name,
   icon,
+  baseUrl,
+  signupUrl,
   boxClass = 'w-8 h-8',
   imgClass = 'w-5 h-5',
   className = '',
   title,
 }) {
   const hay = `${id || ''} ${name || ''}`;
-  const brand = resolveBrandIcon(hay);
+  const brand = resolveProviderBrandIcon({
+    id,
+    name,
+    base_url: baseUrl,
+    signup_url: signupUrl,
+  }) || resolveBrandIcon(hay);
   const isKimi = /kimi|moonshot/i.test(hay);
+  const emoji = <span className="text-base leading-none">{icon || '🔧'}</span>;
   return (
     <div
       title={title || name || id}
@@ -31,9 +59,13 @@ export default function ServiceIcon({
     >
       {isKimi
         ? <KimiAvatar size={sizeFromClass(imgClass, 20)} />
-        : brand
-          ? <img src={brand} alt="" className={`${imgClass} object-contain`} draggable={false} />
-          : <span className="text-base leading-none">{icon || '🔧'}</span>}
+        : (
+          <BrandImg
+            src={brand}
+            className={`${imgClass} object-contain`}
+            fallback={emoji}
+          />
+        )}
     </div>
   );
 }
