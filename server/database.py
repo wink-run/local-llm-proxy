@@ -2315,6 +2315,60 @@ async def delete_circle(circle_id: int) -> None:
         await db.commit()
 
 
+async def list_all_circles_admin() -> list:
+    """管理员：全部圈子 + 圈主信息 + 成员数。"""
+    async with connect() as db:
+        async with db.execute(
+            """SELECT c.id, c.name, c.description, c.code, c.owner_id, c.max_members,
+                      c.is_public, c.created_at,
+                      u.email AS owner_email, u.nickname AS owner_nickname,
+                      (SELECT COUNT(*) FROM circle_members m WHERE m.circle_id=c.id) AS member_count
+               FROM circles c
+               LEFT JOIN users u ON u.id = c.owner_id
+               ORDER BY c.created_at DESC"""
+        ) as cur:
+            rows = [dict(r) async for r in cur]
+            for r in rows:
+                r["member_count"] = int(r.get("member_count") or 0)
+                r["is_public"] = int(r.get("is_public") if r.get("is_public") is not None else 1)
+                r["max_members"] = int(r.get("max_members") or 100)
+            return rows
+
+
+async def update_circle_admin(
+    circle_id: int,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    max_members: int | None = None,
+    is_public: bool | None = None,
+) -> Optional[dict]:
+    """管理员更新圈子基础信息。"""
+    updates, params = [], []
+    if name is not None:
+        updates.append("name=?")
+        params.append(name.strip())
+    if description is not None:
+        updates.append("description=?")
+        params.append(description.strip())
+    if max_members is not None:
+        updates.append("max_members=?")
+        params.append(int(max_members))
+    if is_public is not None:
+        updates.append("is_public=?")
+        params.append(1 if is_public else 0)
+    if not updates:
+        return await get_circle_by_id(circle_id)
+    params.append(circle_id)
+    async with connect() as db:
+        await db.execute(
+            f"UPDATE circles SET {','.join(updates)} WHERE id=?",
+            tuple(params),
+        )
+        await db.commit()
+    return await get_circle_by_id(circle_id)
+
+
 async def count_circles_owned(owner_id: int) -> int:
     async with connect() as db:
         async with db.execute(

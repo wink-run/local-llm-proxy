@@ -394,6 +394,104 @@ select.form-input{cursor:pointer}
       </table>
     </div>
 
+    <!-- Circles -->
+    <div v-show="activeTab === 'circles'" class="tab-content">
+      <div class="toolbar">
+        <span style="color:#7b7b7b;font-size:13px">{{ T.totalCircles(circles.length) }}</span>
+        <button class="btn-sm toolbar-right" @click="fetchCircles">{{ T.refresh }}</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>{{ T.circleName }}</th>
+            <th>{{ T.owner }}</th>
+            <th>{{ T.members }}</th>
+            <th>{{ T.maxMembers }}</th>
+            <th>{{ T.public }}</th>
+            <th>{{ T.inviteCode }}</th>
+            <th>{{ T.createdAt }}</th>
+            <th>{{ T.actions }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="circles.length === 0" class="empty-row"><td colspan="9">{{ T.noCircles }}</td></tr>
+          <template v-for="c in circles" :key="c.id">
+            <tr>
+              <td style="color:#7b7b7b">{{ c.id }}</td>
+              <td>
+                <div style="font-weight:600">{{ c.name }}</div>
+                <div style="font-size:12px;color:#7b7b7b;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.description || '—' }}</div>
+              </td>
+              <td>
+                <div>{{ c.owner_nickname || '—' }}</div>
+                <div style="font-size:12px;color:#7b7b7b">{{ c.owner_email || ('#' + c.owner_id) }}</div>
+              </td>
+              <td style="font-weight:600">{{ c.member_count }}</td>
+              <td>
+                <input v-model.number="c.max_members" class="form-input" type="number" min="1" style="width:72px"
+                  @blur="saveCircleField(c, 'max_members')" />
+              </td>
+              <td>
+                <span :class="c.is_public ? 'badge badge-on' : 'badge badge-off'" style="cursor:pointer"
+                  @click="toggleCirclePublic(c)">{{ c.is_public ? T.yes : T.no }}</span>
+              </td>
+              <td class="mono" style="font-size:12px">{{ c.code }}</td>
+              <td style="color:#7b7b7b">{{ fmtTime(c.created_at) }}</td>
+              <td>
+                <button class="btn-xs" @click="toggleCircleMembers(c)">{{ circleMembersOpen===c.id ? T.hideMembers : T.viewMembers }}</button>
+                <button class="btn-xs" @click="editCircleMeta(c)">{{ T.edit }}</button>
+                <button class="btn-xs btn-danger" @click="deleteCircle(c)">{{ T.dissolve }}</button>
+              </td>
+            </tr>
+            <tr v-if="circleMembersOpen===c.id">
+              <td colspan="9" style="background:#fafafa;padding:12px 16px">
+                <div v-if="circleMembersLoading" style="color:#7b7b7b;font-size:13px">{{ T.loading }}</div>
+                <table v-else style="margin:0;box-shadow:none">
+                  <thead>
+                    <tr>
+                      <th>UID</th><th>{{ T.nickname }}</th><th>{{ T.email }}</th><th>{{ T.joinedAt }}</th><th>{{ T.actions }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="!circleMembers.length" class="empty-row"><td colspan="5">{{ T.noMembers }}</td></tr>
+                    <tr v-for="m in circleMembers" :key="m.id">
+                      <td style="color:#7b7b7b">{{ m.id }}</td>
+                      <td>{{ m.nickname || '—' }} <span v-if="m.is_owner" class="badge badge-on" style="margin-left:4px">{{ T.owner }}</span></td>
+                      <td>{{ m.email }}</td>
+                      <td style="color:#7b7b7b">{{ fmtTime(m.joined_at) }}</td>
+                      <td>
+                        <button v-if="!m.is_owner" class="btn-xs btn-danger" @click="kickCircleMember(c, m)">{{ T.kick }}</button>
+                        <span v-else style="color:#bcbcbc">—</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+
+      <!-- 编辑圈子名称/简介 -->
+      <div v-if="circleEdit" class="panel" style="max-width:520px;margin-top:16px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">{{ T.editCircle }} #{{ circleEdit.id }}</div>
+        <div class="form-group" style="margin-bottom:10px">
+          <label>{{ T.circleName }}</label>
+          <input v-model="circleEdit.name" class="form-input" style="width:100%" />
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>{{ T.description }}</label>
+          <textarea v-model="circleEdit.description" class="form-input" rows="3" style="width:100%;resize:vertical"></textarea>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-indigo" @click="saveCircleEdit">{{ T.save }}</button>
+          <button class="btn-sm" @click="circleEdit=null">{{ T.vaCancel }}</button>
+        </div>
+        <div v-if="circleEditMsg" style="margin-top:8px;font-size:13px;color:#b91c1c">{{ circleEditMsg }}</div>
+      </div>
+    </div>
+
     <!-- System Config -->
     <div v-show="activeTab === 'config'" class="tab-content">
       <div class="panel" style="max-width:600px">
@@ -994,7 +1092,7 @@ const LANGS = {
     notePlaceholder: '备注（可选）', newKey: '新建 Key', note: '备注', status: '状态',
     createdAt: '创建时间', actions: '操作', noKeys: '暂无 API Key',
     copy: '复制', enabled: '启用', disabled: '禁用', enable: '启用', disable: '禁用', delete: '删除',
-    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', apps:'应用管理', routes:'路由管理' },
+    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', circles:'圈子管理', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', apps:'应用管理', routes:'路由管理' },
     addEditModel: '新增 / 编辑模型', modelName: '模型名称', displayName: '显示名称', tier: '类型',
     contributeRate: '贡献率（积分/千token）', consumeRate: '消费率（积分/千token）',
     yes: '是', no: '否', save: '保存', saving: '保存中', edit: '编辑',
@@ -1009,8 +1107,15 @@ const LANGS = {
     userId: '用户ID', credits: '积分', time: '时间', userNote: '用户备注', adminNote: '管理员备注',
     noOrders: '暂无购买申请', grantApikey: '开通 Key 权限', approve: '通过', reject: '拒绝',
     orderLabels: { pending:'待审核', approved:'已通过', rejected:'已拒绝' },
+    totalCircles: (n) => `共 ${n} 个圈子`, noCircles: '暂无圈子',
+    circleName: '圈子名称', owner: '圈主', members: '成员', maxMembers: '人数上限',
+    public: '公开', inviteCode: '邀请码', description: '简介',
+    viewMembers: '成员', hideMembers: '收起', joinedAt: '加入时间',
+    kick: '踢出', dissolve: '解散', editCircle: '编辑圈子', noMembers: '暂无成员',
+    confirmDissolve: (n) => `确认解散圈子「${n}」？成员与帖子将一并删除。`,
+    confirmKick: (email) => `确认将 ${email} 移出该圈子？`,
     sysConfig: '系统配置',
-    configLabels: { newcomer_reward:'新人注册礼包积分', referral_reward:'推荐奖励积分', contact_info:'联系方式（付款信息）' },
+    configLabels: { newcomer_reward:'新人注册礼包积分', referral_reward:'推荐奖励积分', contact_info:'联系方式（付款信息）', circle_invite_reward:'邀请入圈奖励积分' },
     loading: '加载中…',
     selectModel: '选择模型', clearChat: '清空对话', noOnlineModels: '暂无在线模型',
     chatPlaceholder: '选择模型后开始对话', chatInputHint: '输入消息… Enter 发送，Shift+Enter 换行',
@@ -1040,7 +1145,7 @@ const LANGS = {
     notePlaceholder: 'Note (optional)', newKey: 'New Key', note: 'Note', status: 'Status',
     createdAt: 'Created', actions: 'Actions', noKeys: 'No API keys yet',
     copy: 'Copy', enabled: 'Active', disabled: 'Disabled', enable: 'Enable', disable: 'Disable', delete: 'Delete',
-    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', apps:'Apps', routes:'Routes' },
+    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', circles:'Circles', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', apps:'Apps', routes:'Routes' },
     addEditModel: 'Add / Edit Model', modelName: 'Model Name', displayName: 'Display Name', tier: 'Tier',
     contributeRate: 'Contribute Rate (credits/K tokens)', consumeRate: 'Consume Rate (credits/K tokens)',
     yes: 'Yes', no: 'No', save: 'Save', saving: 'Saving…', edit: 'Edit',
@@ -1055,8 +1160,15 @@ const LANGS = {
     userId: 'User ID', credits: 'Credits', time: 'Time', userNote: 'User Note', adminNote: 'Admin Note',
     noOrders: 'No purchase orders', grantApikey: 'Grant API key access', approve: 'Approve', reject: 'Reject',
     orderLabels: { pending:'Pending', approved:'Approved', rejected:'Rejected' },
+    totalCircles: (n) => `${n} circles total`, noCircles: 'No circles',
+    circleName: 'Name', owner: 'Owner', members: 'Members', maxMembers: 'Max members',
+    public: 'Public', inviteCode: 'Invite code', description: 'Description',
+    viewMembers: 'Members', hideMembers: 'Hide', joinedAt: 'Joined',
+    kick: 'Remove', dissolve: 'Dissolve', editCircle: 'Edit circle', noMembers: 'No members',
+    confirmDissolve: (n) => `Dissolve circle "${n}"? Members and posts will be deleted.`,
+    confirmKick: (email) => `Remove ${email} from this circle?`,
     sysConfig: 'System Configuration',
-    configLabels: { newcomer_reward:'Newcomer Reward (credits)', referral_reward:'Referral Reward (credits)', contact_info:'Contact Info (payment details)' },
+    configLabels: { newcomer_reward:'Newcomer Reward (credits)', referral_reward:'Referral Reward (credits)', contact_info:'Contact Info (payment details)', circle_invite_reward:'Circle invite reward (credits)' },
     loading: 'Loading…',
     selectModel: 'Select model', clearChat: 'Clear', noOnlineModels: 'No online models',
     chatPlaceholder: 'Select a model to start chatting', chatInputHint: 'Type a message… Enter to send, Shift+Enter for newline',
@@ -1098,6 +1210,7 @@ createApp({
         { key:'models',  label: tl.models },
         { key:'users',   label: tl.users },
         { key:'orders',  label: tl.orders },
+        { key:'circles', label: tl.circles },
         { key:'config',  label: tl.config },
         { key:'debug',   label: tl.debug },
         { key:'virtual', label: tl.virtual },
@@ -1125,7 +1238,7 @@ createApp({
 
     /* ── API ── */
     const ADMIN_TAB_KEY = 'admin_active_tab'
-    const VALID_TABS = ['workers','keys','models','users','orders','config','debug','virtual','billing','apps','routes']
+    const VALID_TABS = ['workers','keys','models','users','orders','circles','config','debug','virtual','billing','apps','routes']
     const _storedTab = localStorage.getItem(ADMIN_TAB_KEY)
     const activeTab = ref(VALID_TABS.includes(_storedTab) ? _storedTab : 'workers')
     async function api(path, opts = {}) {
@@ -1247,6 +1360,97 @@ createApp({
     async function fetchOrders() { try { const d = await (await api('/admin/purchase-orders')).json(); orders.value = d.orders||[] } catch {} }
     async function approveOrder(o) { try { await api(`/admin/purchase-orders/${o.id}/approve`,{method:'POST',body:JSON.stringify({admin_note:orderNote.value[o.id]||'',grant_apikey:!!orderGrantApikey.value[o.id]})}); o.status='approved' } catch {} }
     async function rejectOrder(o)  { try { await api(`/admin/purchase-orders/${o.id}/reject`,{method:'POST',body:JSON.stringify({admin_note:orderNote.value[o.id]||''})}); o.status='rejected' } catch {} }
+
+    /* ── Circles ── */
+    const circles = ref([])
+    const circleMembersOpen = ref(null)
+    const circleMembers = ref([])
+    const circleMembersLoading = ref(false)
+    const circleEdit = ref(null)
+    const circleEditMsg = ref('')
+    async function fetchCircles() {
+      try {
+        const d = await (await api('/admin/circles')).json()
+        circles.value = d.circles || []
+      } catch {}
+    }
+    async function toggleCircleMembers(c) {
+      if (circleMembersOpen.value === c.id) {
+        circleMembersOpen.value = null
+        circleMembers.value = []
+        return
+      }
+      circleMembersOpen.value = c.id
+      circleMembersLoading.value = true
+      circleMembers.value = []
+      try {
+        const d = await (await api(`/admin/circles/${c.id}/members`)).json()
+        circleMembers.value = d.members || []
+      } catch {}
+      finally { circleMembersLoading.value = false }
+    }
+    async function saveCircleField(c, field) {
+      const body = {}
+      if (field === 'max_members') {
+        const n = parseInt(c.max_members, 10)
+        if (!n || n < 1) { await fetchCircles(); return }
+        body.max_members = n
+      }
+      try {
+        const r = await api(`/admin/circles/${c.id}`, { method: 'PATCH', body: JSON.stringify(body) })
+        if (!r.ok) await fetchCircles()
+      } catch { await fetchCircles() }
+    }
+    async function toggleCirclePublic(c) {
+      try {
+        const r = await api(`/admin/circles/${c.id}`, {
+          method: 'PATCH', body: JSON.stringify({ is_public: !c.is_public }),
+        })
+        if (r.ok) c.is_public = c.is_public ? 0 : 1
+      } catch {}
+    }
+    function editCircleMeta(c) {
+      circleEdit.value = { id: c.id, name: c.name || '', description: c.description || '' }
+      circleEditMsg.value = ''
+    }
+    async function saveCircleEdit() {
+      if (!circleEdit.value) return
+      const name = (circleEdit.value.name || '').trim()
+      if (!name) { circleEditMsg.value = T.value.circleName; return }
+      try {
+        const r = await api(`/admin/circles/${circleEdit.value.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name, description: circleEdit.value.description || '' }),
+        })
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}))
+          circleEditMsg.value = d.detail || 'Error'
+          return
+        }
+        circleEdit.value = null
+        await fetchCircles()
+      } catch { circleEditMsg.value = 'Error' }
+    }
+    async function deleteCircle(c) {
+      if (!confirm(T.value.confirmDissolve(c.name))) return
+      try {
+        await api(`/admin/circles/${c.id}`, { method: 'DELETE' })
+        if (circleMembersOpen.value === c.id) {
+          circleMembersOpen.value = null
+          circleMembers.value = []
+        }
+        if (circleEdit.value?.id === c.id) circleEdit.value = null
+        circles.value = circles.value.filter(x => x.id !== c.id)
+      } catch {}
+    }
+    async function kickCircleMember(c, m) {
+      if (!confirm(T.value.confirmKick(m.email || m.id))) return
+      try {
+        await api(`/admin/circles/${c.id}/members/${m.id}`, { method: 'DELETE' })
+        circleMembers.value = circleMembers.value.filter(x => x.id !== m.id)
+        c.member_count = Math.max(0, (c.member_count || 1) - 1)
+      } catch {}
+    }
 
     /* ── Config ── */
     const sysConfig = ref({}), configSaving = ref({})
@@ -1442,6 +1646,7 @@ createApp({
       if (k === 'models') fetchModels()
       if (k === 'users')  fetchUsers()
       if (k === 'orders') fetchOrders()
+      if (k === 'circles') fetchCircles()
       if (k === 'config') fetchConfig()
       if (k === 'virtual') fetchVirtualAgents()
       if (k === 'billing') fetchBillingSources()
@@ -1475,6 +1680,9 @@ createApp({
       models, modelForm, modelMsg, upsertModel, deleteModel, editModel, onTierChange, crossPreview,
       users, userCreditDelta, userCreditNote, userNewPassword, fetchUsers, saveNickname, toggleApikey, adjustCredit, resetUserPassword,
       orders, orderNote, orderGrantApikey, fetchOrders, approveOrder, rejectOrder,
+      circles, circleMembersOpen, circleMembers, circleMembersLoading, circleEdit, circleEditMsg,
+      fetchCircles, toggleCircleMembers, saveCircleField, toggleCirclePublic,
+      editCircleMeta, saveCircleEdit, deleteCircle, kickCircleMember,
       sysConfig, configSaving, saveConfig,
       debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels, allModelTypes,
       debugMode, debugRatio, debugResolution, debugFilteredModels, lightboxSrc,

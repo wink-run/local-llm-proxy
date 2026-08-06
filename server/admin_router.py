@@ -209,6 +209,72 @@ async def reject_order(order_id: int, req: RejectRequest):
     return {"ok": True}
 
 
+# ── 圈子管理 ──────────────────────────────────────────────────────────────────
+
+@router.get("/circles", dependencies=[Depends(auth_admin)])
+async def admin_list_circles():
+    return {"circles": await db.list_all_circles_admin()}
+
+
+@router.get("/circles/{circle_id}/members", dependencies=[Depends(auth_admin)])
+async def admin_list_circle_members(circle_id: int):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    members = await db.list_circle_members(circle_id)
+    for m in members:
+        m["is_owner"] = m["id"] == circle["owner_id"]
+    return {"circle": circle, "members": members}
+
+
+class AdminUpdateCircleRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    max_members: int | None = None
+    is_public: bool | None = None
+
+
+@router.patch("/circles/{circle_id}", dependencies=[Depends(auth_admin)])
+async def admin_update_circle(circle_id: int, req: AdminUpdateCircleRequest):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    if req.name is not None and not req.name.strip():
+        raise HTTPException(400, "圈子名称不能为空")
+    if req.max_members is not None and req.max_members < 1:
+        raise HTTPException(400, "人数上限至少为 1")
+    updated = await db.update_circle_admin(
+        circle_id,
+        name=req.name,
+        description=req.description,
+        max_members=req.max_members,
+        is_public=req.is_public,
+    )
+    return {"ok": True, "circle": updated}
+
+
+@router.delete("/circles/{circle_id}", dependencies=[Depends(auth_admin)])
+async def admin_delete_circle(circle_id: int):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    await db.delete_circle(circle_id)
+    return {"ok": True}
+
+
+@router.delete("/circles/{circle_id}/members/{member_uid}", dependencies=[Depends(auth_admin)])
+async def admin_kick_circle_member(circle_id: int, member_uid: int):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    if member_uid == circle["owner_id"]:
+        raise HTTPException(400, "不能移除圈主，请先解散圈子或转让圈主")
+    if not await db.is_circle_member(circle_id, member_uid):
+        raise HTTPException(404, "该用户不在圈子中")
+    await db.remove_circle_member(circle_id, member_uid)
+    return {"ok": True}
+
+
 # ── 系统配置 ──────────────────────────────────────────────────────────────────
 
 @router.get("/config", dependencies=[Depends(auth_admin)])
