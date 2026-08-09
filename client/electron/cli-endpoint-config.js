@@ -25,18 +25,28 @@ function readJsonSafe(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
 }
 
-/** 构造 TokenBank 托管用的 env 段（仅两项，挡住其他代理写进来的私有模型名等） */
-function managedEnv(gatewayOrigin) {
-  return {
+/** 构造 TokenBank 托管用的 env 段。
+ * 基础两项挡住其他代理；可选 contextWindow 注入 Claude Code 窗口/压缩阈值，避免默认 200K 误伤大窗口模型。
+ */
+function managedEnv(gatewayOrigin, contextWindow) {
+  const env = {
     ANTHROPIC_AUTH_TOKEN: PROXY_MANAGED_TOKEN,
     ANTHROPIC_BASE_URL: gatewayOrigin || 'http://127.0.0.1:11430',
   };
+  const w = Number(contextWindow);
+  if (Number.isFinite(w) && w > 0) {
+    const { autoCompactWindow } = require('./model-context-window');
+    env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(Math.floor(w));
+    const acw = autoCompactWindow(w);
+    if (acw) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(acw);
+  }
+  return env;
 }
 
 /**
  * 同步单个 Claude Code 实例的 settings.json（OAuth / 兼容端点统一处理）。
  * @param app  应用记录（需 link_method==='shim' + instance.config_dir + hosted + route_id/route_ids）
- * @param opts { expandHome:(p)=>string, gatewayOrigin:string, forceDirect?:boolean }
+ * @param opts { expandHome:(p)=>string, gatewayOrigin:string, forceDirect?:boolean, contextWindow?:number }
  * @returns 'routed' | 'direct' | 'skip'（便于测试与日志）
  */
 function syncCliInstanceEndpointConfig(app, opts = {}) {
@@ -64,9 +74,9 @@ function syncCliInstanceEndpointConfig(app, opts = {}) {
     if (curObj && !curManaged && !fs.existsSync(bak)) {
       try { fs.copyFileSync(file, bak); } catch {}
     }
-    // 保留顶层非 env 键（theme 等）；env 整段换成托管两项
+    // 保留顶层非 env 键（theme 等）；env 整段换成托管项（含可选上下文窗口）
     const next = { ...(orig || curObj || {}) };
-    next.env = managedEnv(opts.gatewayOrigin);
+    next.env = managedEnv(opts.gatewayOrigin, opts.contextWindow);
     delete next.model;   // 顶层写死的 model 去掉，路由交给网关
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8');
@@ -85,6 +95,8 @@ function syncCliInstanceEndpointConfig(app, opts = {}) {
       const env = { ...next.env };
       delete env.ANTHROPIC_BASE_URL;
       delete env.ANTHROPIC_AUTH_TOKEN;
+      delete env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+      delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       if (Object.keys(env).length) next.env = env;
       else delete next.env;
     }

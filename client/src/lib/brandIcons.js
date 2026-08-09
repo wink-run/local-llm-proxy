@@ -36,15 +36,25 @@ import iconFireworks from '../assets/provider-icons/fireworks.png';
 import iconXai from '../assets/provider-icons/xai.png';
 import iconAistudio from '../assets/provider-icons/aistudio.png';
 import iconVolcFavicon from '../assets/provider-icons/volcengine.png';
+// Dify 兼容源 / 厂商官方图标（避免被下方通用规则误匹配）
+import iconOpenaiCompatible from '../assets/provider-icons/openai-compatible.svg';
+import iconAnthropicCompatible from '../assets/provider-icons/anthropic-compatible.svg';
+import iconMinimax from '../assets/provider-icons/minimax.png';
+import iconZhipu from '../assets/provider-icons/zhipu.svg';
+import iconHuggingface from '../assets/provider-icons/huggingface.svg';
 
 // 顺序敏感：更具体的规则在前（claude code 先于 claude；gemini cli 先于 gemini）。
 const RULES = [
   [/claude[\s_-]*code/i, claudecode],
+  // anthropic-compatible 用 Dify Anthropic 插件图标，须先于通用 anthropic/claude
+  [/anthropic[\s_-]*compatible/i, iconAnthropicCompatible],
   [/claude|anthropic/i, claude],
   [/codex/i, codex],
   [/opencode/i, opencode],
   [/openrouter/i, openrouter],
   [/worldrouter|worldclaw/i, worldrouter],
+  // openai-compatible 专用立方体图标，须先于通用 openai 规则
+  [/openai[\s_-]*compatible/i, iconOpenaiCompatible],
   [/openai|gpt|o[34]-|o1-/i, openai],
   [/cursor/i, cursor],
   [/openclaw/i, openclaw],
@@ -52,7 +62,11 @@ const RULES = [
   [/gemini|google|palm/i, gemini],
   [/deepseek/i, deepseek],
   [/kimi|moonshot/i, kimi],
-  [/glm|zhipu|chatglm|智谱/i, glm],
+  [/minimax/i, iconMinimax],
+  // 智谱供给源用 Dify zhipuai 图标；模型名 glm-* 仍走 lobehub
+  [/zhipu|智谱|bigmodel/i, iconZhipu],
+  [/glm|chatglm/i, glm],
+  [/hugging[\s_-]*face|huggingface|\bhf\b/i, iconHuggingface],
   [/qwen|通义|tongyi/i, qwen],
   [/copilot/i, copilot],
   [/antigravity/i, antigravity],
@@ -76,6 +90,13 @@ const PROVIDER_LOCAL_ICONS = {
   gemini: iconAistudio,
   volcengine: iconVolcFavicon,
   'api-volcengine': iconVolcFavicon,
+  'openai-compatible': iconOpenaiCompatible,
+  'anthropic-compatible': iconAnthropicCompatible,
+  minimax: iconMinimax,
+  zhipu: iconZhipu,
+  zhipuai: iconZhipu,
+  huggingface: iconHuggingface,
+  huggingface_hub: iconHuggingface,
 };
 
 /** 依据任意文本（应用名/模型名/供给源名）推断品牌 logo URL，无匹配返回 null。 */
@@ -92,10 +113,11 @@ export function resolveBrandIcon(text = '') {
 export function resolveProviderBrandIcon(opts = {}) {
   const id = String(opts.id || '').trim();
   const hay = `${id} ${opts.name || ''} ${opts.label || ''}`;
+  // catalog id 精确命中优先，避免 openai-compatible 被 openai 规则抢走
+  if (PROVIDER_LOCAL_ICONS[id]) return PROVIDER_LOCAL_ICONS[id];
+
   const local = resolveBrandIcon(hay);
   if (local) return local;
-
-  if (PROVIDER_LOCAL_ICONS[id]) return PROVIDER_LOCAL_ICONS[id];
 
   // 名称模糊匹配本地表（如「即梦」「WorldRouter」）
   for (const [key, url] of Object.entries(PROVIDER_LOCAL_ICONS)) {

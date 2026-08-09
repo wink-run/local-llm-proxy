@@ -214,16 +214,23 @@ function revertCodexProvider(configPath) {
 // model_reasoning_effort 默认 medium —— 模型不声明 medium，Codex Desktop 无法把
 // 该自定义模型渲染出来，模型名就显示为空、回落成「自定义」。另补齐新 schema 增加的
 // tool_mode / apply_patch_tool_type / use_responses_lite 等字段，保持条目可被识别。
-function catalogModel(modelId, priority, vision = false) {
+// context_window 按模型解析（见 model-context-window），禁止全员硬编码 128k。
+// truncation_policy 是工具输出截断预算，与会话窗口无关，保持官方默认 10000。
+const { resolveContextWindow } = require('./model-context-window');
+
+function catalogModel(modelId, priority, vision = false, contextWindow) {
+  const window = (Number.isFinite(contextWindow) && contextWindow > 0)
+    ? Math.floor(contextWindow)
+    : resolveContextWindow(modelId);
   return {
     additional_speed_tiers: [], apply_patch_tool_type: 'freeform', availability_nux: null,
     base_instructions: "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.",
-    comp_hash: '3000', context_window: 128000, default_reasoning_level: 'medium',
+    comp_hash: '3000', context_window: window, default_reasoning_level: 'medium',
     default_reasoning_summary: 'none', default_verbosity: 'low',
     description: modelId, display_name: modelId, effective_context_window_percent: 95,
     experimental_supported_tools: [], include_skills_usage_instructions: false,
     // input_modalities 跟随供给源模型的「图文」标志：图文(vision)→可附图，纯文本→仅文本。
-    input_modalities: vision ? ['text', 'image'] : ['text'], max_context_window: 128000, multi_agent_version: 'v2',
+    input_modalities: vision ? ['text', 'image'] : ['text'], max_context_window: window, multi_agent_version: 'v2',
     priority, service_tiers: [], shell_type: 'shell_command', slug: modelId,
     support_verbosity: false, supported_in_api: true,
     supported_reasoning_levels: [
@@ -243,19 +250,29 @@ function catalogModel(modelId, priority, vision = false) {
 
 /**
  * 生成 <codexHome>/tokenbank-codex-catalog.json。
- * models 每项可为模型名字符串，或 { name, vision } —— vision:true 的模型写
- * input_modalities:['text','image']，否则仅 ['text']。按 name 去重、保序。
+ * models 每项可为模型名字符串，或 { name, vision, contextWindow }。
+ * contextWindow 优先；否则按模型名/供给源元数据解析。按 name 去重、保序。
  */
-function writeCodexCatalog(codexHome, models, fileName = CATALOG_FILE) {
+function writeCodexCatalog(codexHome, models, fileName = CATALOG_FILE, providers = []) {
   const seen = new Set();
   const uniq = [];
   for (const m of Array.isArray(models) ? models : []) {
     const name = typeof m === 'string' ? m : (m && m.name);
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    uniq.push({ name: String(name), vision: typeof m === 'object' ? !!m.vision : false });
+    const vision = typeof m === 'object' ? !!m.vision : false;
+    // 显式 contextWindow > 供给源字段 > 模型名启发式
+    const explicit = typeof m === 'object'
+      ? (Number(m.contextWindow) || Number(m.context_window) || null)
+      : null;
+    const contextWindow = (explicit && explicit > 0)
+      ? Math.floor(explicit)
+      : resolveContextWindow(name, providers);
+    uniq.push({ name: String(name), vision, contextWindow });
   }
-  const doc = { models: uniq.map((m, i) => catalogModel(m.name, 1000 + i, m.vision)) };
+  const doc = {
+    models: uniq.map((m, i) => catalogModel(m.name, 1000 + i, m.vision, m.contextWindow)),
+  };
   const file = path.join(codexHome, fileName);
   fs.writeFileSync(file, JSON.stringify(doc, null, 2), 'utf8');
   return { ok: true, count: uniq.length, file };

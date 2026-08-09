@@ -210,6 +210,27 @@ function stripCodexTbMcpSections(text, prevKeys) {
   return lines.join('\n');
 }
 
+/**
+ * 清掉 tokenbank-mcp 托管块（含残缺开/闭标记）。
+ * 旧逻辑只匹配「成对」标记：一旦缺开或缺闭，残留行清不掉，下次同步会再追加 → 标记刷屏。
+ */
+function stripCodexManagedMcpBlock(text) {
+  let out = String(text || '');
+  // 1) 成对块（允许文件开头无前导换行；非贪心 + 全局，可清多段）
+  out = out.replace(
+    /(?:^|\n)[ \t]*# >>> tokenbank-mcp managed >>>[ \t]*\r?\n[\s\S]*?# <<< tokenbank-mcp managed <<<[ \t]*(?:\r?\n|$)/g,
+    '\n',
+  );
+  // 2) 残留的开/闭标记行（成对匹配失败后的孤儿）
+  out = out.replace(/^[ \t]*# >>> tokenbank-mcp managed >>>[ \t]*\r?\n/gm, '');
+  out = out.replace(/^[ \t]*# <<< tokenbank-mcp managed <<<[ \t]*\r?\n/gm, '');
+  out = out.replace(/^[ \t]*# >>> tokenbank-mcp managed >>>[ \t]*$/gm, '');
+  out = out.replace(/^[ \t]*# <<< tokenbank-mcp managed <<<[ \t]*$/gm, '');
+  // 压缩多余空行
+  out = out.replace(/\n{3,}/g, '\n\n');
+  return out;
+}
+
 function escapeRe(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -260,7 +281,9 @@ function syncCodexClient(clientId, filePath, servers, prevKeys, { allowCreate = 
     fs.writeFileSync(filePath, '# Created by Token Bank for MCP sync\n', 'utf8');
   }
   const original = fs.readFileSync(filePath, 'utf8');
-  let text = stripCodexTbMcpSections(original, prev);
+  // 先清托管标记块（含孤儿开/闭行），再按 prevKeys 删旧 mcp 段，避免标记残留叠加
+  let text = stripCodexManagedMcpBlock(original);
+  text = stripCodexTbMcpSections(text, prev);
 
   const entries = [];
   const synced = [];
@@ -279,10 +302,7 @@ function syncCodexClient(clientId, filePath, servers, prevKeys, { allowCreate = 
     const marker = `\n# >>> ${TB_MCP_MARKER} managed >>>\n`;
     const body = buildCodexMcpSections(entries).join('\n');
     const end = `# <<< ${TB_MCP_MARKER} managed <<<\n`;
-    text = text.replace(/\n# >>> tokenbank-mcp managed >>>[\s\S]*?# <<< tokenbank-mcp managed <<<\n?/g, '\n');
     text = text.trimEnd() + marker + body + end;
-  } else {
-    text = text.replace(/\n# >>> tokenbank-mcp managed >>>[\s\S]*?# <<< tokenbank-mcp managed <<<\n?/g, '\n');
   }
 
   // 内容无实质变化则不写盘
@@ -1110,4 +1130,5 @@ module.exports = {
   serverToEntry,
   syncJsonClient,
   syncCodexClient,
+  stripCodexManagedMcpBlock,
 };

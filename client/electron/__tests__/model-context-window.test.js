@@ -1,0 +1,50 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const {
+  parseContextWindowSuffix,
+  resolveContextWindow,
+  resolveMaxContextWindow,
+  autoCompactWindow,
+  FALLBACK_CONTEXT_WINDOW,
+} = require('../model-context-window');
+
+test('后缀解析：[1m]/[200k]/纯数字', () => {
+  assert.deepEqual(parseContextWindowSuffix('deepseek-v4-pro[1m]'), {
+    slug: 'deepseek-v4-pro', window: 1000000,
+  });
+  assert.deepEqual(parseContextWindowSuffix('glm-5.2[200k]'), {
+    slug: 'glm-5.2', window: 200000,
+  });
+  assert.deepEqual(parseContextWindowSuffix('m[1048576]'), {
+    slug: 'm', window: 1048576,
+  });
+  assert.equal(parseContextWindowSuffix('plain').window, null);
+});
+
+test('按模型名族解析，对齐 cc-switch Codex 预设', () => {
+  assert.equal(resolveContextWindow('deepseek-v4-flash'), 1048576);
+  assert.equal(resolveContextWindow('glm-5.2'), 200000);
+  assert.equal(resolveContextWindow('kimi-k2.5'), 262144);
+  assert.equal(resolveContextWindow('kimi-k3'), 1048576);
+  assert.equal(resolveContextWindow('gpt-5.6-sol'), 272000);
+  assert.equal(resolveContextWindow('claude-sonnet-4-5'), 200000);
+  assert.equal(resolveContextWindow('MiniMax-M3'), 1000000);
+  assert.equal(resolveContextWindow('MiniMaxAI/MiniMax-M2.7'), 200000);
+  assert.equal(resolveContextWindow('mimo-v2.5-pro'), 1048576);
+  assert.equal(resolveContextWindow('grok-4.5'), 500000);
+  assert.equal(resolveContextWindow('LongCat-2.0'), 1048576);
+  assert.equal(resolveContextWindow('qwen3-coder-plus'), 1048576);
+  assert.equal(resolveContextWindow('totally-unknown-xyz'), FALLBACK_CONTEXT_WINDOW);
+});
+
+test('供给源显式 context_window 优先于启发式', () => {
+  const providers = [{ models: [{ name: 'custom-x', context_window: 64000 }] }];
+  assert.equal(resolveContextWindow('custom-x', providers), 64000);
+  assert.equal(resolveContextWindow({ name: 'a', contextWindow: 32000 }), 32000);
+});
+
+test('多模型取最大窗口；autoCompact=80%', () => {
+  assert.equal(resolveMaxContextWindow(['glm-5.2', 'deepseek-v4-pro']), 1048576);
+  assert.equal(autoCompactWindow(262144), Math.floor(262144 * 0.8));
+});

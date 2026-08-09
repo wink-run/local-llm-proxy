@@ -246,12 +246,20 @@ function revertAppConfigFile(app_id, config_file) {
 
 // Claude Code CLI 的 settings.json 托管（核心逻辑见 ./cli-endpoint-config）。
 // settings.json 的 env 压过 shim → 选路由时写入 PROXY_MANAGED + 网关 BASE_URL，占住配置防其他代理改写。
+// 同时按绑定路由模型解析上下文窗口，注入 CLAUDE_CODE_MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW。
 function syncCliInstanceEndpointConfig(app, opts = {}) {
   try {
     const cl = require('./config-loader');
+    const { getRouteModels } = require('./app-handlers');
+    const { resolveMaxContextWindow } = require('./model-context-window');
+    const routes = (readLocalConfig().scene_routes || []);
+    const providers = (readAgentConfig() || {}).providers || [];
+    const models = getRouteModels(app, routes);
+    const contextWindow = resolveMaxContextWindow(models, providers);
     return require('./cli-endpoint-config').syncCliInstanceEndpointConfig(app, {
       expandHome: (p) => cl.expandHome(p),
       gatewayOrigin: `http://${cl.gatewayCtx().reverse}`,
+      ...(contextWindow ? { contextWindow } : {}),
       ...opts,
     });
   } catch (e) { console.warn('[cli-instance] endpoint settings sync error:', e && e.message); }
@@ -2244,10 +2252,17 @@ const ENV_PROVIDER_MAP = {
   NVIDIA_NIM_API_KEY: 'nvidia',
   COHERE_API_KEY: 'cohere',
   SILICONFLOW_API_KEY: 'siliconflow',
+  MINIMAX_API_KEY: 'minimax',
+  ZHIPU_API_KEY: 'zhipu',
+  ZHIPUAI_API_KEY: 'zhipu',
+  BIGMODEL_API_KEY: 'zhipu',
+  HUGGINGFACE_API_KEY: 'huggingface',
+  HUGGINGFACE_HUB_TOKEN: 'huggingface',
+  HF_TOKEN: 'huggingface',
 };
 
 // cc-switch 等结构未知的 JSON，靠值的形态判断是否是 key
-const KEY_PREFIX_RE = /^(sk-|gsk_|csk-|nvapi-|xai-|fw_|tgp_v1_|ghp_|github_pat_)/;
+const KEY_PREFIX_RE = /^(sk-|gsk_|csk-|nvapi-|xai-|fw_|tgp_v1_|ghp_|github_pat_|hf_)/;
 function looksLikeKey(name, value) {
   if (typeof value !== 'string') return false;
   const v = value.trim();
@@ -2603,6 +2618,7 @@ function registerIPC() {
   // AUTH_TOKEN 写 PROXY_MANAGED 占位：占住 settings.env（优先级高于其他代理/shim），不暴露真实 key
   ipcMain.handle('claude:configure', async (_e, { baseUrl, models = [] }) => {
     const { PROXY_MANAGED_TOKEN } = require('./cli-endpoint-config');
+    const { resolveMaxContextWindow, autoCompactWindow } = require('./model-context-window');
     const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
     let settings = {};
     try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
@@ -2622,6 +2638,14 @@ function registerIPC() {
       settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL    = heavy;
       // Also write MODELS so other tools can discover them
       settings.env.MODELS = models.join(',');
+      // 按绑定模型解析窗口，避免 Claude Code 对未知模型默认 200K 导致过早/过晚压缩
+      const providers = (readAgentConfig() || {}).providers || [];
+      const win = resolveMaxContextWindow(models, providers);
+      if (win) {
+        settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(win);
+        const acw = autoCompactWindow(win);
+        if (acw) settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(acw);
+      }
     }
 
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
@@ -4719,7 +4743,7 @@ function registerIPC() {
         // 供给源模型存于 agent config（与网关同源），不在 userData/local-config.json。
         const providersCfg = (readAgentConfig() || {}).providers || [];
         const catalogModels = models.map(name => ({ name, vision: modelVision(name, providersCfg) }));
-        codexCfg.writeCodexCatalog(codexHome, catalogModels);
+        codexCfg.writeCodexCatalog(codexHome, catalogModels, codexCfg.CATALOG_FILE, providersCfg);
         const applied = codexCfg.applyCodexProvider(file, {
           providerId: 'tokenbank', name: 'Tokenbank',
           baseUrl, model, bearerToken: appRec?.api_key || '', catalogFile: codexCfg.CATALOG_FILE,

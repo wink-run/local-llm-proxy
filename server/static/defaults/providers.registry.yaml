@@ -314,6 +314,103 @@ providers:
   - sk-ant-
   signup_url: ''
   payg: true
+- id: minimax
+  label: MiniMax
+  icon: 🟦
+  tier: paid
+  hint: 官方付费：platform.minimaxi.com
+  base_url: https://api.minimaxi.com/v1
+  modalities:
+    language: true
+  models:
+  - name: minimax-m3
+    type: chat
+  - name: minimax-m2.7
+    type: chat
+  - name: minimax-m2.5
+    type: chat
+  pricing:
+    minimax-m3:
+      in: 0.3
+      out: 1.2
+    minimax-m2.7:
+      in: 0.3
+      out: 1.2
+      cacheRead: 0.06
+      cacheWrite: 0.38
+    minimax-m2.5:
+      in: 0.3
+      out: 1.2
+      cacheRead: 0.03
+      cacheWrite: 0.38
+  handler: openai
+  api_format: openai
+  enabled_default: false
+  keyless: false
+  key_prefix: []
+  signup_url: https://platform.minimaxi.com/user-center/basic-information/interface-key
+  payg: true
+- id: zhipu
+  label: ZhiPu AI
+  icon: 🟣
+  tier: paid
+  hint: 官方付费：open.bigmodel.cn
+  base_url: https://open.bigmodel.cn/api/paas/v4
+  modalities:
+    language: true
+  models:
+  - name: glm-5.1
+    type: chat
+  - name: glm-5
+    type: chat
+  - name: glm-4.7
+    type: chat
+  - name: glm-4.6
+    type: chat
+  pricing:
+    glm-5.1:
+      in: 0.8
+      out: 3.2
+    glm-5:
+      in: 1.0
+      out: 3.2
+    glm-4.7:
+      in: 0.45
+      out: 1.8
+    glm-4.6:
+      in: 0.45
+      out: 1.8
+  handler: openai
+  api_format: openai
+  enabled_default: false
+  keyless: false
+  key_prefix: []
+  signup_url: https://bigmodel.cn/console/overview
+  aliases:
+  - zhipuai
+  - bigmodel
+  payg: true
+- id: huggingface
+  label: Hugging Face
+  icon: 🤗
+  tier: free
+  hint: OpenAI 兼容路由：router.huggingface.co
+  base_url: https://router.huggingface.co/v1
+  modalities:
+    language: true
+  models: []
+  pricing: {}
+  handler: openai
+  api_format: openai
+  enabled_default: false
+  keyless: false
+  key_prefix:
+  - hf_
+  signup_url: https://huggingface.co/settings/tokens
+  aliases:
+  - huggingface_hub
+  - hf
+  payg: true
 - id: openai
   label: Codex
   icon: ⚡
@@ -480,7 +577,7 @@ providers:
   aliases:
   - claude-cli
 - id: volcengine
-  label: 火山引擎
+  label: Volcengine AI
   icon: 🌋
   tier: paid
   hint: ''
@@ -868,7 +965,7 @@ billing_sources:
   sort_order: 7
   category: api_sub
   source_id: api-volcengine
-  label: 火山引擎
+  label: Volcengine AI
   icon: 🌋
   tier: paid
   base_url: ''
@@ -1649,3 +1746,131 @@ billing_sources:
   agent_id: ''
   plan_provider_id: null
   subscription_to_api: false
+- id: minimax
+  sort_order: 19
+  category: payg
+  source_id: minimax
+  label: MiniMax
+  icon: 🟦
+  tier: paid
+  base_url: https://api.minimaxi.com/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 官方付费：platform.minimaxi.com
+  keyless: false
+  key_prefix: []
+  signup_url: https://platform.minimaxi.com/user-center/basic-information/interface-key
+  aliases: []
+  enabled_default: false
+  models:
+  - id: minimax-m3
+    modality: chat
+    pricing:
+      in: 0.3
+      out: 1.2
+  - id: minimax-m2.7
+    modality: chat
+    pricing:
+      in: 0.3
+      out: 1.2
+      cacheRead: 0.06
+      cacheWrite: 0.38
+  - id: minimax-m2.5
+    modality: chat
+    pricing:
+      in: 0.3
+      out: 1.2
+      cacheRead: 0.03
+      cacheWrite: 0.38
+  pricing:
+    minimax-m3:
+      in: 0.3
+      out: 1.2
+    minimax-m2.7:
+      in: 0.3
+      out: 1.2
+      cacheRead: 0.06
+      cacheWrite: 0.38
+    minimax-m2.5:
+      in: 0.3
+      out: 1.2
+      cacheRead: 0.03
+      cacheWrite: 0.38
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: zhipu
+  sort_order: 20
+  category: payg
+  source_id: zhipu
+  label: ZhiPu AI
+  icon: 🟣
+  tier: paid
+  base_url: https://open.bigmodel.cn/api/paas/v4
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 官方付费：open.bigmodel.cn
+  keyless: false
+  key_prefix: []
+  signup_url: https://bigmodel.cn/console/overview
+  aliases:
+  - zhipuai
+  - bigmodel
+  enabled_default: false
+  models:
+  - id: glm-5.1
+    modality: chat
+    pricing:
+      in: 0.8
+      out: 3.2
+  - id: glm-5
+    modality: chat
+    pricing:
+      in: 1.0
+      out: 3.2
+  - id: glm-4.7
+    modality: chat
+    pricing:
+      in: 0.45
+      out: 1.8
+  - id: glm-4.6
+    modality: chat
+    pricing:
+      in: 0.45
+      out: 1.8
+  pricing:
+    glm-5.1:
+      in: 0.8
+      out: 3.2
+    glm-5:
+      in: 1.0
+      out: 3.2
+    glm-4.7:
+      in: 0.45
+      out: 1.8
+    glm-4.6:
+      in: 0.45
+      out: 1.8
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: huggingface
+  sort_order: 21
+  category: payg
+  source_id: huggingface
+  label: Hugging Face
+  icon: 🤗
+  tier: free
+  base_url: https://router.huggingface.co/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: OpenAI 兼容路由：router.huggingface.co
+  keyless: false
+  key_prefix:
+  - hf_
+  signup_url: https://bigmodel.cn/console/overview

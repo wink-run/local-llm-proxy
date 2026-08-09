@@ -59,12 +59,14 @@ const PRICING = {
   'moonshot-v1-8k':    { in: 0.20,  out: 2.00,   cacheRead: null,  cacheWrite: null  },
   // GLM / Zhipu
   'glm-5.1':           { in: 0.80,  out: 3.20,   cacheRead: null,  cacheWrite: null  },
+  'glm-4.7':           { in: 0.45,  out: 1.80,   cacheRead: null,  cacheWrite: null  },
   'glm-4.6':           { in: 0.45,  out: 1.80,   cacheRead: null,  cacheWrite: null  },
   'glm-5':             { in: 1.00,  out: 3.20,   cacheRead: null,  cacheWrite: null  },
   // Qwen
   'qwen3-max':         { in: 1.20,  out: 6.00,   cacheRead: null,  cacheWrite: null  },
   'qwen3':             { in: 0.40,  out: 1.60,   cacheRead: null,  cacheWrite: null  },
   // MiniMax
+  'minimax-m3':        { in: 0.30,  out: 1.20,   cacheRead: null,  cacheWrite: null  },
   'minimax-m2.7':      { in: 0.30,  out: 1.20,   cacheRead: 0.06,  cacheWrite: 0.38 },
   'minimax-m2.5':      { in: 0.30,  out: 1.20,   cacheRead: 0.03,  cacheWrite: 0.38 },
   // Mimo

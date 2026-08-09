@@ -20,9 +20,13 @@ const ICONS_DIR = path.join(
 // 更具体的规则在前
 const RULES = [
   [/claude[\s_-]*code/i, 'claudecode-color.svg'],
+  // anthropic-compatible 用 Dify Anthropic 插件图标，须先于通用 anthropic/claude
+  [/anthropic[\s_-]*compatible/i, 'anthropic-compatible.svg'],
   [/claude|anthropic/i, 'claude-color.svg'],
   [/codex/i, 'codex-color.svg'],
   [/opencode/i, 'opencode.svg'],
+  // openai-compatible 专用立方体，须先于通用 openai
+  [/openai[\s_-]*compatible/i, 'openai-compatible.svg'],
   [/openai|gpt|o[34]-|o1-/i, 'openai.svg'],
   [/cursor/i, 'cursor.svg'],
   [/openclaw/i, 'openclaw-color.svg'],
@@ -31,7 +35,10 @@ const RULES = [
   [/deepseek/i, 'deepseek-color.svg'],
   // Kimi → brand-assets/kimi-avatar.svg（见 resolveFile 特殊处理）
   [/kimi|moonshot/i, 'kimi-avatar.svg'],
-  [/glm|zhipu|chatglm|智谱/i, 'glmv-color.svg'],
+  [/minimax/i, 'minimax.png'],
+  [/zhipu|智谱|bigmodel/i, 'zhipu.svg'],
+  [/glm|chatglm/i, 'glmv-color.svg'],
+  [/hugging[\s_-]*face|huggingface|\bhf\b/i, 'huggingface.svg'],
   [/qwen|通义|tongyi/i, 'qwen-color.svg'],
   [/copilot/i, 'copilot-color.svg'],
   [/antigravity/i, 'antigravity-color.svg'],

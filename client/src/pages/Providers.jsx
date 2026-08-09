@@ -2552,12 +2552,13 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPers
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
-    const key = (tokenFocusedRef.current ? tokenDraft : provider.token) || '';
+    // 优先用输入框草稿；点「测试」时先落盘，避免失焦竞态读到空的 provider.token
+    const key = (tokenDraft || provider.token || '').trim();
     if (!key && provider.auth_type !== 'oauth') {
       setTestMsg(t('providers.test.needToken'));
       return;
     }
-    if (tokenFocusedRef.current) commitTokenDraft();
+    commitTokenDraft();
     setTesting(true);
     if (testClearTimer.current) clearTimeout(testClearTimer.current);
     setTestMsg('');
@@ -2935,12 +2936,13 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPers
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
-    const key = (tokenFocusedRef.current ? tokenDraft : provider.token) || '';
+    // 优先用输入框草稿；点「测试」时先落盘，避免失焦竞态读到空的 provider.token
+    const key = (tokenDraft || provider.token || '').trim();
     if (!key && provider.auth_type !== 'oauth') {
       setTestMsg(t('providers.test.needToken'));
       return;
     }
-    if (tokenFocusedRef.current) commitTokenDraft();
+    commitTokenDraft();
     setTesting(true);
     if (testClearTimer.current) clearTimeout(testClearTimer.current);
     setTestMsg('');
