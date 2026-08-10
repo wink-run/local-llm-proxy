@@ -4,13 +4,18 @@
 const crypto = require('crypto');
 
 const DEFAULT_ASSIST_PROMPT =
-  '用简洁中文描述每张图中与用户问题相关的内容。多图时严格按下列格式逐条输出，不要前后缀：\n'
-  + '[图片1]：...\n[图片2]：...\n不要猜测图中未见的信息。';
+  '你是视觉助手：为下游纯文本模型提炼「与用户问题相关」的图像信息。\n'
+  + '要求：\n'
+  + '1. 紧扣用户问题选取图中要点，禁止无目的的看图说话或流水账罗列无关细节。\n'
+  + '2. 用户问什么就优先写什么；问题未涉及的内容可省略。若问题含糊，再给一句场景总览。\n'
+  + '3. 用简洁中文；多图时严格按下列格式逐条输出，不要前后缀：\n'
+  + '[图片1]：...\n[图片2]：...\n'
+  + '4. 不要猜测图中未见的信息；看不清就写「看不清」。';
 
 const DEFAULT_ASSIST_MAX_TOKENS = 1024;
 
 /** 图片指纹 → 描述缓存（避免历史消息里同一张图被反复识图） */
-const _DESC_CACHE = new Map(); // fp -> desc
+const _DESC_CACHE = new Map(); // key -> desc
 const _DESC_CACHE_MAX = 200;
 
 function cacheGet(fp) {
@@ -33,6 +38,15 @@ function cacheSet(fp, desc) {
 
 function cacheClear() { _DESC_CACHE.clear(); }
 
+/** 缓存键：有用户问题时按「图+问题」区分，避免同图不同问复用无关描述 */
+function cacheKey(fp, userQuestion = '') {
+  if (!fp) return '';
+  const q = String(userQuestion || '').trim().slice(0, 400);
+  if (!q) return fp;
+  const qh = crypto.createHash('sha256').update(q).digest('hex').slice(0, 12);
+  return `${fp}:${qh}`;
+}
+
 /** 图片内容指纹（同图跨轮复用描述） */
 function imageFingerprint(img) {
   if (!img) return '';
@@ -52,10 +66,10 @@ function cloneBody(body) {
   try { return JSON.parse(JSON.stringify(body)); } catch { return body; }
 }
 
-/** content 是否含 OpenAI image_url 或 Anthropic image */
+/** content 是否含 OpenAI image_url / Anthropic image / Responses input_image */
 function contentHasImage(content) {
   if (!Array.isArray(content)) return false;
-  return content.some((p) => p && (p.type === 'image_url' || p.type === 'image'));
+  return content.some((p) => p && (p.type === 'image_url' || p.type === 'image' || p.type === 'input_image'));
 }
 
 /** 请求体是否含图片（messages / input） */
@@ -85,6 +99,10 @@ function collectImagesFromContent(content) {
     if (!p || typeof p !== 'object') continue;
     if (p.type === 'image_url') {
       const url = p.image_url?.url || (typeof p.image_url === 'string' ? p.image_url : '');
+      if (url) out.push({ kind: 'oai', url });
+    } else if (p.type === 'input_image') {
+      // Codex Responses：content 内嵌 input_image（image_url 可为 string 或 {url}）
+      const url = typeof p.image_url === 'string' ? p.image_url : (p.image_url?.url || '');
       if (url) out.push({ kind: 'oai', url });
     } else if (p.type === 'image' && p.source) {
       out.push({ kind: 'anth', source: p.source });
@@ -157,15 +175,20 @@ function collectImagesWithMeta(body) {
 
 /**
  * 规划每张图的描述来源：cache | api（仅最新 user 未缓存）| history（历史未缓存占位）。
+ * 最新 user 的缓存按「图+问题」命中；历史图按纯图指纹复用。
  * @returns {{ descs: (string|null)[], needApiIdx: number[], cacheHits: number, historySkip: number }}
  */
-function planImageDescriptions(items) {
+function planImageDescriptions(items, userQuestion = '') {
   const descs = [];
   const needApiIdx = [];
   let cacheHits = 0;
   let historySkip = 0;
   for (let i = 0; i < items.length; i++) {
-    const hit = cacheGet(items[i].fp);
+    const fp = items[i].fp;
+    // 最新一轮：必须匹配当前问题；历史：用纯图指纹（上次识图结果）
+    const hit = items[i].inLastUser
+      ? cacheGet(cacheKey(fp, userQuestion))
+      : cacheGet(fp);
     if (hit) {
       descs[i] = hit;
       cacheHits += 1;
@@ -178,6 +201,52 @@ function planImageDescriptions(items) {
     }
   }
   return { descs, needApiIdx, cacheHits, historySkip };
+}
+
+/** 从 content 抽纯文本（含 Responses input_text） */
+function textFromContent(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((p) => {
+    if (typeof p === 'string') return p;
+    if (!p || typeof p !== 'object') return '';
+    if (typeof p.text === 'string') return p.text;
+    return '';
+  }).filter(Boolean).join('\n');
+}
+
+/** 提取最后一条用户消息的文字（作为识图参考问题） */
+function extractUserQuestion(body) {
+  if (!body || typeof body !== 'object') return '';
+  if (Array.isArray(body.messages)) {
+    for (let i = body.messages.length - 1; i >= 0; i--) {
+      const m = body.messages[i];
+      if (m && m.role === 'user') return textFromContent(m.content).trim();
+    }
+  }
+  if (Array.isArray(body.input)) {
+    for (let i = body.input.length - 1; i >= 0; i--) {
+      const m = body.input[i];
+      if (typeof m === 'string') return m.trim();
+      if (m && typeof m === 'object' && (m.role === 'user' || !m.role)) {
+        const t = textFromContent(m.content).trim();
+        if (t) return t;
+      }
+    }
+  }
+  if (typeof body.prompt === 'string') return body.prompt.trim();
+  if (typeof body.input === 'string') return body.input.trim();
+  return '';
+}
+
+/**
+ * 组装识图助手提示：默认/自定义 prompt + 用户问题（有则附加）。
+ */
+function buildAssistPrompt(basePrompt, userQuestion) {
+  const base = (basePrompt && String(basePrompt).trim()) || DEFAULT_ASSIST_PROMPT;
+  const q = String(userQuestion || '').trim().slice(0, 1500);
+  if (!q) return base;
+  return `${base}\n\n【用户问题】\n${q}\n\n请对照上述问题，只描述图片中对回答该问题有用的信息。`;
 }
 
 /**
@@ -216,14 +285,15 @@ function replaceImagesInContent(content, descriptions, state) {
   if (!Array.isArray(content)) return content;
   const next = [];
   for (const p of content) {
-    if (p && (p.type === 'image_url' || p.type === 'image')) {
+    if (p && (p.type === 'image_url' || p.type === 'image' || p.type === 'input_image')) {
       const n = state.i + 1;
       const desc = descriptions[state.i];
       state.i += 1;
       const text = (desc && String(desc).trim())
         ? `【图片${n}的文字描述】\n${String(desc).trim()}`
         : `【图片${n}】（视觉助手未给出描述）`;
-      next.push({ type: 'text', text });
+      // Responses 用 input_text；Chat / Anthropic 用 text
+      next.push({ type: p.type === 'input_image' ? 'input_text' : 'text', text });
     } else {
       next.push(p);
     }
@@ -267,7 +337,9 @@ function prependVisionAssistNotice(body, imageCount) {
   const injectIntoContent = (content) => {
     if (typeof content === 'string') return notice + content;
     if (!Array.isArray(content)) return [{ type: 'text', text: notice }];
-    return [{ type: 'text', text: notice }, ...content];
+    // Responses content 用 input_text；Chat 用 text
+    const useInput = content.some((p) => p && (p.type === 'input_text' || p.type === 'input_image'));
+    return [{ type: useInput ? 'input_text' : 'text', text: notice }, ...content];
   };
   if (Array.isArray(body.messages) && body.messages.length) {
     for (let i = body.messages.length - 1; i >= 0; i--) {
@@ -279,6 +351,14 @@ function prependVisionAssistNotice(body, imageCount) {
     }
   }
   if (Array.isArray(body.input) && body.input.length) {
+    // 优先注入最后一条 user message 的 content；否则在头部插说明
+    for (let i = body.input.length - 1; i >= 0; i--) {
+      const m = body.input[i];
+      if (m && typeof m === 'object' && m.role === 'user' && m.content != null) {
+        m.content = injectIntoContent(m.content);
+        return body;
+      }
+    }
     body.input = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: notice }] }, ...body.input];
   }
   return body;
@@ -290,8 +370,8 @@ function stripImagesInBody(body) {
   return replaceImagesInBody(cloneBody(body), descs);
 }
 
-function buildAssistUserContent(images, prompt, format) {
-  const text = prompt || DEFAULT_ASSIST_PROMPT;
+function buildAssistUserContent(images, prompt, format, userQuestion) {
+  const text = buildAssistPrompt(prompt, userQuestion);
   if (format === 'anthropic') {
     const blocks = [{ type: 'text', text }];
     for (const img of images) {
@@ -362,6 +442,9 @@ module.exports = {
   cacheGet,
   cacheSet,
   cacheClear,
+  cacheKey,
+  extractUserQuestion,
+  buildAssistPrompt,
   anthSourceToUrl,
   parseAssistDescriptions,
   replaceImagesInContent,

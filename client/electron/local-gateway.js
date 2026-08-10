@@ -2754,7 +2754,9 @@ async function applyVisionAssistIfNeeded(step, body, { callerKey, reqPath, skipP
   const items = visionAssist.collectImagesWithMeta(body);
   if (!items.length) return { body, meta: null };
 
-  const planned = visionAssist.planImageDescriptions(items);
+  // 带上用户问题，避免识图助手无的放矢「看图说话」
+  const userQuestion = visionAssist.extractUserQuestion(body);
+  const planned = visionAssist.planImageDescriptions(items, userQuestion);
   const descs = planned.descs.slice();
   const needApiIdx = planned.needApiIdx;
 
@@ -2801,7 +2803,7 @@ async function applyVisionAssistIfNeeded(step, body, { callerKey, reqPath, skipP
   for (const provider of providers) {
     lastProvider = provider;
     const fmt = providerApiFormat(provider) === 'anthropic' ? 'anthropic' : 'openai';
-    const userContent = visionAssist.buildAssistUserContent(apiImgs, prompt, fmt);
+    const userContent = visionAssist.buildAssistUserContent(apiImgs, prompt, fmt, userQuestion);
     try {
       const result = await internalComplete(provider, assistModel, userContent, maxTokens, { timeoutMs: 60000 });
       const text = result && result.text;
@@ -2812,7 +2814,12 @@ async function applyVisionAssistIfNeeded(step, body, { callerKey, reqPath, skipP
       }
       needApiIdx.forEach((itemIdx, j) => {
         descs[itemIdx] = parsed[j];
-        if (parsed[j]) visionAssist.cacheSet(items[itemIdx].fp, parsed[j]);
+        if (parsed[j]) {
+          const fp = items[itemIdx].fp;
+          // 问题相关键 + 纯图键：后者供下一轮历史复用
+          visionAssist.cacheSet(visionAssist.cacheKey(fp, userQuestion), parsed[j]);
+          visionAssist.cacheSet(fp, parsed[j]);
+        }
       });
       const next = visionAssist.replaceImagesInBody(visionAssist.cloneBody(body), descs);
       visionAssist.prependVisionAssistNotice(next, items.length);

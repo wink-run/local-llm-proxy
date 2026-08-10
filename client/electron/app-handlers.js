@@ -270,7 +270,7 @@ function getRouteModels(app, routes = []) {
 }
 
 /**
- * Codex model_catalog 条目：name + vision。
+ * Codex model_catalog 条目：name（wire id）+ label（展示名）+ vision。
  * 配备识图增强的场景路由一律 vision=true，写入 input_modalities 含 image。
  */
 function getRouteCatalogModels(app, routes = [], providers = []) {
@@ -283,11 +283,15 @@ function getRouteCatalogModels(app, routes = [], providers = []) {
     const name = routeModelId(rid, routes);
     if (!name) continue;
     const vision = routeSupportsImages(rid, routes, providers);
+    // 场景用 scene_name（如「速度优先」）；直连模型仍用模型 id
+    const label = routeLabelFor(rid, routes) || name;
     if (byName.has(name)) {
-      if (vision) byName.get(name).vision = true; // 同名多绑：任一可附图即声明
+      const prev = byName.get(name);
+      if (vision) prev.vision = true;
+      if (label && !prev.label) prev.label = label;
       continue;
     }
-    const entry = { name, vision };
+    const entry = { name, label, vision };
     byName.set(name, entry);
     out.push(entry);
   }

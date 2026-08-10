@@ -218,16 +218,18 @@ function revertCodexProvider(configPath) {
 // truncation_policy 是工具输出截断预算，与会话窗口无关，保持官方默认 10000。
 const { resolveContextWindow } = require('./model-context-window');
 
-function catalogModel(modelId, priority, vision = false, contextWindow) {
+function catalogModel(modelId, priority, vision = false, contextWindow, label) {
   const window = (Number.isFinite(contextWindow) && contextWindow > 0)
     ? Math.floor(contextWindow)
     : resolveContextWindow(modelId);
+  // description / display_name 用路由展示名；slug 仍为 wire model（model_key）
+  const shown = (label && String(label).trim()) || modelId;
   return {
     additional_speed_tiers: [], apply_patch_tool_type: 'freeform', availability_nux: null,
     base_instructions: "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.",
     comp_hash: '3000', context_window: window, default_reasoning_level: 'medium',
     default_reasoning_summary: 'none', default_verbosity: 'low',
-    description: modelId, display_name: modelId, effective_context_window_percent: 95,
+    description: shown, display_name: shown, effective_context_window_percent: 95,
     experimental_supported_tools: [], include_skills_usage_instructions: false,
     // input_modalities：供给源图文，或场景配备识图增强时由调用方传 vision=true → 可附图。
     input_modalities: vision ? ['text', 'image'] : ['text'], max_context_window: window, multi_agent_version: 'v2',
@@ -250,7 +252,7 @@ function catalogModel(modelId, priority, vision = false, contextWindow) {
 
 /**
  * 生成 <codexHome>/tokenbank-codex-catalog.json。
- * models 每项可为模型名字符串，或 { name, vision, contextWindow }。
+ * models 每项可为模型名字符串，或 { name, label, vision, contextWindow }。
  * contextWindow 优先；否则按模型名/供给源元数据解析。按 name 去重、保序。
  */
 function writeCodexCatalog(codexHome, models, fileName = CATALOG_FILE, providers = []) {
@@ -261,6 +263,7 @@ function writeCodexCatalog(codexHome, models, fileName = CATALOG_FILE, providers
     if (!name || seen.has(name)) continue;
     seen.add(name);
     const vision = typeof m === 'object' ? !!m.vision : false;
+    const label = typeof m === 'object' ? (m.label || m.display_name || m.description || '') : '';
     // 显式 contextWindow > 供给源字段 > 模型名启发式
     const explicit = typeof m === 'object'
       ? (Number(m.contextWindow) || Number(m.context_window) || null)
@@ -268,10 +271,10 @@ function writeCodexCatalog(codexHome, models, fileName = CATALOG_FILE, providers
     const contextWindow = (explicit && explicit > 0)
       ? Math.floor(explicit)
       : resolveContextWindow(name, providers);
-    uniq.push({ name: String(name), vision, contextWindow });
+    uniq.push({ name: String(name), label: String(label || ''), vision, contextWindow });
   }
   const doc = {
-    models: uniq.map((m, i) => catalogModel(m.name, 1000 + i, m.vision, m.contextWindow)),
+    models: uniq.map((m, i) => catalogModel(m.name, 1000 + i, m.vision, m.contextWindow, m.label)),
   };
   const file = path.join(codexHome, fileName);
   fs.writeFileSync(file, JSON.stringify(doc, null, 2), 'utf8');

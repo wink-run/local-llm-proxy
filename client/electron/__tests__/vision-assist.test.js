@@ -110,6 +110,38 @@ test('buildAssistUserContent：OpenAI 与 Anthropic 均可带图', () => {
   assert.equal(anth[1].source.type, 'base64');
 });
 
+test('buildAssistPrompt：附带用户问题，避免无的放矢看图说话', () => {
+  const { buildAssistPrompt, DEFAULT_ASSIST_PROMPT, buildAssistUserContent } = require('../vision-assist');
+  const withQ = buildAssistPrompt(DEFAULT_ASSIST_PROMPT, '图里天气适合做什么菜？');
+  assert.match(withQ, /用户问题/);
+  assert.match(withQ, /天气适合做什么菜/);
+  assert.match(withQ, /紧扣用户问题|对照上述问题/);
+  const parts = buildAssistUserContent([{ kind: 'oai', url: TINY_PNG }], null, 'openai', '这是什么动物？');
+  assert.match(parts[0].text, /这是什么动物/);
+});
+
+test('planImageDescriptions：同图不同问题不命中旧缓存', () => {
+  const {
+    collectImagesWithMeta,
+    planImageDescriptions,
+    cacheSet,
+    cacheClear,
+    cacheKey,
+    imageFingerprint,
+  } = require('../vision-assist');
+  cacheClear();
+  const url = 'data:image/png;base64,weather';
+  const img = { kind: 'oai', url };
+  const fp = imageFingerprint(img);
+  cacheSet(cacheKey(fp, '天气如何？'), '雷阵雨 33℃');
+  const body = {
+    messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url } }, { type: 'text', text: '适合穿什么？' }] }],
+  };
+  const plan = planImageDescriptions(collectImagesWithMeta(body), '适合穿什么？');
+  assert.deepEqual(plan.needApiIdx, [0]); // 问题不同 → 需重新识图
+  cacheClear();
+});
+
 test('extractAssistResponseText：兼容火山 kimi 的 reasoning_content', () => {
   const { extractAssistResponseText } = require('../vision-assist');
   assert.equal(extractAssistResponseText({
@@ -204,4 +236,37 @@ test('planImageDescriptions：同图再次出现在最新 user 时命中缓存�
   assert.equal(plan.cacheHits, 1);
   assert.equal(plan.descs[0], '已识别过的猫');
   cacheClear();
+});
+
+test('Responses input_image：嵌在 message.content 内也能检出并替换', () => {
+  const {
+    bodyHasImages,
+    collectImagesWithMeta,
+    replaceImagesInBody,
+    cloneBody,
+  } = require('../vision-assist');
+  const body = {
+    input: [{
+      type: 'message',
+      role: 'user',
+      content: [
+        { type: 'input_text', text: '看图' },
+        { type: 'input_image', image_url: 'data:image/png;base64,abc' },
+      ],
+    }],
+  };
+  assert.equal(bodyHasImages(body), true);
+  const items = collectImagesWithMeta(body);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].inLastUser, true);
+  assert.equal(items[0].img.url, 'data:image/png;base64,abc');
+
+  const out = replaceImagesInBody(cloneBody(body), ['一只猫']);
+  assert.equal(bodyHasImages(out), false);
+  const parts = out.input[0].content;
+  assert.equal(parts.length, 2);
+  assert.equal(parts[0].type, 'input_text');
+  assert.equal(parts[1].type, 'input_text');
+  assert.match(parts[1].text, /图片1的文字描述/);
+  assert.match(parts[1].text, /一只猫/);
 });
