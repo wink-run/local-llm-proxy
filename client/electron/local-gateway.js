@@ -3697,7 +3697,7 @@ function handleRequest(req, res) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-function start(port, getConfig, saveConfig, bindHost = '127.0.0.1') {
+function start(port, getConfig, saveConfig, bindHost = '127.0.0.1', onListenError) {
   if (_server) return;
   // 日志管道断开（stdout/stderr 被下游关闭，如 `| head`、父进程退出）不应打断网关：
   // 否则 EPIPE 会以未捕获异常冒泡（console.log → write EPIPE）拖垮进程。吞掉即可。
@@ -3717,6 +3717,8 @@ function start(port, getConfig, saveConfig, bindHost = '127.0.0.1') {
   });
   _server.on('error', (err) => {
     console.error('[gateway] server error:', err.message);
+    // 监听失败（主要是 EADDRINUSE 端口占用）上报给调用方处理（弹框 + 退出）
+    if (typeof onListenError === 'function') { try { onListenError(err); } catch {} }
   });
 }
 

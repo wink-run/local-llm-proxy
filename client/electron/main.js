@@ -5507,7 +5507,35 @@ app.whenReady().then(() => {
         routed: !!(x.hosted && (x.route_id || (Array.isArray(x.route_ids) && x.route_ids.length))),
       }));
   });
-  gateway.start(11430, readAgentConfig, writeAgentConfig);
+  // 端口占用检测：被占则弹框提示 + 退出，避免网关静默起不来后 app 假装在运行。
+  const GATEWAY_PORT = 11430;
+  let _portFatalShown = false;
+  function gatewayPortOccupied() {
+    if (_portFatalShown) return; _portFatalShown = true;
+    try {
+      dialog.showMessageBoxSync({
+        type: 'error', noLink: true, buttons: ['退出'], defaultId: 0,
+        title: '端口被占用，无法启动',
+        message: `Token Bank 网关端口 ${GATEWAY_PORT} 已被占用`,
+        detail: `可能是另一个 Token Bank 实例，或其他程序正在使用端口 ${GATEWAY_PORT}。\n请关闭占用该端口的程序后，重新启动 Token Bank。`,
+      });
+    } catch {}
+    app.quit();
+  }
+  (async () => {
+    // 先探测：能自己 listen 上说明空闲；EADDRINUSE 说明被占。
+    const free = await new Promise((resolve) => {
+      const tester = require('net').createServer()
+        .once('error', (err) => resolve(err && err.code !== 'EADDRINUSE'))   // 仅 EADDRINUSE 判占用；其它错误放行交给真正 start
+        .once('listening', () => tester.close(() => resolve(true)))
+        .listen(GATEWAY_PORT, '127.0.0.1');
+    });
+    if (!free) { gatewayPortOccupied(); return; }
+    // 探测与真正 bind 之间存在竞态：listen 若仍 EADDRINUSE，由回调兜底
+    gateway.start(GATEWAY_PORT, readAgentConfig, writeAgentConfig, '127.0.0.1', (err) => {
+      if (err && err.code === 'EADDRINUSE') gatewayPortOccupied();
+    });
+  })();
 
   // OpenRouter 模型目录：启动拉一次(无缓存/过期时) + 每 1h 定时刷新，供网关合并进 openrouter 源模型。
   // 前端源卡显示由前端主导（启用时 refresh + 拿模型写进自己的配置状态，见 Providers.persistProviderEnabled）。
