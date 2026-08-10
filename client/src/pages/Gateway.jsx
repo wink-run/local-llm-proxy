@@ -4085,6 +4085,44 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources, fScop
             </select>
           </div>
           )}
+          {/* 识图增强：有图时先调多模态助手，再把描述交给本步主模型 */}
+          {step.model && (
+          <div className="flex items-center gap-2 mt-1 pl-6">
+            <span className="text-[11px] text-zinc-400 shrink-0" title={t('gateway.route.visionAssistHint')}>{t('gateway.route.visionAssist')}</span>
+            <select
+              value={step.vision_assist?.model
+                ? (availableModels.find(m => m.id === step.vision_assist.model)
+                    ? modelTierKey(availableModels.find(m => m.id === step.vision_assist.model))
+                    : step.vision_assist.model)
+                : ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (!val) { patch(i, { vision_assist: undefined }); return; }
+                const m = availableModels.find(x => modelTierKey(x) === val)
+                  || availableModels.find(x => x.id === val);
+                patch(i, {
+                  vision_assist: {
+                    model: m?.id || val,
+                    ...(m?.tier ? { tier: m.tier } : {}),
+                    ...(step.vision_assist?.prompt ? { prompt: step.vision_assist.prompt } : {}),
+                    ...(step.vision_assist?.max_tokens ? { max_tokens: step.vision_assist.max_tokens } : {}),
+                  },
+                });
+              }}
+              className="min-w-0 flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
+              <option value="">{t('gateway.route.visionAssistOff')}</option>
+              {tierOptgroups(
+                // 优先列出 vision 类型，其余模型也可选手动指定
+                [...filteredModels].sort((a, b) => {
+                  const av = (a.type === 'vision' || a.vision) ? 0 : 1;
+                  const bv = (b.type === 'vision' || b.vision) ? 0 : 1;
+                  return av - bv;
+                }),
+                t,
+              )}
+            </select>
+          </div>
+          )}
         </div>
         );
       })}
@@ -4146,6 +4184,14 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
       ...(s.sharer   ? { sharer: s.sharer }     : {}),
       ...(s.provider ? { provider: s.provider } : {}),
       ...(s.when && s.when.type ? { when: s.when } : {}),
+      ...(s.vision_assist?.model ? {
+        vision_assist: {
+          model: s.vision_assist.model,
+          ...(s.vision_assist.tier ? { tier: s.vision_assist.tier } : {}),
+          ...(s.vision_assist.prompt ? { prompt: s.vision_assist.prompt } : {}),
+          ...(s.vision_assist.max_tokens ? { max_tokens: s.vision_assist.max_tokens } : {}),
+        },
+      } : {}),
     }));
     const classifier = (usesClassifier && clsModel && categories.length)
       ? { model: clsModel, categories } : undefined;
@@ -4758,6 +4804,21 @@ function RouteLogDetailModal({ entry, onClose }) {
               {entry.tier && <span className="ml-1 text-zinc-400">({entry.tier})</span>}
             </DetailRow>
           )}
+          {entry.vision_assist && (
+            <DetailRow label={t('gateway.log.visionAssist')}>
+              <span className="font-mono">
+                {entry.vision_assist.model || '—'}
+                {entry.vision_assist.status === 'ok' ? (
+                  <span className="text-emerald-600 dark:text-emerald-400"> · ok</span>
+                ) : (
+                  <span className="text-amber-600 dark:text-amber-400"> · {entry.vision_assist.error || entry.vision_assist.status || 'fallback'}</span>
+                )}
+                {entry.vision_assist.latency_ms != null && (
+                  <span className="text-zinc-400"> · {fmtMs(entry.vision_assist.latency_ms)}</span>
+                )}
+              </span>
+            </DetailRow>
+          )}
           {(entry.via_label || entry.via) && (
             <DetailRow label={t('gateway.log.provider')}>
               {entry.via_label || entry.via}
@@ -5167,6 +5228,8 @@ export default function Gateway() {
               health.status === 'ok'
                 ? [health.degraded ? t('gateway.route.degradedShort') : t('gateway.route.runningOk'), ftLabel].filter(Boolean).join(' · ')
                 : t('gateway.route.noRequests');
+            // 任一步配置了识图增强 → 列表显示标识，方便一眼辨认
+            const hasVisionAssist = _allSteps.some(s => s?.vision_assist?.model);
             return (
             <div key={route.id}>
               <div
@@ -5185,6 +5248,33 @@ export default function Gateway() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span title={healthTitle} className={`w-2 h-2 rounded-full shrink-0 ${healthDot}`} />
                     <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{route.scene_name}</span>
+                    {hasVisionAssist && (
+                      <span
+                        title={t('gateway.route.visionAssistBadgeHint')}
+                        className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded bg-sky-50 dark:bg-sky-900/25 border border-sky-200/80 dark:border-sky-800/50 text-sky-600 dark:text-sky-400 shrink-0"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 shrink-0" aria-hidden>
+                          <path d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                          <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                        {t('gateway.route.visionAssistBadge')}
+                      </span>
+                    )}
+                    {route.caveman_level && (
+                      <span
+                        title={t('gateway.route.compressBadgeHint')}
+                        className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-900/25 border border-violet-200/80 dark:border-violet-800/50 text-violet-600 dark:text-violet-400 shrink-0"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 shrink-0" aria-hidden>
+                          <path d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
+                        </svg>
+                        {{
+                          lite: t('gateway.route.compressBadgeLite'),
+                          full: t('gateway.route.compressBadgeFull'),
+                          ultra: t('gateway.route.compressBadgeUltra'),
+                        }[route.caveman_level] || t('gateway.route.compressBadge')}
+                      </span>
+                    )}
                     {route.model_key && (
                       <>
                         <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-zinc-100/70 dark:bg-zinc-800/60 text-zinc-400 dark:text-zinc-500 shrink-0">

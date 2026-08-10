@@ -42,9 +42,17 @@ test('8 路 1:1：选 haiku mask（UI 显示 luna）应落到 luna，而非 glm-
   assert.notEqual(ks['sk-desk']['claude-haiku-4-5'].scene_name, 'glm-5');
 });
 
-test('只绑 1 路时仅写入该路对应的首个 mask 名', () => {
+test('超出 claude_models 数量的路由不再 modulo 覆盖首槽', () => {
   const ks = {};
-  bindClaudeRoutesToKeyScene(ks, 'sk-one', ['r0'], ROUTES, CMS);
-  assert.equal(ks['sk-one']['claude-opus-4-8'].scene_name, 'opus-self');
-  assert.equal(ks['sk-one']['claude-haiku-4-5'], undefined);
+  const cms = ['claude-opus-4-8', 'claude-sonnet-4-5'];
+  const routes = [
+    { model_key: 'r0', scene_name: 'opus', steps: [{ model: 'a' }] },
+    { model_key: 'r1', scene_name: 'sonnet', steps: [{ model: 'b' }] },
+    { model_key: 'r2', scene_name: 'extra', steps: [{ model: 'c' }] },
+  ];
+  bindClaudeRoutesToKeyScene(ks, 'sk', ['r0', 'r1', 'r2'], routes, cms);
+  assert.equal(ks.sk['claude-opus-4-8'].scene_name, 'opus');
+  assert.equal(ks.sk['claude-sonnet-4-5'].scene_name, 'sonnet');
+  // 第 3 路无可用 mask，不得覆盖 opus
+  assert.notEqual(ks.sk['claude-opus-4-8'].scene_name, 'extra');
 });

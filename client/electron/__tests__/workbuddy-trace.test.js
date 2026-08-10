@@ -165,6 +165,37 @@ test('workbuddy patch_route supports multiple routes', () => {
   assert.ok(out.models.every(m => m.name === 'tokenbank'));
 });
 
+test('workbuddy supportsImages：识图增强场景为 true，纯文本场景为 false', () => {
+  const { applyRouteToProxyPatch } = require('../app-handlers');
+  const routes = [
+    {
+      id: 'r-va',
+      model_key: 'llm-router-vision-assist',
+      steps: [{ model: 'deepseek-v4-pro', vision_assist: { model: 'kimi-k2.5' } }],
+    },
+    {
+      id: 'r-plain',
+      model_key: 'llm-router-plain',
+      steps: [{ model: 'deepseek-v4-flash' }],
+    },
+  ];
+  const patch = {
+    models: [{
+      id: 'placeholder', name: 'tokenbank', vendor: 'TokenBank',
+      url: 'http://x/v1', apiKey: 'k', supportsImages: true,
+    }],
+  };
+  const out = applyRouteToProxyPatch('workbuddy-stats', patch, {
+    routeIds: ['llm-router-vision-assist', 'llm-router-plain', 'paid:gpt-4o'],
+    routes,
+    providers: [{ models: [{ name: 'gpt-4o', type: 'vision' }] }],
+  });
+  assert.equal(out.models.length, 3);
+  assert.equal(out.models[0].supportsImages, true);  // 识图增强
+  assert.equal(out.models[1].supportsImages, false); // 纯文本场景
+  assert.equal(out.models[2].supportsImages, true);  // 供给源图文
+});
+
 test('claude patch_route writes multiple inferenceModels', () => {
   const { applyRouteToProxyPatch } = require('../app-handlers');
   const routes = [

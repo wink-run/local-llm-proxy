@@ -53,6 +53,7 @@ const { compressBody, compressionRatio } = require('./compressor');
 const { handleTts }             = require('./handlers/ttsHandler');
 const { handleImageGeneration, resolveImageRequestTimeoutMs } = require('./handlers/imageHandler');
 const { handleEmbedding }       = require('./handlers/embeddingHandler');
+const visionAssist = require('./vision-assist');
 
 // 出站代理：境外供给源常需走本机代理才能连通。
 // 优先级：provider.proxy > 全局 cfg.network_proxy > 环境变量(HTTPS_PROXY/HTTP_PROXY，遵守 NO_PROXY)。
@@ -180,6 +181,11 @@ function modelSupportsVision(model, provider) {
   if (t === 'image') return true;
   if (t === 'chat') return false;
   return !_TEXT_ONLY_MODELS.has(String(model || '').toLowerCase());
+}
+
+/** Coding Plan 类端点（/coding/）常拒收 image_url → HTTP 400，识图助手应后置或跳过 */
+function providerIsCodingPlanEndpoint(provider) {
+  return /\/coding(\/|$)/i.test(String(provider?.base_url || ''));
 }
 
 // Anthropic image.source → OpenAI image_url
@@ -2633,44 +2639,79 @@ function pickSteps(scene, ctx) {
   return unifySteps(scene).filter(s => s && (!s.when || evalWhen(s.when, ctx)));
 }
 
-// ── 语义分类器（有成本条件：先用便宜模型把输入归类，再按 label 路由）──────────────
-// 内部「调一次模型拿纯文本」，不写 res。支持 OpenAI / Anthropic 两种上游格式。
-function internalComplete(provider, model, prompt, maxTokens = 8) {
-  return new Promise((resolve, reject) => {
-    const isAnthropic = providerApiFormat(provider) === 'anthropic';
-    const _ver = apiVer(provider.base_url);
-    let u; try { u = new URL(normBase(provider.base_url) + (isAnthropic ? `/${_ver}/messages` : `/${_ver}/chat/completions`)); }
-    catch { return reject(new Error('invalid_url')); }
-    const body = isAnthropic
-      ? { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
-      : { model, max_tokens: maxTokens, temperature: 0, stream: false, messages: [{ role: 'user', content: prompt }] };
-    const bodyStr = JSON.stringify(body);
+// ── 语义分类器 / 识图助手：内部「调一次模型拿纯文本」，不写 res。
+// promptOrContent：字符串，或 OpenAI parts[] / Anthropic blocks[]（多模态）。
+// kimi 等经火山时正文常在 reasoning_content，content 可能为空——必须兼容提取。
+function extractInternalCompleteText(j, isAnthropic) {
+  return visionAssist.extractAssistResponseText(j, isAnthropic);
+}
+
+function internalComplete(provider, model, promptOrContent, maxTokens = 8, opts = {}) {
+  const isAnthropic = providerApiFormat(provider) === 'anthropic';
+  const _ver = apiVer(provider.base_url);
+  let u;
+  try { u = new URL(normBase(provider.base_url) + (isAnthropic ? `/${_ver}/messages` : `/${_ver}/chat/completions`)); }
+  catch { return Promise.reject(new Error('invalid_url')); }
+  const content = promptOrContent;
+  // 不默认 temperature:0 —— kimi k3 等 Coding 模型只允许 temperature=1，硬编码 0 会直接 HTTP_400
+  let body = isAnthropic
+    ? { model, max_tokens: maxTokens, messages: [{ role: 'user', content }] }
+    : { model, max_tokens: maxTokens, stream: false, messages: [{ role: 'user', content }] };
+  body = upstreamHints.applyHints(body, provider && provider.id, model);
+
+  const sendOnce = (reqBody) => new Promise((resolve, reject) => {
+    const bodyStr = JSON.stringify(reqBody);
     const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) };
     if (provider.token) {
       if (isAnthropic) { headers['x-api-key'] = provider.token; headers['anthropic-version'] = '2023-06-01'; }
       else headers['Authorization'] = `Bearer ${provider.token}`;
     }
+    const timeoutMs = opts.timeoutMs || (Array.isArray(content) ? 60000 : 15000);
     const mod = u.protocol === 'https:' ? https : http;
-    const req = mod.request({ hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 15000,
+    const req = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: timeoutMs,
       agent: resolveProxyAgent(provider, u.href),
     }, (rs) => {
       let data = '';
       rs.on('data', c => data += c);
       rs.on('end', () => {
-        if (rs.statusCode >= 400) return reject(new Error('HTTP_' + rs.statusCode));
+        if (rs.statusCode >= 400) {
+          const err = new Error(`HTTP_${rs.statusCode}`);
+          err.status = rs.statusCode;
+          err.body = String(data || '').slice(0, 800);
+          // 把上游文案拼进 message，便于 parseBodyConstraintError / 路由详情
+          const snip = err.body.replace(/\s+/g, ' ').slice(0, 180);
+          if (snip) err.message = `HTTP_${rs.statusCode}: ${snip}`;
+          return reject(err);
+        }
         try {
           const j = JSON.parse(data);
-          const text = isAnthropic
-            ? (Array.isArray(j.content) ? j.content.map(b => b.text || '').join('') : '')
-            : (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
-          resolve(String(text || ''));
+          const text = extractInternalCompleteText(j, isAnthropic);
+          const usage = isAnthropic
+            ? { input_tokens: j.usage?.input_tokens || 0, output_tokens: j.usage?.output_tokens || 0, message_id: j.id }
+            : {
+              input_tokens: j.usage?.prompt_tokens || 0,
+              output_tokens: j.usage?.completion_tokens || 0,
+              message_id: j.id,
+            };
+          resolve({ text: String(text || ''), usage });
         } catch (e) { reject(e); }
       });
     });
     req.on('error', reject);
     req.on('timeout', () => req.destroy(new Error('timeout')));
     req.write(bodyStr); req.end();
+  });
+
+  return sendOnce(body).catch((err) => {
+    const mutations = upstreamHints.parseBodyConstraintError(err);
+    if (!mutations) throw err;
+    const fixed = upstreamHints.applyMutations(body, mutations);
+    if (fixed === body) throw err;
+    upstreamHints.noteHints(provider && provider.id, model, mutations);
+    console.log(`[gateway] vision-assist body-fix 重试 ${upstreamHints.describeMutations(mutations)} model="${model}" via "${provider && provider.id}"`);
+    return sendOnce(fixed);
   });
 }
 
@@ -2688,13 +2729,142 @@ async function classifyInput(text, classifier) {
   if (!provider) return null;
   const prompt = `把下面这条用户请求归到这些类别之一，只回类别词本身，不要解释。\n类别: ${cats.join(', ')}\n\n请求:\n${snippet}`;
   let out;
-  try { out = await internalComplete(provider, classifier.model, prompt, 8); } catch { return null; }
+  try {
+    const r = await internalComplete(provider, classifier.model, prompt, 8);
+    out = typeof r === 'string' ? r : (r && r.text);
+  } catch { return null; }
   const low = String(out || '').toLowerCase();
   const label = cats.find(c => low.includes(String(c).toLowerCase())) || null;
   _classifyCache.set(key, { ts: now, label });
   if (_classifyCache.size > 500) _classifyCache.delete(_classifyCache.keys().next().value);
   return label;
 }
+
+/**
+ * 场景步识图增强：有图且配置了 vision_assist 时，先调多模态助手，再把图片换成描述。
+ * 仅对「最后一条 user」中尚未缓存的图调用识图；历史图复用缓存，避免重复识别。
+ */
+async function applyVisionAssistIfNeeded(step, body, { callerKey, reqPath, skipP2P = false } = {}) {
+  const assist = step && step.vision_assist;
+  const assistModel = assist && (typeof assist === 'string' ? assist : assist.model);
+  if (!assistModel || !visionAssist.bodyHasImages(body)) {
+    return { body, meta: null };
+  }
+  const t0 = Date.now();
+  const items = visionAssist.collectImagesWithMeta(body);
+  if (!items.length) return { body, meta: null };
+
+  const planned = visionAssist.planImageDescriptions(items);
+  const descs = planned.descs.slice();
+  const needApiIdx = planned.needApiIdx;
+
+  // 无需调识图：全部命中缓存或仅为历史图占位
+  if (!needApiIdx.length) {
+    const next = visionAssist.replaceImagesInBody(visionAssist.cloneBody(body), descs);
+    visionAssist.prependVisionAssistNotice(next, items.length);
+    return {
+      body: next,
+      meta: {
+        model: assistModel,
+        status: 'ok',
+        latency_ms: Date.now() - t0,
+        image_count: items.length,
+        cache_hits: planned.cacheHits,
+        history_skip: planned.historySkip,
+        api_images: 0,
+      },
+    };
+  }
+
+  const prompt = (assist && assist.prompt) || visionAssist.DEFAULT_ASSIST_PROMPT;
+  const maxTokens = (assist && assist.max_tokens) || visionAssist.DEFAULT_ASSIST_MAX_TOKENS;
+  const tierHint = (assist && assist.tier) || step.tier || null;
+
+  let providers = enabledProviders().filter(p => !skipP2P || p.type !== 'p2p');
+  providers = providers.filter(p => providerHasModel(p, assistModel, { strict: skipP2P }));
+  if (tierHint) providers = providers.filter(p => p.type === tierHint);
+  providers = [
+    ...providers.filter(p => modelSupportsVision(assistModel, p)),
+    ...providers.filter(p => !modelSupportsVision(assistModel, p)),
+  ];
+  if (!providers.length) {
+    return {
+      body: visionAssist.stripImagesInBody(body),
+      meta: { model: assistModel, status: 'error', error: 'assist_provider_missing', latency_ms: Date.now() - t0 },
+    };
+  }
+
+  const apiImgs = needApiIdx.map((i) => items[i].img);
+  let lastErr = null;
+  let lastProvider = null;
+
+  for (const provider of providers) {
+    lastProvider = provider;
+    const fmt = providerApiFormat(provider) === 'anthropic' ? 'anthropic' : 'openai';
+    const userContent = visionAssist.buildAssistUserContent(apiImgs, prompt, fmt);
+    try {
+      const result = await internalComplete(provider, assistModel, userContent, maxTokens, { timeoutMs: 60000 });
+      const text = result && result.text;
+      const parsed = visionAssist.parseAssistDescriptions(text, apiImgs.length);
+      if (!parsed.some(d => d && String(d).trim())) {
+        lastErr = new Error('empty_description');
+        continue;
+      }
+      needApiIdx.forEach((itemIdx, j) => {
+        descs[itemIdx] = parsed[j];
+        if (parsed[j]) visionAssist.cacheSet(items[itemIdx].fp, parsed[j]);
+      });
+      const next = visionAssist.replaceImagesInBody(visionAssist.cloneBody(body), descs);
+      visionAssist.prependVisionAssistNotice(next, items.length);
+      const usage = result.usage || {};
+      try {
+        recordStats(provider.id, assistModel, {
+          ...usage,
+          latency: Date.now() - t0,
+          status_code: 200,
+        }, _providerTier(provider), callerKey, false, provider.billing_type || null, reqPath);
+        reportUsage(provider.id, assistModel, (usage.input_tokens || 0) + (usage.output_tokens || 0));
+      } catch {}
+      return {
+        body: next,
+        meta: {
+          model: assistModel,
+          via: provider.id,
+          via_label: provider.label,
+          status: 'ok',
+          latency_ms: Date.now() - t0,
+          image_count: items.length,
+          cache_hits: planned.cacheHits,
+          history_skip: planned.historySkip,
+          api_images: apiImgs.length,
+        },
+      };
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[gateway] vision-assist fail model="${assistModel}" via="${provider.id}":`, err && err.message);
+    }
+  }
+
+  // 识图失败：已有缓存描述仍尽量用上；未识别的槽位留空占位
+  const next = visionAssist.replaceImagesInBody(visionAssist.cloneBody(body), descs.map((d) => d || ''));
+  visionAssist.prependVisionAssistNotice(next, items.length);
+  return {
+    body: next,
+    meta: {
+      model: assistModel,
+      via: lastProvider && lastProvider.id,
+      via_label: lastProvider && lastProvider.label,
+      status: 'error',
+      error: lastErr && lastErr.message ? lastErr.message : String(lastErr || 'assist_failed'),
+      latency_ms: Date.now() - t0,
+      image_count: items.length,
+      cache_hits: planned.cacheHits,
+      history_skip: planned.historySkip,
+      api_images: apiImgs.length,
+    },
+  };
+}
+
 
 // 统一步骤：每步可选带 when 条件。老 rules 摊平成"带 rule.when 的步"，再接默认步(无 when)。
 function unifySteps(scene) {
@@ -3143,6 +3313,15 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       ], (p) => coolKey(p, stepModel, stepMetaSharer));   // 冷却中的源下沉到末尾（fresh 先试，省对必失败源的空跑）
       let   stepSucceeded = false;
 
+      // 识图增强：本步只预处理一次；failover 共用替换后的 body
+      let stepBody = body;
+      let visionMeta = null;
+      if (step.vision_assist) {
+        const va = await applyVisionAssistIfNeeded(step, body, { callerKey, reqPath, skipP2P });
+        stepBody = va.body;
+        visionMeta = va.meta;
+      }
+
       for (const provider of stepProviders) {
         const p2pReject = rejectP2pIfUnconfigured(provider, res, isResponses);
         if (p2pReject) {
@@ -3153,12 +3332,13 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             tier: provider.type, via: provider.id, via_label: provider.label,
             latency_ms: Date.now() - t0, status: 'error',
             error: lastErr.message, error_code: lastErr.code || undefined,
+            vision_assist: visionMeta || undefined,
           });
           recordError(stepModel, callerKey, lastErr, reqPath);
           return;
         }
         try {
-          const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res, stepMeta);
+          const result = await callProvider(provider, isAnthropic, streaming, reqPath, stepBody, stepModel, res, stepMeta);
           pushLog({
             ts: t0, requested_model: origModel, model: stepModel,
             scene_name: scene.scene_name, claude_from: stepClaudeFrom,
@@ -3166,10 +3346,11 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             tier: provider.type, via: provider.id, via_label: provider.label,
             latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
             worker: result.worker_id || undefined,
+            vision_assist: visionMeta || undefined,
           });
           const stepTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
           const stepTier = _providerTier(provider);
-          recordStats(provider.id, stepModel, fillMissingInputTokens(result, body), stepTier, callerKey, streaming, provider.billing_type || null, reqPath);
+          recordStats(provider.id, stepModel, fillMissingInputTokens(result, stepBody), stepTier, callerKey, streaming, provider.billing_type || null, reqPath);
           reportUsage(provider.id, stepModel, stepTok);
           if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
           try { require('./provider-speed').record(stepModel, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
@@ -3186,6 +3367,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
               latency_ms: Date.now() - t0, status: 'error',
               error: lastErr.message, error_code: lastErr.code || undefined,
               worker: lastErr.worker_id || undefined,
+              vision_assist: visionMeta || undefined,
             });
             recordError(stepModel, callerKey, lastErr, reqPath);
             return;

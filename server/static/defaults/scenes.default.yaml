@@ -94,3 +94,17 @@ scene_routes:
       - model: deepseek-v4-pro
       - model: minimax-m3
       - model: deepseek-v4-flash
+
+  # ── 组合增强：文本主模型 + 识图助手（有图时先描述再推理）──
+  - id: route-vision-assist
+    scene_name: 文本+识图增强
+    icon: 🖼️
+    model_key: llm-router-vision-assist
+    flow: fallback
+    steps:
+      - model: deepseek-v4-pro
+        vision_assist:
+          model: gpt-5.6-luna
+      - model: deepseek-v4-flash
+        vision_assist:
+          model: gpt-5.6-luna

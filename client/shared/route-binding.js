@@ -122,10 +122,12 @@ function isKnownRouteSelectValue(val, availableModels = [], routes = []) {
   return availableModels.some(m => encodeTierModelRoute(m.tier, m.id) === val);
 }
 
-/** 按索引从 claude_models 列表取 Claude Desktop inferenceModels.name */
+/** 按索引从 claude_models 列表取 Claude Desktop inferenceModels.name。
+ * 超出列表长度时不再 modulo 回绕（回绕会覆盖先绑的路由，例如第 9 路盖掉 opus）。 */
 function claudeNameAtIndex(index, claudeModels = [], fallback = 'claude-sonnet-4-5') {
   if (!claudeModels.length) return fallback;
-  return claudeModels[index % claudeModels.length] || fallback;
+  if (index < claudeModels.length) return claudeModels[index] || fallback;
+  return null;
 }
 
 /** Claude Desktop 多路由：每个 route 独占一个 claude-* name（与写入 inferenceModels 顺序一致）
@@ -137,6 +139,8 @@ function bindClaudeRoutesToKeyScene(keyScene, callerKey, routeIds, routes = [], 
   const sub = keyScene[callerKey] || (keyScene[callerKey] = {});
   routeIds.forEach((routeId, i) => {
     const claudeName = claudeNameAtIndex(i, claudeModels);
+    // 无可用唯一 mask 名则跳过，避免覆盖已绑定槽位
+    if (!claudeName) return;
     bindRouteToKeyScene(sub, claudeName, routeId, routes);
   });
 }

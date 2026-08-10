@@ -72,6 +72,15 @@ function modelSelectValue(m) {
   return m.tier ? encodeTierModelRoute(m.tier, id) : id;
 }
 
+/** 场景路由是否可选用（与 RouteSelect 口径一致：有策略/步骤且步骤模型在可用列表或为策略步） */
+function usableSceneRoutes(routes, availableModels) {
+  const avail = new Set((availableModels || []).map(m => m.id || m.name));
+  return (routes || []).filter(r =>
+    r.strategy || r.flow
+    || (r.steps || []).some(s => s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label))
+  );
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** 合并 Agent 流式步骤；output 去重/剥离已展示的 thinking */
@@ -749,6 +758,7 @@ export default function Debug() {
   const [token,          setToken]         = useState('');
   const [showToken,      setShowToken]     = useState(false);
   const [models,         setModels]        = useState([]);   // {name, type}[]
+  const [sceneRoutes,    setSceneRoutes]   = useState([]);   // 本地网关场景路由（对话下拉用）
   const [model,          setModel]         = useState('');
   const [manualModel,    setManualModel]   = useState(false);
   const [loadingModels,  setLoadingModels] = useState(false);
@@ -2136,7 +2146,7 @@ export default function Debug() {
   useEffect(() => {
     const opt = provOpts.find(o => o.id === selectedId) || LOCAL_GW;
     if (selectedId === '__custom__') {
-      setToken(''); setModels([]); setModel(''); setManualModel(true); return;
+      setToken(''); setModels([]); setSceneRoutes([]); setModel(''); setManualModel(true); return;
     }
     setToken(opt.token || '');
 
@@ -2146,11 +2156,13 @@ export default function Debug() {
       let cancelled = false;
       (async () => {
         try {
-          const [list, c] = await Promise.all([
+          const [list, c, lc] = await Promise.all([
             loadGatewayAvailableModels(),
             getConfig().read().catch(() => null),
+            getLocalConfig().get().catch(() => null),
           ]);
           if (cancelled) return;
+          setSceneRoutes(Array.isArray(lc?.scene_routes) ? lc.scene_routes : []);
           const mapped = list.map(({ id, tier }) => ({
             name: id,
             tier,
@@ -2214,10 +2226,15 @@ export default function Debug() {
   useEffect(() => {
     if (!models.length) return;
     const preferred = models.filter(m => imageMode ? m.type === 'image' : m.type !== 'image');
+    // 对话模式且当前选中场景路由 → 保留，勿被「非 image 模型列表」冲掉
+    const sceneKeys = new Set(
+      usableSceneRoutes(sceneRoutes, models).map(r => r.model_key || r.id).filter(Boolean),
+    );
+    if (!imageMode && sceneKeys.has(model)) return;
     if (preferred.length && !preferred.some(m => modelSelectValue(m) === model)) {
       setModel(modelSelectValue(preferred[0]));
     }
-  }, [imageMode]);
+  }, [imageMode, models, model, sceneRoutes]);
 
   // 切到文生图时清空待发附图
   useEffect(() => {
@@ -2328,6 +2345,10 @@ export default function Debug() {
   const effectiveBase = selectedId === '__custom__' ? manualBaseUrl : (provOpts.find(o => o.id === selectedId)?.base_url || '');
   const anthropic     = isAnthropicUrl(effectiveBase);
   const filteredModels = models.filter(m => imageMode ? m.type === 'image' : m.type !== 'image');
+  // 仅本地网关 + 对话模式展示场景路由（图像生成走图片类模型）
+  const debugSceneRoutes = (selectedId === '__local_gw__' && !imageMode)
+    ? usableSceneRoutes(sceneRoutes, models)
+    : [];
 
   async function handleSend() {
     const text = input.trim();
@@ -2559,9 +2580,18 @@ export default function Debug() {
                 <span className="inline-block h-3 w-16 rounded bg-zinc-200 dark:bg-zinc-700 animate-pulse" />
                 {t('debug.loadingModels')}
               </span>
-            ) : !manualModel && filteredModels.length > 0 ? (
+            ) : !manualModel && (filteredModels.length > 0 || debugSceneRoutes.length > 0) ? (
               <select value={model} onChange={e => setModel(e.target.value)}
                 className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 max-w-[280px]">
+                {debugSceneRoutes.length > 0 && (
+                  <optgroup label={t('gateway.app.sceneRoutes')}>
+                    {debugSceneRoutes.map(r => (
+                      <option key={r.id} value={r.model_key || r.id}>
+                        {r.icon && !String(r.icon).startsWith('icon:') ? `${r.icon} ` : ''}{r.scene_name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
                 {filteredModels.some(m => m.tier)
                   ? [{ key: 'local', tiers: ['free', 'paid'] }, { key: 'remote', tiers: ['p2p'] }].map(g => {
                       const tms = filteredModels.filter(m => g.tiers.includes(m.tier));

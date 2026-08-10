@@ -229,7 +229,7 @@ function catalogModel(modelId, priority, vision = false, contextWindow) {
     default_reasoning_summary: 'none', default_verbosity: 'low',
     description: modelId, display_name: modelId, effective_context_window_percent: 95,
     experimental_supported_tools: [], include_skills_usage_instructions: false,
-    // input_modalities 跟随供给源模型的「图文」标志：图文(vision)→可附图，纯文本→仅文本。
+    // input_modalities：供给源图文，或场景配备识图增强时由调用方传 vision=true → 可附图。
     input_modalities: vision ? ['text', 'image'] : ['text'], max_context_window: window, multi_agent_version: 'v2',
     priority, service_tiers: [], shell_type: 'shell_command', slug: modelId,
     support_verbosity: false, supported_in_api: true,

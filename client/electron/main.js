@@ -4909,7 +4909,7 @@ function registerIPC() {
       // 并保留 auth.json 官方登录态(Desktop 门控放行自定义模型的前提)。
       if (handlerId === 'codex-desktop-api') {
         const codexCfg = require('./codex-config');
-        const { getRouteModels, modelVision } = require('./app-handlers');
+        const { getRouteCatalogModels } = require('./app-handlers');
         const codexHome = path.dirname(file);
         // 缺 config.toml：强信号已确认安装时可新建（探测不认 config.toml，不会自证循环）
         const allowCreate = allowCreateMissingProxyConfig(handlerId);
@@ -4919,17 +4919,16 @@ function registerIPC() {
           catch (e) { return { ok: false, error: e.message || 'mkdir-failed', file }; }
         }
         const baseUrl = resolvedPatch['model_providers.tokenbank.base_url'] || `${patchCtx.base}/v1`;
-        const models = getRouteModels(appRec, readLocalConfig().scene_routes || [])
+        // 供给源「图文」或场景配备识图增强 → catalog.input_modalities 含 image，Codex 才能附图。
+        const providersCfg = (readAgentConfig() || {}).providers || [];
+        const sceneRoutes = readLocalConfig().scene_routes || [];
+        const catalogModels = getRouteCatalogModels(appRec, sceneRoutes, providersCfg)
           // Claude Desktop 透明 mask 名不进 Codex catalog（与 keyScene 跳过一致）
           .filter((m) => {
-            try { return !(require('./config-loader').claudeModels() || []).includes(m); }
+            try { return !(require('./config-loader').claudeModels() || []).includes(m.name); }
             catch { return true; }
           });
-        const model = resolvedPatch['model'] || models[0] || '';
-        // 按供给源「图文」标志给每个模型标注 vision，驱动 catalog 的 input_modalities。
-        // 供给源模型存于 agent config（与网关同源），不在 userData/local-config.json。
-        const providersCfg = (readAgentConfig() || {}).providers || [];
-        const catalogModels = models.map(name => ({ name, vision: modelVision(name, providersCfg) }));
+        const model = resolvedPatch['model'] || (catalogModels[0] && catalogModels[0].name) || '';
         codexCfg.writeCodexCatalog(codexHome, catalogModels, codexCfg.CATALOG_FILE, providersCfg);
         const applied = codexCfg.applyCodexProvider(file, {
           providerId: 'tokenbank', name: 'Tokenbank',

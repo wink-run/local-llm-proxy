@@ -225,6 +225,38 @@ function modelVision(modelId, providers = []) {
   return false;
 }
 
+/** vision_assist 配置里的助手模型名（字符串或 { model }） */
+function visionAssistModel(va) {
+  if (!va) return '';
+  if (typeof va === 'string') return va.trim();
+  return String(va.model || '').trim();
+}
+
+/** 场景任一步（含 rules[].steps）是否配备识图增强 */
+function sceneHasVisionAssist(scene) {
+  if (!scene) return false;
+  const has = (steps) => Array.isArray(steps)
+    && steps.some((s) => !!visionAssistModel(s && s.vision_assist));
+  if (has(scene.steps)) return true;
+  if (Array.isArray(scene.rules)) {
+    for (const rule of scene.rules) {
+      if (has(rule && rule.steps)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 路由是否应向客户端声明可附图（Codex input_modalities / WorkBuddy supportsImages）。
+ * 场景配备识图增强 → 真（网关会替主模型看图）；否则看绑定模型是否为供给源图文。
+ */
+function routeSupportsImages(routeId, routes = [], providers = []) {
+  const parsed = parseRouteBinding(routeId, routes);
+  if (parsed.isScene && parsed.scene && sceneHasVisionAssist(parsed.scene)) return true;
+  const mid = parsed.isScene ? '' : (parsed.modelId || routeId);
+  return mid ? modelVision(mid, providers) : false;
+}
+
 function getRouteModels(app, routes = []) {
   const ids = Array.isArray(app?.route_ids) && app.route_ids.length
     ? app.route_ids
@@ -233,6 +265,31 @@ function getRouteModels(app, routes = []) {
   for (const rid of ids) {
     const m = routeModelId(rid, routes);
     if (m && !out.includes(m)) out.push(m);
+  }
+  return out;
+}
+
+/**
+ * Codex model_catalog 条目：name + vision。
+ * 配备识图增强的场景路由一律 vision=true，写入 input_modalities 含 image。
+ */
+function getRouteCatalogModels(app, routes = [], providers = []) {
+  const ids = Array.isArray(app?.route_ids) && app.route_ids.length
+    ? app.route_ids
+    : (app?.route_id ? [app.route_id] : []);
+  const out = [];
+  const byName = new Map();
+  for (const rid of ids) {
+    const name = routeModelId(rid, routes);
+    if (!name) continue;
+    const vision = routeSupportsImages(rid, routes, providers);
+    if (byName.has(name)) {
+      if (vision) byName.get(name).vision = true; // 同名多绑：任一可附图即声明
+      continue;
+    }
+    const entry = { name, vision };
+    byName.set(name, entry);
+    out.push(entry);
   }
   return out;
 }
@@ -255,8 +312,13 @@ function patchRouteWorkbuddyModels(patch, cfg, ctx) {
   const models = routeIds
     .map(rid => {
       const id = routeModelId(rid, routes);
-      // supportsImages 跟随供给源「图文」标志；template 已带默认值，按模型覆盖
-      return { ...template, id, name: providerName, supportsImages: modelVision(id, providers) };
+      // 可附图：供给源图文，或场景配备识图增强（与 Codex catalog 口径一致）
+      return {
+        ...template,
+        id,
+        name: providerName,
+        supportsImages: routeSupportsImages(rid, routes, providers),
+      };
     })
     .filter(m => m.id);
 
@@ -279,7 +341,10 @@ function patchRouteClaudeInferenceModels(patch, cfg, ctx) {
     .map((rid, i) => {
       const label = routeLabelFor(rid, routes);
       if (!label) return null;
-      return { name: claudeNameAtIndex(i, claudeModels, fallback), labelOverride: label };
+      const name = claudeNameAtIndex(i, claudeModels, fallback);
+      // 超出 claude_models 数量的路由无法分配唯一 Anthropic 名，跳过以免 Desktop 重名覆盖
+      if (!name) return null;
+      return { name, labelOverride: label };
     })
     .filter(Boolean);
   if (!models.length) return patch;
@@ -625,7 +690,10 @@ module.exports = {
   resolveHandlerId,
   routeModelId,
   getRouteModels,
+  getRouteCatalogModels,
   modelVision,
+  sceneHasVisionAssist,
+  routeSupportsImages,
   routeLabelFor,
   handlerHasPatchRoute,
   resolveRouteMultiSelect,
