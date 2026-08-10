@@ -207,15 +207,35 @@ test('claude patch_route writes multiple inferenceModels', () => {
     inferenceGatewayBaseUrl: 'http://127.0.0.1:11430',
     inferenceGatewayApiKey: 'sk-test',
   };
+  // 多路由需提供等量 mask 名（超出不再 modulo 回绕，避免覆盖首槽）
   const out = applyRouteToProxyPatch('claude-desktop-api', patch, {
     routeIds: ['code', 'paid:gpt-4o'],
     routes,
-    claudeName: 'claude-sonnet-4-5',
+    claudeModels: ['claude-sonnet-4-5', 'claude-opus-4-5'],
   });
   assert.equal(out.inferenceModels.length, 2);
   assert.equal(out.inferenceModels[0].name, 'claude-sonnet-4-5');
   assert.equal(out.inferenceModels[0].labelOverride, '代码助手');
+  assert.equal(out.inferenceModels[1].name, 'claude-opus-4-5');
   assert.equal(out.inferenceModels[1].labelOverride, 'gpt-4o');
+});
+
+test('claude patch_route：mask 不足时跳过超额路由，不回绕覆盖', () => {
+  const { applyRouteToProxyPatch } = require('../app-handlers');
+  const routes = [
+    { id: 'r1', model_key: 'code', scene_name: '代码助手' },
+    { id: 'r2', model_key: 'auto', scene_name: '自动' },
+  ];
+  const out = applyRouteToProxyPatch('claude-desktop-api', {
+    inferenceProvider: 'gateway',
+  }, {
+    routeIds: ['code', 'paid:gpt-4o'],
+    routes,
+    claudeName: 'claude-sonnet-4-5', // 仅 1 个 mask
+  });
+  assert.equal(out.inferenceModels.length, 1);
+  assert.equal(out.inferenceModels[0].name, 'claude-sonnet-4-5');
+  assert.equal(out.inferenceModels[0].labelOverride, '代码助手');
 });
 
 test('codex patch_route writes model from first route', () => {
