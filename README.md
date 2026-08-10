@@ -10,6 +10,43 @@
 
 ---
 
+## Overview
+
+**Token Bank is a next-generation personal AI resource hub** that enables one-click onboarding and intelligent orchestration of mainstream AI tools like Claude, Cursor, Codex, and WorkBuddy through a local gateway architecture.
+
+### Core Value Proposition
+
+- **Usage Transparency**: Full-chain trace makes every token consumption accountable
+- **Cost Optimization**: Smart routing automatically switches between local models, free quotas, paid subscriptions, and community-shared compute with lossless protocol adaptation
+- **Sharing Economy**: P2P compute-sharing network creates a decentralized exchange for models and agents, monetizing idle resources into credits
+
+### Technical Highlights
+
+**Zero-Intrusion Integration**  
+Declarative application handlers (CLI env injection + config hot-patching) enable seamless onboarding without modifying agent applications.
+
+**Multi-Protocol Adaptation Layer**  
+Transparent protocol conversion (Anthropic Messages, OpenAI Chat, Codex Responses) allows agents to use third-party models without awareness.
+
+**Unified Asset Layer Architecture**  
+Community agents run directly on users' existing agent applications (Codex, Claude, Cursor, etc.) without rebuilding harnesses, executing within user-accumulated MCP/Skill/Prompt assets for dual reuse of runtimes and tool ecosystems.
+
+**Scenario Routing Engine**  
+- Routing policy learning from usage patterns
+- Lossless context compression
+- Vision enhancement layer for non-multimodal models (automatic image recognition injection)
+
+**MCP Built-in Relay & Resource Projection Gating**  
+Constructs personal knowledge and tool ecosystems with controlled resource deployment.
+
+**AI-Native Architecture**  
+Abandons traditional hard-coded rules; lets agents dynamically construct core capabilities (asset discovery, personalized recommendations, routing optimization) based on actual scenarios and continuously evolve—building an agent management platform with agents—achieving high flexibility and robustness.
+
+**Usage-Based Evolution**  
+The system automatically extracts work portraits from real call records and session patterns, driving personalized recommendations for MCP/Skill/Prompt/Agent and continuous optimization of routing strategies. Multi-device usage aggregation, agent orchestration, and more make Token Bank truly **smarter with you**.
+
+---
+
 ## Why Token Bank
 
 Pain points it tackles:
