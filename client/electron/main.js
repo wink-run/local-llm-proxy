@@ -2824,6 +2824,91 @@ function registerIPC() {
       return ps.getSpeedMapWithLatency(latency);   // 被动/探针测速 + 历史请求延迟兜底
     } catch { return {}; }
   });
+
+  // 导出诊断日志：聚合版本/网关状态/路由日志/冷却/测速/场景路由/配置(脱敏)/同步日志，
+  // 密钥类字段一律遮蔽，弹保存对话框让用户自选位置。给 troubleshooting 用。
+  ipcMain.handle('diagnostics:export', async () => {
+    const fs = require('fs'), path = require('path'), os = require('os');
+    // 密钥类字段名（用词边界避免误伤 model_key / 普通标识）；命中的标量值才遮蔽，容器仍递归保结构。
+    const SECRET_KEY = /(api[_-]?key|secret|token|password|passwd|jwt|bearer|credential|private[_-]?key|access[_-]?key|\bauth\b|\bkey\b)/i;
+    const maskVal = (v) => (typeof v !== 'string' || !v) ? '***' : (v.length <= 8 ? '***' : v.slice(0, 4) + '…' + v.slice(-4) + `(${v.length})`);
+    // 值里夹带的密钥样式(sk-*/Bearer/JWT)也顺手刮掉，防漏在非密钥名的字段里
+    const scrubStr = (s) => String(s)
+      .replace(/sk-[A-Za-z0-9_-]{12,}/g, m => m.slice(0, 5) + '…' + m.slice(-4))
+      .replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}/g, 'eyJ…JWT…')
+      .replace(/Bearer\s+[A-Za-z0-9._-]{12,}/gi, 'Bearer …');
+    const redact = (o) => {
+      if (Array.isArray(o)) return o.map(redact);
+      if (o && typeof o === 'object') {
+        const out = {};
+        for (const k of Object.keys(o)) {
+          const v = o[k];
+          // 键名命中且是标量(字符串/数字) → 遮蔽；对象/数组即使键名命中也递归，保留结构只遮里面的标量密钥
+          out[k] = (SECRET_KEY.test(k) && (typeof v === 'string' || typeof v === 'number')) ? maskVal(v) : redact(v);
+        }
+        return out;
+      }
+      return typeof o === 'string' ? scrubStr(o) : o;
+    };
+    const tailFile = (p, maxBytes = 256 * 1024) => {
+      try {
+        const st = fs.statSync(p); const fd = fs.openSync(p, 'r');
+        const start = Math.max(0, st.size - maxBytes);
+        const buf = Buffer.alloc(st.size - start);
+        fs.readSync(fd, buf, 0, buf.length, start); fs.closeSync(fd);
+        return (start > 0 ? `…（已截断，仅保留末 ${Math.round(maxBytes / 1024)}KB / 全长 ${st.size} 字节）\n` : '') + scrubStr(buf.toString('utf8'));
+      } catch (e) { return `（读取失败: ${e.message}）`; }
+    };
+    const safe = (fn, dflt) => { try { return fn(); } catch (e) { return dflt !== undefined ? dflt : { error: e && e.message }; } };
+
+    const ud = app.getPath('userData');
+    const cfg = safe(() => readLocalConfig(), {});
+    // 原始日志全量读取(脱敏)；超大(>8MB)只留尾部，防 zip 过大
+    const readScrubbed = (p, maxBytes = 8 * 1024 * 1024) => {
+      try {
+        const st = fs.statSync(p);
+        return st.size > maxBytes ? tailFile(p, maxBytes) : scrubStr(fs.readFileSync(p, 'utf8'));
+      } catch (e) { return `（读取失败: ${e.message}）`; }
+    };
+
+    const summary = {
+      generated_at: new Date().toISOString(),
+      app: { version: app.getVersion(), platform: process.platform, arch: process.arch,
+             electron: process.versions.electron, node: process.versions.node, os: `${os.type()} ${os.release()}` },
+      gateway: {
+        status: safe(() => gateway.getStatus()),
+        cooldowns: safe(() => require('./gateway-cooldown').list(), []),
+        speed_map: safe(() => require('./provider-speed').getSpeedMap(), {}),
+      },
+      scene_routes: (cfg.scene_routes || []).map(r => ({
+        id: r.id, scene_name: r.scene_name, flow: r.flow, model_key: r.model_key,
+        steps: (r.steps || []).map(s => s.model || s.strategy || s.tier || s.scope || '?'),
+      })),
+      files: ['route-log.json', 'config.redacted.json', '3p-sync-debug.log', 'apps-list-debug.json'],
+    };
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: '导出诊断日志',
+      defaultPath: path.join(app.getPath('downloads'), `tokenbank-diagnostics-${stamp}.zip`),
+      filters: [{ name: 'Zip', extensions: ['zip'] }],
+    });
+    if (res.canceled || !res.filePath) return { canceled: true };
+    try {
+      const AdmZip = require('adm-zip');
+      const zip = new AdmZip();
+      const add = (name, content) => zip.addFile(name, Buffer.from(
+        typeof content === 'string' ? content : JSON.stringify(content, null, 2), 'utf8'));
+      add('summary.json', summary);                                       // 概览 + 网关状态/冷却/测速/路由
+      add('route-log.json', safe(() => gateway.getLog(), []));            // 完整路由日志
+      add('config.redacted.json', redact(cfg));                          // 完整配置(脱敏)
+      add('3p-sync-debug.log', readScrubbed(path.join(ud, '3p-sync-debug.log')));  // 完整同步日志(脱敏)
+      const appsList = safe(() => fs.readFileSync(path.join(ud, 'apps-list-debug.json'), 'utf8'), null);
+      if (appsList) add('apps-list-debug.json', scrubStr(appsList));
+      zip.writeZip(res.filePath);
+      return { ok: true, file: res.filePath, bytes: fs.statSync(res.filePath).size };
+    } catch (e) { console.error('[diagnostics:export]', e.message); return { error: e.message }; }
+  });
   // 主动测速探针：发个极小请求走本地网关（按真实模型名路由，非 claude 名不会被 keyScene 改写），
   // 请求跑完网关内部自动 record 记速。返回 {ok,status,latencyMs}。会消耗一次真实调用（P2P 扣积分）。
   ipcMain.handle('gateway:probeModel', (_e, model) => probeModelViaGateway(model));

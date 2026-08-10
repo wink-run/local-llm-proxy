@@ -87,6 +87,20 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateMsg, setUpdateMsg] = useState('');
 
+  // 导出诊断日志（troubleshooting）
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [diagMsg, setDiagMsg] = useState('');
+  async function handleExportDiagnostics() {
+    setDiagBusy(true); setDiagMsg('');
+    try {
+      const r = await window.electronAPI?.diagnostics?.export();
+      if (r?.canceled) setDiagMsg('');
+      else if (r?.ok) setDiagMsg(t('settings.diagExported', { kb: Math.max(1, Math.round((r.bytes || 0) / 1024)) }));
+      else setDiagMsg(t('settings.diagFailed') + (r?.error ? '：' + r.error : ''));
+    } catch (e) { setDiagMsg(t('settings.diagFailed') + '：' + (e?.message || e)); }
+    finally { setDiagBusy(false); }
+  }
+
   // 货币展示（内部仍以 USD 结算）
   const [displayCurrency, setDisplayCurrency] = useState(currency);
   const [usdCnyRateInput, setUsdCnyRateInput] = useState(String(usdCnyRate));
@@ -473,6 +487,26 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
             placeholder={SERVER_URL_PLACEHOLDER}
             className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
           />
+        </div>
+      </div>
+
+      {/* Diagnostics / troubleshooting section */}
+      <div className="tb-soft-card rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-white/40 dark:border-white/[0.06]">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.diagnostics')}</h2>
+          <p className="text-xs text-gray-500 mt-0.5">{t('settings.diagnosticsHint')}</p>
+        </div>
+        <div className="px-5 py-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={handleExportDiagnostics}
+            disabled={diagBusy}
+            className="text-sm px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors"
+          >
+            {diagBusy ? t('settings.diagExporting') : t('settings.diagExport')}
+          </button>
+          {diagMsg && <span className="text-xs text-zinc-500 dark:text-zinc-400">{diagMsg}</span>}
+          <span className="text-xs text-gray-400 dark:text-gray-500 w-full">{t('settings.diagRedactNote')}</span>
         </div>
       </div>
 

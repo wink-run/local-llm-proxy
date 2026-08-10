@@ -317,6 +317,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     knowledgeResult: ()        => ipcRenderer.invoke('sessions:knowledgeResult'),
     saveAgentsMd:    (payload) => ipcRenderer.invoke('sessions:saveAgentsMd', payload),
   },
+  diagnostics: {
+    export:            ()  => ipcRenderer.invoke('diagnostics:export'),
+  },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),
     createSceneRoute:  (d) => ipcRenderer.invoke('localConfig:createSceneRoute', d),
