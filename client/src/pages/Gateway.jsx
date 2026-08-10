@@ -4112,12 +4112,18 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources, fScop
               className="min-w-0 flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
               <option value="">{t('gateway.route.visionAssistOff')}</option>
               {tierOptgroups(
-                // 优先列出 vision 类型，其余模型也可选手动指定
-                [...filteredModels].sort((a, b) => {
-                  const av = (a.type === 'vision' || a.vision) ? 0 : 1;
-                  const bv = (b.type === 'vision' || b.vision) ? 0 : 1;
-                  return av - bv;
-                }),
+                // 识图助手只列图文模型（type=vision / vision 标志）
+                (() => {
+                  const visionOnly = filteredModels.filter(m => m.type === 'vision' || !!m.vision);
+                  const curId = step.vision_assist?.model;
+                  // 历史已选非图文仍保留一项，避免下拉空白丢配置
+                  if (curId && !visionOnly.some(m => m.id === curId)) {
+                    const cur = availableModels.find(m => m.id === curId)
+                      || filteredModels.find(m => m.id === curId);
+                    if (cur) return [cur, ...visionOnly];
+                  }
+                  return visionOnly;
+                })(),
                 t,
               )}
             </select>

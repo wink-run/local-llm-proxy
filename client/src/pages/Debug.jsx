@@ -587,10 +587,12 @@ function normalizeLane(raw) {
   const conversation = (Array.isArray(src.conversation) ? src.conversation : [])
     .slice(-DEBUG_CHAT_MAX)
     .map(m => ({ ...m, streaming: false, generating: false }));
+  // 系统提示词编辑 UI 已移除；加载时丢弃残留，避免不可见脏数据跨会话注入
+  // （历史会话恢复仍会通过 restoreLlmSession 显式写回 systemPrompt）
   return {
     ...defaultLane(),
-    systemPrompt: src.systemPrompt || '',
-    showSystem: !!src.showSystem,
+    systemPrompt: '',
+    showSystem: false,
     selectedPromptId: src.selectedPromptId || '',
     input: typeof src.input === 'string' ? src.input : '',
     conversation,
@@ -1834,12 +1836,18 @@ export default function Debug() {
   /** 选择提示词模版 → 用模版全文覆盖输入框（取消选择则清空） */
   function applyPromptSelection(promptId) {
     if (!promptId) {
-      setPanel({ selectedPromptId: '', input: '' });
+      // 顺带清掉历史残留的 systemPrompt（模版已改为写入 input，不再写系统提示）
+      setPanel({ selectedPromptId: '', input: '', systemPrompt: '', showSystem: false });
       return;
     }
     const prompt = promptList.find(p => p.id === promptId);
     if (!prompt) return;
-    setPanel({ selectedPromptId: promptId, input: prompt.content || '' });
+    setPanel({
+      selectedPromptId: promptId,
+      input: prompt.content || '',
+      systemPrompt: '',
+      showSystem: false,
+    });
   }
 
   /** 当前轮仍有未闭合工具 / 任务未终态 → 视为进行中（可停止） */
@@ -2285,7 +2293,8 @@ export default function Debug() {
   function handleClearChat() {
     if (!window.confirm(t('debug.clearConfirm'))) return;
     // 只清空当前模式车道，保留另一模式的聊天记录
-    setPanel({ conversation: [], input: '', selectedPromptId: '' });
+    // 同步清空 systemPrompt：编辑 UI 已移除，残留会成不可见脏数据（如旧菜谱模版）
+    setPanel({ conversation: [], input: '', selectedPromptId: '', systemPrompt: '', showSystem: false });
     setPendingImages([]);
     setAttachError('');
   }
@@ -2308,7 +2317,8 @@ export default function Debug() {
         imageMode,
       });
     }
-    setPanel({ conversation: [], input: '', selectedPromptId: '' });
+    // 必须清 systemPrompt：旧版「提示词→系统提示词」残留会跨会话继续注入
+    setPanel({ conversation: [], input: '', selectedPromptId: '', systemPrompt: '', showSystem: false });
     setPendingImages([]);
     setAttachError('');
   }
