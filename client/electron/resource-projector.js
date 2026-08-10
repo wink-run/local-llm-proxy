@@ -212,12 +212,24 @@ function unprojectSkillFromAgent(resource, agentId, projectionType = 'symlink', 
   }
 
   const abs = resolvePath(skillDir);
-  // 权威源只保留一处：取消投射不得删除权威目录
-  if (authorityDir && abs === resolvePath(authorityDir)) {
+  // 权威源实体目录不删；但软链即使指向权威也必须摘掉（否则取消投射后标签会因磁盘残留被扫回）
+  let isLink = false;
+  try { isLink = fs.lstatSync(abs).isSymbolicLink(); } catch { /* missing */ }
+  if (authorityDir && abs === resolvePath(authorityDir) && !isLink) {
     return { removed: false, skipped: true, reason: 'authority', path: abs };
   }
 
-  if (!pathExists(abs)) return { removed: false, path: abs };
+  if (!pathExists(abs)) {
+    // target_path 可能过期：再试 Agent 默认 skills/<name>
+    const target = getAgentTarget(agentId);
+    if (target && resource?.name) {
+      const fallback = path.join(target.getSkillRoot(), resource.name);
+      if (fallback !== abs && pathExists(fallback)) {
+        return unprojectSkillFromAgent(resource, agentId, projectionType, fallback);
+      }
+    }
+    return { removed: false, path: abs };
+  }
 
   try {
     const st = fs.lstatSync(abs);

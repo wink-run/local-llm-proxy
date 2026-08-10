@@ -363,7 +363,12 @@ class ResourceManager {
     const rows = db.prepare(`
       SELECT * FROM resource_projections WHERE resource_id = ? ORDER BY created_at DESC
     `).all(resourceId);
-    return rows.map(r => ({
+    return rows.map(r => this._mapProjectionRow(r));
+  }
+
+  /** 单行投射 → 前端结构 */
+  _mapProjectionRow(r) {
+    return {
       id: r.id,
       resourceId: r.resource_id,
       agentId: r.agent_id,
@@ -373,7 +378,22 @@ class ResourceManager {
       status: r.status,
       createdAt: r.created_at,
       label: AGENT_RESOURCE_TARGETS[r.agent_id]?.label || r.agent_id,
-    }));
+    };
+  }
+
+  /** 一次查出全部投射，按 resource_id 分组（避免 list 时 N+1） */
+  _getProjectionsByResourceId() {
+    const db = this._getDb();
+    const rows = db.prepare(`
+      SELECT * FROM resource_projections ORDER BY created_at DESC
+    `).all();
+    const map = new Map();
+    for (const r of rows) {
+      const list = map.get(r.resource_id) || [];
+      list.push(this._mapProjectionRow(r));
+      map.set(r.resource_id, list);
+    }
+    return map;
   }
 
   listCatalog(filters = {}) {
@@ -479,9 +499,11 @@ class ResourceManager {
     if (needSkillHits) {
       try { skillStats = localStats.getSkillCallStatsMap?.() || null; } catch { skillStats = null; }
     }
+    // 批量取投射，避免每资源一次 SQL
+    const projById = this._getProjectionsByResourceId();
     return rows.map(row => {
       const resource = this._rowToResource(row);
-      resource.projections = this._getProjections(resource.id);
+      resource.projections = projById.get(resource.id) || [];
       if (needAnnotate) this._annotateAssistantDeps(resource, sets);
       if (skillStats && resource.type === 'skill') {
         this._mergeSkillCallHits(resource, skillStats);
@@ -1740,13 +1762,23 @@ class ResourceManager {
     return { success: true, roots: [...defaults, ...customs] };
   }
 
-  /** 扫描本机 Agent / aweskill 已有 Skill，排除已纳管项 */
-  listDiscoveredSkills(filters = {}) {
+  /** 扫描本机 Agent / aweskill 已有 Skill，排除已纳管项
+   * @param {object} filters
+   * @param {{ rawEntries?: object[], grouped?: object[] }} [prefetched] 复用已扫结果，避免二次读盘
+   */
+  listDiscoveredSkills(filters = {}, prefetched = null) {
     this.init();
     const scanOptions = this._applyScanOptions(filters);
     const managed = this.listResources({ type: 'skill' });
     const managedByName = new Map(managed.map(r => [r.name, r]));
-    const grouped = groupDiscoveredSkills(scanAllAgentSkills(scanOptions));
+    const grouped = Array.isArray(prefetched?.grouped)
+      ? prefetched.grouped
+      : groupDiscoveredSkills(
+        Array.isArray(prefetched?.rawEntries)
+          ? prefetched.rawEntries
+          : scanAllAgentSkills(scanOptions),
+      );
+    const projById = this._getProjectionsByResourceId();
 
     let items = grouped.map(g => {
       const managedRes = managedByName.get(g.name);
@@ -1762,8 +1794,8 @@ class ResourceManager {
         ...g,
         display_name,
         description,
-        // 预览优先库内正文,否则用扫描正文
-        content: String(managedRes?.content || g.content || '').trim(),
+        // 列表不带全文，预览时再读；大幅减轻 IPC/渲染
+        content: '',
         managed,
         contentChanged,
         resourceId: managedRes?.id || null,
@@ -1775,7 +1807,7 @@ class ResourceManager {
           || g.agents?.[0]?.skillDir
           || (g.agents?.[0]?.skillPath ? path.dirname(g.agents[0].skillPath) : null),
         // 附上当前投射目标（前端「已安装」页展示软链映射）
-        projections: managedRes ? this._getProjections(managedRes.id) : [],
+        projections: managedRes ? (projById.get(managedRes.id) || []) : [],
       };
     });
 
@@ -1931,14 +1963,18 @@ class ResourceManager {
     this._persistSkillAuthority(id, this.getResource(id), { authorityPath });
 
     // 为本机已有该 Skill 的 Agent 建立 scan 投射（不替换原目录）
+    // 注意：已有 symlink/copy 是用户主动投射，扫描不得降级成 scan（否则取消后易被误扫回）
     for (const agent of group.agents) {
       const targetDir = agent.skillDir || path.dirname(agent.skillPath);
       const projId = `proj-${id}-${agent.agentId}-global`;
       const existingProj = db.prepare(
-        'SELECT id FROM resource_projections WHERE resource_id = ? AND agent_id = ? AND scope = ?',
+        'SELECT id, projection_type FROM resource_projections WHERE resource_id = ? AND agent_id = ? AND scope = ?',
       ).get(id, agent.agentId, 'global');
 
       if (existingProj) {
+        const keepManaged = existingProj.projection_type === 'symlink'
+          || existingProj.projection_type === 'copy';
+        if (keepManaged) continue;
         db.prepare(`
           UPDATE resource_projections SET
             projection_type = 'scan', target_path = ?, status = 'active', created_at = ?
@@ -1994,7 +2030,12 @@ class ResourceManager {
     const scanOptions = this._applyScanOptions(filters);
     const rawEntries = scanAllAgentSkills(scanOptions);
     const grouped = groupDiscoveredSkills(rawEntries);
-    const managedByName = new Map(this.listResources({ type: 'skill' }).map(r => [r.name, r]));
+    // 轻量已纳管索引（勿走 listResources，避免同步阶段再拉全量投射/正文）
+    const managedByName = new Map(
+      this._getDb().prepare(
+        "SELECT id, name, hash, description FROM resources WHERE type = 'skill'",
+      ).all().map((r) => [r.name, r]),
+    );
 
     let imported = 0;
     let updated = 0;
@@ -2029,8 +2070,11 @@ class ResourceManager {
       console.warn('[resource-manager] ensure assistant skill deps:', e.message);
     }
 
-    // 复用 listDiscoveredSkills 得到最终列表（含刚纳管项与 projections）
-    const { items, scanStats } = this.listDiscoveredSkills({ ...filters, includeManaged: true });
+    // 复用本次扫盘结果，禁止 listDiscoveredSkills 再扫一遍
+    const { items, scanStats } = this.listDiscoveredSkills(
+      { ...filters, includeManaged: true },
+      { rawEntries, grouped },
+    );
     return { success: true, imported, updated, items, scanStats };
   }
 

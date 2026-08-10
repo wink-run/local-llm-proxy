@@ -895,6 +895,7 @@ export default {
   'providers.probe.titleP2p': 'Probe each model with an online node (real calls, spends credits)',
   'providers.probe.titlePersonal': 'Probe each personal-source model (real calls, billed to your own providers — not credits)',
   'providers.badge.enabled': 'Enabled',
+  'providers.badge.disabled': 'Disabled',
   'providers.badge.needsConfig': 'Setup required',
   'providers.badge.verified': 'Verified',
   'providers.badge.freeQuota': 'Free quota',

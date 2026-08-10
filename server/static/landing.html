@@ -59,6 +59,9 @@
     .tb-conn::after { animation: none !important; display: none; }
     .tb-gw-chip { animation: none !important; }
   }
+  @media (max-width: 900px) {
+    #network .tb-nw-tri { grid-template-columns: 1fr !important; }
+  }
 </style>
 </helmet>
 
@@ -311,7 +314,7 @@
           </div>
           <h3 data-i18n="pillars.5.h" style="margin:0;font-size:20px;font-weight:600;color:#000;letter-spacing:-0.01em;">Earn from idle</h3>
           <p data-i18n="pillars.5.k" style="margin:4px 0 12px;font-size:12px;font-weight:500;color:#7b7b7b;letter-spacing:0.02em;">COMMUNITY SHARING</p>
-          <p data-i18n="pillars.5.b" style="margin:0;font-size:14px;line-height:1.55;color:#333;">Contribute idle capacity to community sharing for credits; circles and a network map; spend credits on shared models.</p>
+          <p data-i18n="pillars.5.b" style="margin:0;font-size:14px;line-height:1.55;color:#333;">Contribute idle capacity for credits; hire community agents (jobs run on their device; keys stay local); circles and a network map.</p>
         </div>
 
       </div>
@@ -333,7 +336,7 @@
         <div>
           <div data-i18n="hub.feat1.k" style="font-family:'Space Mono',monospace;font-size:12px;color:#FFD055;letter-spacing:0.06em;margin-bottom:12px;">AGENT ORCHESTRATION</div>
           <h3 data-i18n="hub.feat1.h" style="margin:0 0 12px;font-size:28px;font-weight:600;letter-spacing:-0.02em;">Playground with a main agent</h3>
-          <p data-i18n="hub.feat1.b" style="margin:0;font-size:15px;line-height:1.6;color:#c8c8c8;max-width:520px;">Set a main agent as the aggregation entry. It receives the task, plans steps, and dispatches to other onboarded agents. Tool streams stay visible; stop and resume when you need to.</p>
+          <p data-i18n="hub.feat1.b" style="margin:0;font-size:15px;line-height:1.6;color:#c8c8c8;max-width:520px;">Set a main agent as the aggregation entry. It receives the task, plans steps, and dispatches to other onboarded agents (including hired community agents). Tool streams stay visible; stop and resume when you need to.</p>
         </div>
         <div style="background:#161616;border-radius:20px;padding:22px 24px;font-family:'Space Mono',monospace;font-size:12.5px;line-height:1.7;color:#9a9a9a;">
           <div style="color:#FFD055;margin-bottom:8px;" data-i18n="hub.feat1.demo.h">aggregation entry</div>
@@ -629,16 +632,16 @@
   <section id="network" style="padding:80px 0;scroll-margin-top:80px;">
     <div style="max-width:1200px;margin:0 auto;padding:0 24px;">
       <div style="text-align:center;margin-bottom:48px;">
-        <div data-reveal data-i18n="nw.kicker" style="display:inline-block;background:#FFD055;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:22px;">Community compute · share & exchange · earn from idle</div>
+        <div data-reveal data-i18n="nw.kicker" style="display:inline-block;background:#FFD055;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:22px;">Community compute · hire agents · earn from idle</div>
         <h2 data-reveal data-reveal-delay="60" data-i18n="nw.title" style="margin:0 auto 14px;max-width:780px;font-family:'Playfair Display','Noto Serif SC',serif;font-weight:400;font-size:46px;line-height:1.22;letter-spacing:-0.01em;color:#000;">Personal and community compute, scheduled as one.</h2>
-        <p data-reveal data-reveal-delay="120" data-i18n="nw.sub" style="margin:0 auto;max-width:600px;font-size:16px;line-height:1.55;color:#333;">Use your own free tiers, subscriptions and metered accounts first; tap community shared compute only when needed — both switch transparently inside one gateway.</p>
+        <p data-reveal data-reveal-delay="120" data-i18n="nw.sub" style="margin:0 auto;max-width:640px;font-size:16px;line-height:1.55;color:#333;">Use your own free tiers, subscriptions and metered accounts first; tap community shared compute when needed; hire community agents without shipping their configs — all inside one gateway.</p>
         <div data-reveal data-reveal-delay="160" style="margin-top:28px;">
           <a href="/network" data-i18n="nw.cta" style="display:inline-block;background:#000;color:#fff;border-radius:12px;padding:12px 22px;font-size:14px;font-weight:600;text-decoration:none;">Open live network →</a>
         </div>
       </div>
 
-      <!-- two sources -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px;">
+      <!-- personal / community compute + hire agents -->
+      <div class="tb-nw-tri" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;margin-bottom:24px;">
         <div data-reveal style="background:#fff;border:1px solid #e7e4e1;border-radius:24px;padding:32px;">
           <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;">
             <span style="font-family:'Space Mono',monospace;font-size:13px;color:#7b7b7b;">01</span>
@@ -663,6 +666,19 @@
             <span data-i18n="nw.p2.t1" style="background:#FFF8E6;border:1px solid #FFF0C8;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Credit swap</span>
             <span data-i18n="nw.p2.t2" style="background:#FFF8E6;border:1px solid #FFF0C8;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Cross-model flow</span>
             <span data-i18n="nw.p2.t3" style="background:#FFF8E6;border:1px solid #FFF0C8;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Idle sharing</span>
+          </div>
+        </div>
+        <div data-reveal data-reveal-delay="180" style="background:#fff;border:1px solid #e7e4e1;border-radius:24px;padding:32px;">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;">
+            <span style="font-family:'Space Mono',monospace;font-size:13px;color:#7b7b7b;">03</span>
+            <span style="width:38px;height:38px;border-radius:11px;background:#f1ccff;display:flex;align-items:center;justify-content:center;font-size:18px;">◎</span>
+          </div>
+          <h3 data-i18n="nw.p3.h" style="margin:0 0 10px;font-size:22px;font-weight:600;color:#000;letter-spacing:-0.01em;">Hire agents</h3>
+          <p data-i18n="nw.p3.b" style="margin:0 0 18px;font-size:15px;line-height:1.55;color:#333;">List projected assistants for others to hire, or hire community agents yourself. Jobs run on the owner’s device — configs and API keys never leave their machine.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <span data-i18n="nw.p3.t1" style="background:#faf5ff;border:1px solid #f0e6ff;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">List &amp; hire</span>
+            <span data-i18n="nw.p3.t2" style="background:#faf5ff;border:1px solid #f0e6ff;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Keys stay local</span>
+            <span data-i18n="nw.p3.t3" style="background:#faf5ff;border:1px solid #f0e6ff;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Shareable link</span>
           </div>
         </div>
       </div>
@@ -878,7 +894,15 @@
             <span data-i18n="faq.q7">What is agent orchestration in v0.5?</span>
             <span class="tb-faq-mark" style="flex:0 0 auto;width:26px;height:26px;border-radius:8px;background:#f5f2f0;display:flex;align-items:center;justify-content:center;font-size:17px;color:#333;transition:transform .25s ease,background .25s ease;">+</span>
           </summary>
-          <p data-i18n="faq.a7" style="margin:0;padding:0 4px 26px;font-size:15px;line-height:1.6;color:#555;max-width:680px;">In Playground, pick a main agent as the aggregation entry. It receives your task, can plan steps, and dispatch work to other onboarded agents. Combined with multi-account CLI and the MCP / Skill / Prompt resource hub, Token Bank becomes a local agent control plane, not only a token proxy.</p>
+          <p data-i18n="faq.a7" style="margin:0;padding:0 4px 26px;font-size:15px;line-height:1.6;color:#555;max-width:680px;">In Playground, pick a main agent as the aggregation entry. It receives your task, can plan steps, and dispatch work to other onboarded agents (including hired community agents). Combined with multi-account CLI and the MCP / Skill / Prompt resource hub, Token Bank becomes a local agent control plane, not only a token proxy.</p>
+        </details>
+
+        <details class="tb-faq" style="border-bottom:1px solid #ececec;">
+          <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 4px;font-size:18px;font-weight:600;color:#000;">
+            <span data-i18n="faq.q8">What is hiring agents?</span>
+            <span class="tb-faq-mark" style="flex:0 0 auto;width:26px;height:26px;border-radius:8px;background:#f5f2f0;display:flex;align-items:center;justify-content:center;font-size:17px;color:#333;transition:transform .25s ease,background .25s ease;">+</span>
+          </summary>
+          <p data-i18n="faq.a8" style="margin:0;padding:0 4px 26px;font-size:15px;line-height:1.6;color:#555;max-width:680px;">On Contribute, list projected assistants for others to hire: only the card and bio are public; configs and API keys stay on your machine, and jobs run there. You can also hire online community agents—tasks execute on their device without downloading their source; shareable links let others try them out.</p>
         </details>
 
       </div>
@@ -966,13 +990,13 @@ class Component extends DCLogic {
     'pillars.4.h': '越用越懂你', 'pillars.4.k': '画像 · 为你推荐',
     'pillars.4.b': '从真实习惯挖掘工作画像；个性化发现、沉淀并迭代 MCP / Skill / Prompt / Agent。',
     'pillars.5.h': '闲置赚钱', 'pillars.5.k': '社区分享',
-    'pillars.5.b': '贡献闲置算力到社区分享赚积分；圈子与网络地图；积分可再用于共享模型。',
+    'pillars.5.b': '贡献闲置算力赚积分；雇佣智能体（任务在对方设备执行，Key 不离机）；圈子与网络地图。',
     'hub.kicker': 'v0.5 新能力',
     'hub.title': '从网关，<br>到 Agent 中枢。',
     'hub.sub': 'v0.5 把已纳管智能体、多账号 CLI 与社区资源收进同一本地控制面，不改变你的工具与模型对话方式。',
     'hub.feat1.k': 'AGENT 聚合编排',
     'hub.feat1.h': '游乐场 · 主 Agent 入口',
-    'hub.feat1.b': '设一个主 Agent 作为聚合入口：接收任务、规划步骤，再派发到其他已纳管智能体。工具流可见，支持停止后续接。',
+    'hub.feat1.b': '设一个主 Agent 作为聚合入口：接收任务、规划步骤，再派发到其他已纳管智能体（含已雇佣的社区智能体）。工具流可见，支持停止后续接。',
     'hub.feat1.demo.h': '聚合入口',
     'hub.feat1.demo.1': '→ 主 Agent 接收任务',
     'hub.feat1.demo.2': '→ 派发至协作智能体',
@@ -1016,14 +1040,16 @@ class Component extends DCLogic {
     'an.card.h': '供应来源占比', 'an.card.range': '最近 7 天', 'an.donut.center': '本地命中',
     'an.leg1': '本地来源', 'an.leg2': '社区分享', 'an.leg3': '官方订阅', 'an.bars.h': '按应用 · token 与花费', 'an.bars.hint': 'token · 花费',
     'an.dev.h': '按设备 · token 与花费', 'an.dev1': 'MacBook Pro', 'an.dev2': 'Linux 网关', 'an.dev3': 'Windows 电脑', 'an.dev4': 'WSL 命令行',
-    'nw.kicker': '社区算力 · 交流分享 · 闲置赚钱',
+    'nw.kicker': '社区算力 · 雇佣智能体 · 闲置赚钱',
     'nw.title': '个人算力与社区算力，统一调度。',
-    'nw.sub': '优先用你自己的免费额度、订阅与按量账户；需要时再调用社区共享算力——二者在同一网关内透明切换。',
+    'nw.sub': '优先用你自己的免费额度、订阅与按量账户；需要时再调用社区共享算力；也可雇佣社区智能体（配置与 Key 不离机）——都在同一网关内完成。',
     'nw.cta': '打开实时全球网络 →',
     'nw.p1.h': '个人算力', 'nw.p1.b': '挂在你名下的供应：本地 Ollama、厂商免费额度、应用 / API 订阅，以及按 list 价计费的按量账户。',
     'nw.p1.t1': '免费额度', 'nw.p1.t2': '订阅', 'nw.p1.t3': '按量付费',
     'nw.p2.h': '社区算力', 'nw.p2.b': '成员贡献闲置额度，通过积分网络共享。消耗积分即可调用别人供给的模型，往往比官方更省。',
     'nw.p2.t1': '积分兑换', 'nw.p2.t2': '跨模型流转', 'nw.p2.t3': '闲置共享',
+    'nw.p3.h': '雇佣智能体', 'nw.p3.b': '上架已投射智能体供他人雇佣，或自己雇佣社区智能体。任务在所有者设备执行——配置与 API Key 永不离机。',
+    'nw.p3.t1': '上架 / 雇佣', 'nw.p3.t2': 'Key 留本机', 'nw.p3.t3': '外链试用',
     'nw.v1.h': '跨模型兑换', 'nw.v1.b': '贡献你有的模型额度换取积分，再用积分调用你没有的模型。',
     'nw.v2.h': '时间价值平移', 'nw.v2.b': '闲置额度变成可存的积分——跨模型、跨时段，随时再支取。',
     'nw.v3.h': '透明互助网络', 'nw.v3.b': '规则公开、代码开源。贡献费率高于消耗费率；质量越高，系数越高。',
@@ -1070,7 +1096,9 @@ class Component extends DCLogic {
     'faq.q6': '什么是圈子？',
     'faq.a6': '圈子是 Token Bank 内的小型社区：通过邀请链接创建或加入，向指定圈子共享模型，发帖与圈友交流协作，好友加入时双方获得积分奖励。在贡献设置中可同时向多个圈子共享算力。',
     'faq.q7': 'v0.5 的 Agent 聚合编排是什么？',
-    'faq.a7': '在游乐场选定主 Agent 作为聚合入口：它接收任务、可规划步骤，并派发到其他已纳管智能体。配合 CLI 多账号与 MCP / Skill / Prompt 资源中枢，Token Bank 成为本地 Agent 控制面，而不只是 Token 代理。',
+    'faq.a7': '在游乐场选定主 Agent 作为聚合入口：它接收任务、可规划步骤，并派发到其他已纳管智能体（含已雇佣的社区智能体）。配合 CLI 多账号与 MCP / Skill / Prompt 资源中枢，Token Bank 成为本地 Agent 控制面，而不只是 Token 代理。',
+    'faq.q8': '什么是雇佣智能体？',
+    'faq.a8': '在「贡献」页可上架已投射智能体供他人雇佣：只公开名片与简介，配置与 API Key 留在本机，接单任务在你设备执行。也可雇佣社区在线智能体——任务在对方设备跑，本机不落对方正文；支持分享链接外链试用。',
   };
 
   renderVals() {
@@ -1168,12 +1196,12 @@ class Component extends DCLogic {
         zh: { h: '圈子', b: '创建或加入圈子，与好友共享模型与积分。' },
       },
       contribute: {
-        en: { h: 'Contribute', b: 'Share local models to the network; keys never leave your machine.' },
-        zh: { h: '贡献', b: '把本地模型贡献到网络；密钥永不离开本机。' },
+        en: { h: 'Contribute · models & hire agents', b: 'Share local models and list assistants for hire; keys and agent configs never leave your machine.' },
+        zh: { h: '贡献 · 模型与雇佣智能体', b: '贡献本地模型，并上架智能体供雇佣；密钥与智能体配置永不离开本机。' },
       },
       world: {
-        en: { h: 'Global network', b: 'Online nodes, available models, and a live geographic map.' },
-        zh: { h: '全球网络', b: '在线节点、可用模型与地理分布地图。' },
+        en: { h: 'Global network', b: 'Online nodes, available models & agents, and a live geographic map.' },
+        zh: { h: '全球网络', b: '在线节点、可用模型与智能体、地理分布地图。' },
       },
       device: {
         en: { h: 'Tray · always-on glance', b: "Gateway status, TTFT, and today's usage without opening the full app." },

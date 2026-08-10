@@ -2523,7 +2523,7 @@ function formatProviderTestMsg(result, t) {
   };
 }
 
-function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPersist, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistTier, cooldown = null, onRetryCooldown = null }) {
+function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPersist, onPersistEnabled, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistTier, cooldown = null, onRetryCooldown = null }) {
   const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -2578,7 +2578,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPers
   }
 
   return (
-    <div className="tb-soft-tile rounded-2xl overflow-hidden">
+    <div className={`tb-soft-tile rounded-2xl overflow-hidden ${provider.enabled === false ? 'opacity-60' : ''}`}>
       <div className="flex items-start gap-3 p-4">
         <ServiceIcon
           id={accountInst?.source_id || provider.id}
@@ -2604,6 +2604,14 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPers
               />
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <Toggle
+                enabled={provider.enabled !== false}
+                onChange={() => {
+                  const next = provider.enabled === false;
+                  onUpdate(provider.id, { enabled: next });
+                  onPersistEnabled?.(provider.id, next);
+                }}
+              />
               {provider.base_url && (
                 <button onClick={handleTest} disabled={testing}
                   className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 transition-colors">
@@ -2814,7 +2822,7 @@ function UsageMeter({ provider }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPersist, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl, onPersistTier, cooldown = null, onRetryCooldown = null }) {
+function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPersist, onPersistEnabled, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl, onPersistTier, cooldown = null, onRetryCooldown = null }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -2962,7 +2970,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPers
   }
 
   return (
-    <div className="tb-soft-tile rounded-2xl overflow-hidden">
+    <div className={`tb-soft-tile rounded-2xl overflow-hidden ${provider.enabled === false ? 'opacity-60' : ''}`}>
       <div className="flex items-start gap-3 p-3.5">
         {/* Icon：本地品牌 / 供给源 logo，失败回退 emoji */}
         <ServiceIcon
@@ -2991,6 +2999,16 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPers
               />
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {!isP2P && (
+                <Toggle
+                  enabled={provider.enabled !== false}
+                  onChange={() => {
+                    const next = provider.enabled === false;
+                    onUpdate(provider.id, { enabled: next });
+                    onPersistEnabled?.(provider.id, next);
+                  }}
+                />
+              )}
               {!isP2P && (
                 <button onClick={handleTest} disabled={testing}
                   className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 transition-colors">
@@ -3393,18 +3411,13 @@ export default function Providers() {
     return () => { cancelled = true; };
   }, []);
 
-  // 为每个 gateway_id 确保存在 provider stub（多实例 acct-* 从 catalog 克隆）；已登记即启用
+  // 为每个 gateway_id 确保存在 provider stub（多实例 acct-* 从 catalog 克隆）
+  // 新建 stub 默认启用；已有条目尊重用户开关，勿强制改回 enabled
   useEffect(() => {
     if (!paidAllowlist?.length) return;
     setProviders(prev => {
       let changed = false;
-      const next = prev.map(p => {
-        if (paidAllowlist.includes(p.id) && !p.enabled) {
-          changed = true;
-          return { ...p, enabled: true };
-        }
-        return p;
-      });
+      const next = [...prev];
       for (const gid of paidAllowlist) {
         if (next.some(p => p.id === gid)) continue;
         const payg = userPayg.find(p => paygInstGatewayId(p) === gid);
@@ -4040,17 +4053,19 @@ export default function Providers() {
     () => Object.fromEntries(directAll.map(d => [d.agent_id, d])),
     [directAll],
   );
-  // 按模型视图：不回退 catalog 刊例价，订阅/直连 APP 无配置模型则不出现
-  const modelViewInstances = useMemo(() => accountInstances.map(inst => {
+  // 按模型视图：仅已启用供给源；不回退 catalog 刊例价
+  const modelViewInstances = useMemo(() => accountInstances.flatMap(inst => {
     const gwId = inst.gateway_id;
     const prov = gwId ? providers.find(p => p.id === gwId) : null;
-    return {
+    // 有对应网关源且已停用 → 不进入模型列表
+    if (prov && prov.enabled === false) return [];
+    return [{
       ...inst,
       test_verified: prov?.test_verified === true,
       models: resolveModelsForModelView(
         inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent,
       ),
-    };
+    }];
   }), [accountInstances, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent]);
   // 个人源「全部测速」目标：每个模型带 tier 前缀（paid:/free:）强制路由到个人源而非 p2p；按 tier:model 去重
   const personalProbeTargets = useMemo(() => {
@@ -4480,8 +4495,8 @@ export default function Providers() {
               const extraMeta = resolveMetaForGateway(live.id, meta, extraInst, oauthById);
               const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, extraInst, extraMeta);
               return !useCustomCard
-                ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} cooldown={cooldownFor(live.id, extraInst?.gateway_id, extraInst?.source_id)} {...accountBillingProps} />
-                : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} cooldown={cooldownFor(live.id, extraInst?.gateway_id, extraInst?.source_id)} {...accountBillingProps} />;
+                ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistEnabled={persistProviderEnabled} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} cooldown={cooldownFor(live.id, extraInst?.gateway_id, extraInst?.source_id)} {...accountBillingProps} />
+                : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistEnabled={persistProviderEnabled} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} cooldown={cooldownFor(live.id, extraInst?.gateway_id, extraInst?.source_id)} {...accountBillingProps} />;
             }
             const inst = row.inst;
             const gwId = inst.gateway_id;
@@ -4489,8 +4504,8 @@ export default function Providers() {
             const cardMeta = resolveMetaForGateway(gwId, meta, inst, oauthById);
             const useCustomCard = shouldUseCustomProviderCard(gwId, userSubscriptions, inst, cardMeta);
             return !useCustomCard
-              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} cooldown={cooldownFor(gwId, live.id, inst.source_id)} {...accountBillingProps} />
-              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={inst} cooldown={cooldownFor(gwId, live.id, inst.source_id)} {...accountBillingProps} />;
+              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistEnabled={persistProviderEnabled} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} cooldown={cooldownFor(gwId, live.id, inst.source_id)} {...accountBillingProps} />
+              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistEnabled={persistProviderEnabled} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={inst} cooldown={cooldownFor(gwId, live.id, inst.source_id)} {...accountBillingProps} />;
           })}
           {personalSourceRows.length === 0 && (
             <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>
@@ -4538,9 +4553,9 @@ export default function Providers() {
               {!live ? (
                 <p className="text-xs text-zinc-400 py-6 text-center">{t('providers.add.loadingAccounts')}</p>
               ) : !useCustomCard ? (
-                <ProviderCard provider={live} meta={credMeta} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} onPersistTier={persistProviderTier} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], acct)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} accountInst={acct} {...accountBillingProps} />
+                <ProviderCard provider={live} meta={credMeta} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} onPersistEnabled={persistProviderEnabled} onPersistTier={persistProviderTier} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], acct)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} accountInst={acct} {...accountBillingProps} />
               ) : (
-                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={acct} {...accountBillingProps} />
+                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} onPersistEnabled={persistProviderEnabled} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={acct} {...accountBillingProps} />
               )}
               <div className="flex justify-end pt-1">
                 <button type="button" onClick={() => setCredModalKey(null)} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white">{t('providers.cred.done')}</button>

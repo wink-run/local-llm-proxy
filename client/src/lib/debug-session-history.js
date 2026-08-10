@@ -92,6 +92,30 @@ function fingerprintTurns(turns = []) {
   return ids || String(turns.length);
 }
 
+/** 稳定会话键：同一次多轮对话应始终相同（勿用全量 turns 指纹） */
+function resolveAgentHistorySessionKey(snapshot = {}) {
+  const sid = String(snapshot.cliSessionId || '').trim();
+  if (sid) return `cli:${sid}`;
+  const turns = snapshot.conversationTurns || [];
+  const firstId = String(turns[0]?.taskId || '').trim();
+  if (firstId) return `task:${firstId}`;
+  const firstUser = String(turns[0]?.user || '').trim().slice(0, 120);
+  if (firstUser) return `user:${firstUser}`;
+  return null;
+}
+
+/** prev 是否为 next 的前缀轮次（同线程续写） */
+function turnsAreSameThread(prevTurns = [], nextTurns = []) {
+  if (!prevTurns.length || !nextTurns.length) return false;
+  if (prevTurns.length > nextTurns.length) return false;
+  for (let i = 0; i < prevTurns.length; i += 1) {
+    const a = prevTurns[i]?.taskId || prevTurns[i]?.user;
+    const b = nextTurns[i]?.taskId || nextTurns[i]?.user;
+    if (!a || a !== b) return false;
+  }
+  return true;
+}
+
 function serializeLlmMessage(msg) {
   const base = { ...msg, streaming: false, generating: false };
   if (!Array.isArray(base.images)) return base;
@@ -135,14 +159,29 @@ export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
 
   const store = readStore();
   const fp = fingerprintTurns(turns);
+  const sessionKey = resolveAgentHistorySessionKey({ ...snapshot, conversationTurns: turns });
   const now = Date.now();
-  const existingIdx = store.items.findIndex(
-    it => it.agentKey === agentKey && it.fingerprint === fp,
-  );
+
+  // 优先按稳定 sessionKey / 同线程前缀合并，避免「每轮一条」
+  let existingIdx = -1;
+  if (sessionKey) {
+    existingIdx = store.items.findIndex(
+      it => it.agentKey === agentKey && it.sessionKey === sessionKey,
+    );
+  }
+  if (existingIdx < 0) {
+    existingIdx = store.items.findIndex(
+      it => it.agentKey === agentKey && (
+        it.fingerprint === fp
+        || turnsAreSameThread(it.conversationTurns, turns)
+      ),
+    );
+  }
 
   const entry = {
     id: existingIdx >= 0 ? store.items[existingIdx].id : `hist_${now}_${Math.random().toString(36).slice(2, 7)}`,
     agentKey,
+    sessionKey: sessionKey || (existingIdx >= 0 ? store.items[existingIdx].sessionKey : null),
     title: buildSessionTitle(turns),
     fingerprint: fp,
     savedAt: now,
@@ -159,6 +198,15 @@ export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
     store.items.unshift(entry);
   }
 
+  // 清掉同线程的旧残片（历史 bug 留下的「1 轮 / 2 轮」重复条）
+  const keepId = entry.id;
+  store.items = store.items.filter((it) => {
+    if (it.id === keepId || it.agentKey !== agentKey) return true;
+    if (sessionKey && it.sessionKey === sessionKey) return false;
+    if (turnsAreSameThread(it.conversationTurns, turns)) return false;
+    return true;
+  });
+
   // 每个 Agent 标签最多保留 N 条
   const perAgent = store.items.filter(it => it.agentKey === agentKey);
   if (perAgent.length > MAX_PER_AGENT) {
@@ -170,11 +218,45 @@ export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
   return entry;
 }
 
+/** 合并同线程重复历史（修复旧版「每轮一条」残留） */
+function dedupeAgentItems(items = []) {
+  const sorted = items.slice().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+  const kept = [];
+  for (const it of sorted) {
+    const key = it.sessionKey || resolveAgentHistorySessionKey(it);
+    const dupIdx = kept.findIndex((k) => {
+      if (k.agentKey !== it.agentKey) return false;
+      const kKey = k.sessionKey || resolveAgentHistorySessionKey(k);
+      if (key && kKey && key === kKey) return true;
+      return turnsAreSameThread(it.conversationTurns, k.conversationTurns)
+        || turnsAreSameThread(k.conversationTurns, it.conversationTurns);
+    });
+    if (dupIdx < 0) {
+      kept.push(key && !it.sessionKey ? { ...it, sessionKey: key } : it);
+      continue;
+    }
+    // 保留轮次更多 / 更新更晚的那条
+    const cur = kept[dupIdx];
+    const itTurns = (it.conversationTurns || []).length;
+    const curTurns = (cur.conversationTurns || []).length;
+    if (itTurns > curTurns || (itTurns === curTurns && (it.savedAt || 0) > (cur.savedAt || 0))) {
+      kept[dupIdx] = { ...it, sessionKey: key || it.sessionKey || cur.sessionKey };
+    }
+  }
+  return kept;
+}
+
 /** 列出某 Agent 标签的本地历史会话 */
 export function listAgentSessionSnapshots(agentKey) {
   if (!agentKey) return [];
-  return readStore()
-    .items
+  const store = readStore();
+  const before = store.items.length;
+  const deduped = dedupeAgentItems(store.items);
+  if (deduped.length !== before) {
+    store.items = deduped;
+    writeStore(store);
+  }
+  return deduped
     .filter(it => it.agentKey === agentKey)
     .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
 }
@@ -205,12 +287,36 @@ export function saveLlmSessionSnapshot(snapshot = {}) {
 
   const store = readLlmStore();
   const fp = fingerprintLlmConversation(conversation);
+  // 稳定键：首条用户消息，避免每多一轮就新建一条
+  const firstUser = conversation.find(m =>
+    m?.role === 'user' && (String(m.content || '').trim() || (Array.isArray(m.images) && m.images.length > 0))
+  );
+  const sessionKey = firstUser
+    ? `u:${String(firstUser.content || '').trim().slice(0, 120)}#${(firstUser.images || []).length}`
+    : null;
   const now = Date.now();
-  const existingIdx = store.items.findIndex(it => it.fingerprint === fp);
+  let existingIdx = -1;
+  if (sessionKey) {
+    existingIdx = store.items.findIndex(it => it.sessionKey === sessionKey);
+  }
+  // 前缀合并：旧条对话是新条的前缀 → 视为同会话
+  if (existingIdx < 0) {
+    existingIdx = store.items.findIndex((it) => {
+      if (it.fingerprint === fp) return true;
+      const prev = it.conversation || [];
+      if (!prev.length || prev.length > conversation.length) return false;
+      for (let i = 0; i < prev.length; i += 1) {
+        if ((prev[i]?.role || '') !== (conversation[i]?.role || '')) return false;
+        if (String(prev[i]?.content || '') !== String(conversation[i]?.content || '')) return false;
+      }
+      return true;
+    });
+  }
   const turnCount = conversation.filter(m => m.role === 'user').length;
 
   const entry = {
     id: existingIdx >= 0 ? store.items[existingIdx].id : `llm_${now}_${Math.random().toString(36).slice(2, 7)}`,
+    sessionKey: sessionKey || (existingIdx >= 0 ? store.items[existingIdx].sessionKey : null),
     title: buildLlmSessionTitle(conversation),
     fingerprint: fp,
     savedAt: now,
@@ -223,6 +329,19 @@ export function saveLlmSessionSnapshot(snapshot = {}) {
 
   if (existingIdx >= 0) store.items[existingIdx] = entry;
   else store.items.unshift(entry);
+
+  const keepId = entry.id;
+  store.items = store.items.filter((it) => {
+    if (it.id === keepId) return true;
+    if (sessionKey && it.sessionKey === sessionKey) return false;
+    const prev = it.conversation || [];
+    if (!prev.length || prev.length > conversation.length) return true;
+    for (let i = 0; i < prev.length; i += 1) {
+      if ((prev[i]?.role || '') !== (conversation[i]?.role || '')) return true;
+      if (String(prev[i]?.content || '') !== String(conversation[i]?.content || '')) return true;
+    }
+    return false;
+  });
 
   if (store.items.length > MAX_LLM) store.items = store.items.slice(0, MAX_LLM);
   writeLlmStore(store);

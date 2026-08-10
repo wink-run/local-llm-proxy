@@ -29,7 +29,7 @@ Pain points it tackles:
 | **Spend less** | Seamless model swap; smart local-first + task-type routing; scene strategies; optional lossless compression |
 | **Stay simple** | One-click onboard/restore; multi-account CLI by directory; tray status; one local address |
 | **Get smarter with you** | Work portrait; personalized MCP / Skill / Prompt / Agent discover · accumulate · iterate |
-| **Earn from idle** | Contribute idle capacity for credits; hire community agents; circles & network map |
+| **Earn from idle** | Contribute idle capacity for credits; **hire agents**; circles & network map |
 
 ---
 
@@ -283,9 +283,9 @@ Community sharing (spend credits on shared compute)
 
 ### 5 — Earn from idle
 
-Contribute unused compute or API quota to **community sharing**, earn credits, spend them on shared models; publish or hire **community agents** (run on their device).
+Contribute unused compute or API quota to **community sharing**, earn credits, spend them on shared models; or **list / hire agents** (tasks run on their device; configs and API keys stay local).
 
-**You can contribute:** local Ollama, unused upstream quota, private LAN models (outbound WebSocket—no inbound port)
+**You can contribute compute:** local Ollama, unused upstream quota, private LAN models (outbound WebSocket—no inbound port)
 
 ```
 credits = (output_tokens / 1000) × contribute_rate × quality_multiplier (0.5–1.5)
@@ -293,6 +293,8 @@ spend   = ((prompt + completion tokens) / 1000) × consume_rate
 ```
 
 Contribute rate > consume rate; plus check-in, wheel, and referrals. Circles share models and credits.
+
+**Hire agents:** On Contribute, list projected assistants (card/bio only) or hire community agents per use; jobs run on their device without downloading their source; shareable landing pages for tryouts. Launch from Playground or a hosted app.
 
 ---
 
@@ -410,7 +412,7 @@ Create or join circles; invite friends to share models and credits.
 
 ### Contribute · earn from idle quota
 
-Contribute local models to the community network for credits; keys never leave the machine.
+Contribute local models to the community network for credits; keys never leave the machine. You can also list assistants for others to **hire**—only the card and bio are public; runs stay on your device.
 
 ![Contribute](server/static/screenshots/contribute.webp)
 
@@ -433,7 +435,7 @@ Gateway status, per-app TTFT / today’s usage; open the main panel in one click
 | **Playground** | **Agent orchestration** (community agents, image input); tool streams, stop/resume |
 | **Assets** | Community **MCP / Skill / Prompt / Agent** catalog; projection gating; **built-in MCP relay**; portrait recommendations |
 | **Providers** | **Local sources** and **community sharing**; modalities (text/vision/image/embedding); speed tests & dynamic catalog |
-| **Circles / Contribute / Network** | Circles · contributor nodes / community-agent hire · global node map (also usable on the web) |
+| **Circles / Contribute / Network** | Circles · contributor nodes / **hire agents** · global node map (also usable on the web) |
 | **Config** | Gateway port, timeout, concurrency · lossless compression · cloud account & relay key |
 
 ---

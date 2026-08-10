@@ -597,8 +597,10 @@ function enabledProviders() {
   } catch {}
   return providers
     .filter(p => {
-      const active = p.enabled || (gatewayIds && gatewayIds.has(p.id));
-      if (!active) return false;
+      // 显式关闭 → 不参与路由/模型列表；未写 enabled 视为启用（默认开）
+      if (p.enabled === false) return false;
+      // 未登记账户且未显式启用的付费源：不自动接入（避免 yaml 预填误启用）
+      if (p.enabled == null && p.type === 'paid' && gatewayIds && !gatewayIds.has(p.id)) return false;
       // 社区 P2P：需后端地址 + 用户已登录（仅有残留转发 Key 不够）
       if (p.type === 'p2p') return !!_backendUrl && !!_userJwt;
       return !!p.base_url;

@@ -380,11 +380,16 @@ export default function Resources() {
   });
   /** AI / 静态聚合后的 tag→用途 映射 */
   const [purposeAiMap, setPurposeAiMap] = useState(loadAiPurposeMap);
+  const purposeAiMapRef = useRef(purposeAiMap);
+  purposeAiMapRef.current = purposeAiMap;
   /** 个性化推荐结果变更时递增，刷新用途芯片 */
   const [recoPurposeRev, setRecoPurposeRev] = useState(0);
   const [customScanDirs, setCustomScanDirs] = useState(readScanCustomDirs);
   const [defaultScanRoots, setDefaultScanRoots] = useState([]);
   const [scanning, setScanning] = useState(false);
+  // 用 ref 做重入守卫，避免 scanning/autoTagging 进 runScan deps → 重建 loadAll → 误触发「搜索中」
+  const scanningRef = useRef(false);
+  const autoTaggingRef = useRef(false);
   /** 扫描后自动打标进行中（禁用再次扫描） */
   const [autoTagging, setAutoTagging] = useState(false);
   const [scanExpanded, setScanExpanded] = useState(false);
@@ -412,11 +417,10 @@ export default function Resources() {
   }, [query]);
 
   const scanFilters = useCallback(() => ({
-    query: debouncedQuery || undefined,
-    // 默认目录始终扫；customDirs 为用户补充
+    // 搜索在前端过滤；扫盘只跟监控目录有关，避免每次输入都重扫磁盘
     customDirs: customScanDirs,
     includeManaged: true,
-  }), [debouncedQuery, customScanDirs]);
+  }), [customScanDirs]);
 
   const loadBase = useCallback(async ({ silent = false } = {}) => {
     if (!window.electronAPI?.resource) {
@@ -427,10 +431,10 @@ export default function Resources() {
     if (!silent) setLoading(true);
     setError('');
     try {
-      const filters = { type: typeFilter || undefined, query: debouncedQuery || undefined };
+      // 全量拉取，搜索/类型在前端筛，避免每次筛选触发 IPC
       const [catRes, resRes, agentRes, asstBindRes] = await Promise.all([
-        window.electronAPI.resource.listCatalog(filters),
-        window.electronAPI.resource.listResources(filters),
+        window.electronAPI.resource.listCatalog({}),
+        window.electronAPI.resource.listResources({}),
         window.electronAPI.resource.listAgentTargets(),
         // Skill 卡片「智能体依赖」标记：始终拉全量智能体（不受当前类型筛选）
         window.electronAPI.resource.listResources({ type: 'assistant' }),
@@ -444,12 +448,16 @@ export default function Resources() {
         setPromptAgents(agentRes.promptAgents || []);
         setAssistantAgents(agentRes.assistantAgents || []);
       }
+      try {
+        const apps = await window.electronAPI.apps?.list?.();
+        if (apps) setManagedAppTargets(deriveManagedAppTargets(apps));
+      } catch { /* apps 拉取失败时回退到 agents */ }
     } catch (e) {
       setError(e.message);
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [typeFilter, debouncedQuery, t]);
+  }, [t]);
 
   /** 拉取默认监控目录：listScanRoots → scanStatsHint → Agent skillRoot 回退 */
   const refreshDefaultScanRoots = useCallback(async (filters, scanStatsHint) => {
@@ -513,6 +521,8 @@ export default function Resources() {
     aiTagCancelledRef.current = true;
     try { aiTagAbortRef.current?.abort(); } catch { /* ignore */ }
     aiTagInflightRef.current = false;
+    autoTaggingRef.current = false;
+    scanningRef.current = false;
     setAutoTagging(false);
     setScanning(false);
     setMsg(t('resources.autoTaggingCancelled'));
@@ -616,9 +626,10 @@ export default function Resources() {
 
   const runScan = useCallback(async ({ silent = false } = {}) => {
     if (!window.electronAPI?.resource) return;
-    // 自动打标未结束时禁止再次扫描
-    if (!silent && (scanning || autoTagging || aiTagInflightRef.current)) return;
+    // 自动打标未结束时禁止再次扫描（读 ref，勿依赖 scanning state 以免重建 loadAll）
+    if (!silent && (scanningRef.current || autoTaggingRef.current || aiTagInflightRef.current)) return;
     if (!silent) {
+      scanningRef.current = true;
       setScanning(true);
       setError('');
       setMsg('');
@@ -649,10 +660,11 @@ export default function Resources() {
           aiTagCancelledRef.current = false;
           aiTagAbortRef.current = ac;
           try {
-            await silentAiTagAfterScan(nextDiscovered, purposeAiMap, {
+            await silentAiTagAfterScan(nextDiscovered, purposeAiMapRef.current, {
               signal: ac.signal,
               onTagging: () => {
                 if (aiTagCancelledRef.current) return;
+                autoTaggingRef.current = true;
                 setAutoTagging(true);
                 setMsg(t('resources.autoTagging'));
               },
@@ -672,6 +684,8 @@ export default function Resources() {
     } finally {
       if (!silent) {
         const cancelled = aiTagCancelledRef.current;
+        autoTaggingRef.current = false;
+        scanningRef.current = false;
         setAutoTagging(false);
         setScanning(false);
         // 取消时保留「已取消」提示；正常结束恢复扫描摘要
@@ -679,7 +693,7 @@ export default function Resources() {
         aiTagCancelledRef.current = false;
       }
     }
-  }, [scanFilters, refreshDefaultScanRoots, purposeAiMap, silentAiTagAfterScan, scanning, autoTagging, t]);
+  }, [scanFilters, refreshDefaultScanRoots, silentAiTagAfterScan, t]);
 
   const loadAll = useCallback(async ({ silent = false } = {}) => {
     // 先扫描即纳管（入库），再读取 resources，确保投射菜单能查到刚纳管的 skill
@@ -1396,22 +1410,41 @@ export default function Resources() {
     }
   }
 
-  async function handleUnproject(resource, agentId) {
-    setBusy(`${resource.id}-${agentId}`);
+  /** 取消投射：优先按 projectionId，避免同 agent 多条时误删/找不到 */
+  async function handleUnproject(resource, projOrAgentId) {
+    const resourceId = resource?.id || resource?.resourceId;
+    const proj = projOrAgentId && typeof projOrAgentId === 'object' ? projOrAgentId : null;
+    const agentId = proj ? proj.agentId : projOrAgentId;
+    if (!resourceId || !agentId) return;
+
+    const busyKey = `${resourceId}-${agentId}`;
+    setBusy(busyKey);
     setError('');
+    // 先乐观去掉标签，避免「点了没反应」的观感；失败再回滚
+    const prevProjs = resource.projections || [];
+    const optimistic = prevProjs.filter((p) => (proj?.id ? p.id !== proj.id : p.agentId !== agentId));
+    applyResourcePatch(resourceId, { ...resource, id: resourceId, projections: optimistic });
+
     try {
-      const res = await window.electronAPI.resource.unproject({ resourceId: resource.id, agentId });
-      if (!res.success) {
-        setError(res.error || t('resources.unprojectFailed'));
+      const res = await window.electronAPI.resource.unproject({
+        resourceId,
+        agentId,
+        ...(proj?.id ? { projectionId: proj.id } : {}),
+      });
+      if (!res?.success) {
+        applyResourcePatch(resourceId, { ...resource, id: resourceId, projections: prevProjs });
+        const err = res?.error || t('resources.unprojectFailed');
+        setError(err);
+        window.alert(err);
         return;
       }
-      // 用返回的最新投射列表局部更新，不整页刷新
-      if (res.resource) applyResourcePatch(resource.id, res.resource);
-      else {
-        const nextProjs = (resource.projections || []).filter(p => p.agentId !== agentId);
-        applyResourcePatch(resource.id, { ...resource, projections: nextProjs });
-      }
+      if (res.resource) applyResourcePatch(resourceId, res.resource);
       setMsg(t('resources.unprojectOk'));
+    } catch (e) {
+      applyResourcePatch(resourceId, { ...resource, id: resourceId, projections: prevProjs });
+      const err = e?.message || t('resources.unprojectFailed');
+      setError(err);
+      window.alert(err);
     } finally {
       setBusy('');
     }
@@ -1585,7 +1618,19 @@ export default function Resources() {
     return ps.includes(tagFilter);
   };
 
-  const filteredCatalog = catalog.filter(r => matchPromptKind(r) && matchTag(r));
+  /** 名称/描述/标签本地搜索（不再靠后端 query 重扫） */
+  const matchQuery = useCallback((item) => {
+    const q = String(debouncedQuery || '').trim().toLowerCase();
+    if (!q) return true;
+    const hay = [
+      item?.name, item?.display_name, item?.description,
+      ...(resourceTags(item) || []),
+      item?.metadata?.category,
+    ].filter(Boolean).join('\n').toLowerCase();
+    return hay.includes(q);
+  }, [debouncedQuery]);
+
+  const filteredCatalog = catalog.filter(r => matchPromptKind(r) && matchTag(r) && matchQuery(r));
   const managedCount = resources.length;
   const discoveredCount = scanStats?.totalOnDisk ?? discovered.length;
   const showSkillTabs = !typeFilter || typeFilter === 'skill';
@@ -1728,7 +1773,8 @@ export default function Resources() {
 
   const filteredDiscovered = discovered
     .filter(item => !effectiveAppFilter || (item.agents || []).some(a => a.agentId === effectiveAppFilter))
-    .filter(item => matchTag(item, resourcesById));
+    .filter(item => matchTag(item, resourcesById))
+    .filter(item => matchQuery(item));
 
   /**
    * 用途芯片：只展示「当前 Tab + 类型 + 应用筛选」下至少有一张卡片的用途。
@@ -1991,6 +2037,8 @@ export default function Resources() {
     const expanded = expandedId === rowKey;
     const toggle = () => setExpandedId(expanded ? null : rowKey);
     const purposes = purposesOf(item, resourcesById);
+    // 列表项不再带全文，预览回退到已纳管资源正文
+    const previewSrc = (item.resourceId && resourcesById.get(item.resourceId)) || item;
     return (
       <ResourceAssetCard
         key={rowKey}
@@ -2003,6 +2051,7 @@ export default function Resources() {
         previewLabel={t('resources.preview')}
         collapseLabel={t('resources.collapse')}
         emptyPreviewLabel={t('resources.emptyDetail')}
+        previewText={buildPreviewText('skill', previewSrc)}
         layout="row"
         badges={(
           <>
@@ -2121,7 +2170,7 @@ export default function Resources() {
             <span
               key={p.id}
               title={hoverTitle}
-              className={`tb-tag text-[10px] px-2 py-0.5 cursor-default ${
+              className={`tb-tag text-[10px] pl-2 ${canUnproject ? 'pr-0.5' : 'pr-2'} py-0.5 cursor-default ${
                 canUnproject ? 'tb-tag-blue' : 'tb-tag-muted !border-solid'
               }`}
             >
@@ -2132,10 +2181,15 @@ export default function Resources() {
               {canUnproject && (
                 <button
                   type="button"
-                  className="opacity-60 hover:opacity-100 rounded-md"
+                  className="tb-press electron-no-drag ml-0.5 w-4 h-4 inline-flex items-center justify-center rounded-full text-current/55 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40"
                   title={t('resources.unproject')}
-                  disabled={busy === `${resource.id}-${p.agentId}`}
-                  onClick={() => handleUnproject(resource, p.agentId)}
+                  aria-label={t('resources.unproject')}
+                  disabled={busy === `${resource.id || resource.resourceId}-${p.agentId}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleUnproject(resource, p);
+                  }}
                 >
                   ×
                 </button>
@@ -2355,6 +2409,7 @@ export default function Resources() {
       .filter(r => {
         if (r.type === 'prompt' && !matchPromptKind(r)) return false;
         if (!matchTag(r)) return false;
+        if (!matchQuery(r)) return false;
         if (layerFilter) {
           const life = classifyLifecycle(r);
           if (life.layer === 'exempt' || life.layer !== layerFilter) return false;

@@ -235,7 +235,108 @@ function customDirToken(dir) {
 /** 递归扫描时跳过的目录名 */
 const SKIP_DIR_NAMES = new Set([
   'node_modules', '.git', 'vendor', 'dist', 'build', '.next', '__pycache__', '.cache',
+  '.venv', 'venv', 'target', 'coverage', '.turbo', '.pnpm-store', 'Pods',
+  '.idea', '.vscode', 'DerivedData', 'out', '.output',
 ]);
+
+/** 根目录下是否已有标准 Agent skills 路径（视为「项目根」，勿整仓深挖） */
+function hasProjectSkillLayout(projectRoot) {
+  return PROJECT_SKILL_DIRS.some((spec) => {
+    try {
+      return fs.existsSync(path.join(projectRoot, ...spec.segments));
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * 在指定目录下递归查找 Skill（含子目录），并识别项目内 .agents/.claude 等结构
+ * @param {string} rootDir 用户指定的扫描根目录
+ */
+function scanCustomSkillTree(rootDir, options = {}) {
+  const maxDepth = options.maxDepth ?? 8;
+  const resolved = path.resolve(String(rootDir || '').trim());
+  if (!resolved || !fs.existsSync(resolved)) return [];
+
+  const flat = [];
+  const seenDirs = new Set();
+  const rootLabel = path.basename(resolved) || resolved;
+  const rootToken = customDirToken(resolved);
+
+  const addSkillDir = (skillDir, labelSuffix = '') => {
+    let real;
+    try { real = fs.realpathSync(skillDir); } catch { return; }
+    if (seenDirs.has(real)) return;
+    seenDirs.add(real);
+
+    const item = skillItemFromDir(
+      skillDir,
+      path.basename(skillDir),
+      'custom',
+      labelSuffix ? `指定目录 · ${rootLabel} · ${labelSuffix}` : `指定目录 · ${rootLabel}`,
+      {
+        scanKey: `custom::${rootToken}::${customDirToken(real)}::${path.basename(skillDir)}`,
+        scope: 'custom',
+        customScanRoot: resolved,
+        skillRoot: resolved,
+      },
+    );
+    if (item) flat.push(item);
+  };
+
+  // 根本身就是单个 skill / skills 目录 → 浅扫，不深挖
+  if (isSkillDir(resolved)) {
+    addSkillDir(resolved);
+    return flat;
+  }
+  if (/^skills(?:-cursor)?$/i.test(path.basename(resolved))) {
+    for (const item of scanSkillRoot(resolved, 'custom', `指定目录 · ${rootLabel}`)) {
+      flat.push({
+        ...item,
+        scope: 'custom',
+        customScanRoot: resolved,
+        scanKey: `custom::${rootToken}::${item.name}`,
+      });
+    }
+    return flat;
+  }
+
+  // 项目根（含 .agents/.claude/skills 等）：只扫标准路径，避免整仓 walk（githubprojects 量级可省数秒）
+  if (hasProjectSkillLayout(resolved)) {
+    for (const item of scanProjectSkills(resolved)) {
+      let real;
+      try { real = fs.realpathSync(item.skillDir); } catch { continue; }
+      if (seenDirs.has(real)) continue;
+      seenDirs.add(real);
+      flat.push({
+        ...item,
+        scope: 'custom',
+        customScanRoot: resolved,
+        scanKey: `${item.agentId}::custom::${rootToken}::${item.name}`,
+      });
+    }
+    return flat;
+  }
+
+  function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    if (isSkillDir(dir)) {
+      addSkillDir(dir);
+      return;
+    }
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of entries) {
+      if (!ent.isDirectory() && !ent.isSymbolicLink()) continue;
+      if (SKIP_DIR_NAMES.has(ent.name)) continue;
+      walk(path.join(dir, ent.name), depth + 1);
+    }
+  }
+
+  walk(resolved, 0);
+  return flat;
+}
 
 function skillItemFromDir(skillDir, entName, agentId, agentLabel, extra = {}) {
   const skillPath = fs.existsSync(path.join(skillDir, 'SKILL.md'))
@@ -283,75 +384,6 @@ function scanGlobalSkills() {
       flat.push({ ...item, scope: 'global' });
     }
   }
-  return flat;
-}
-
-/**
- * 在指定目录下递归查找 Skill（含子目录），并识别项目内 .agents/.claude 等结构
- * @param {string} rootDir 用户指定的扫描根目录
- */
-function scanCustomSkillTree(rootDir, options = {}) {
-  const maxDepth = options.maxDepth ?? 8;
-  const resolved = path.resolve(String(rootDir || '').trim());
-  if (!resolved || !fs.existsSync(resolved)) return [];
-
-  const flat = [];
-  const seenDirs = new Set();
-  const rootLabel = path.basename(resolved) || resolved;
-  const rootToken = customDirToken(resolved);
-
-  const addSkillDir = (skillDir, labelSuffix = '') => {
-    let real;
-    try { real = fs.realpathSync(skillDir); } catch { return; }
-    if (seenDirs.has(real)) return;
-    seenDirs.add(real);
-
-    const item = skillItemFromDir(
-      skillDir,
-      path.basename(skillDir),
-      'custom',
-      labelSuffix ? `指定目录 · ${rootLabel} · ${labelSuffix}` : `指定目录 · ${rootLabel}`,
-      {
-        scanKey: `custom::${rootToken}::${customDirToken(real)}::${path.basename(skillDir)}`,
-        scope: 'custom',
-        customScanRoot: resolved,
-        skillRoot: resolved,
-      },
-    );
-    if (item) flat.push(item);
-  };
-
-  function walk(dir, depth) {
-    if (depth > maxDepth) return;
-    if (isSkillDir(dir)) {
-      addSkillDir(dir);
-      return;
-    }
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const ent of entries) {
-      if (!ent.isDirectory() && !ent.isSymbolicLink()) continue;
-      if (SKIP_DIR_NAMES.has(ent.name)) continue;
-      walk(path.join(dir, ent.name), depth + 1);
-    }
-  }
-
-  walk(resolved, 0);
-
-  // 同时识别项目内 Agent skills 目录（如 Debug 工作区的 .claude/skills）
-  for (const item of scanProjectSkills(resolved)) {
-    let real;
-    try { real = fs.realpathSync(item.skillDir); } catch { continue; }
-    if (seenDirs.has(real)) continue;
-    seenDirs.add(real);
-    flat.push({
-      ...item,
-      scope: 'custom',
-      customScanRoot: resolved,
-      scanKey: `${item.agentId}::custom::${rootToken}::${item.name}`,
-    });
-  }
-
   return flat;
 }
 

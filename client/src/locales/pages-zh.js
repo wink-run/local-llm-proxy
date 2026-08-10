@@ -895,6 +895,7 @@ export default {
   'providers.probe.titleP2p': '对有在线节点的模型逐个发极小请求测速（真实调用，消耗积分）',
   'providers.probe.titlePersonal': '对每个个人源模型逐个发极小请求测速（真实调用，消耗你自己供给源的计费，非积分）',
   'providers.badge.enabled': '已启用',
+  'providers.badge.disabled': '已停用',
   'providers.badge.needsConfig': '需配置',
   'providers.badge.verified': '已通过',
   'providers.badge.freeQuota': '免费额度',

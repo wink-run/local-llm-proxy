@@ -249,20 +249,13 @@ function revertAppConfigFile(app_id, config_file) {
 
 // Claude Code CLI 的 settings.json 托管（核心逻辑见 ./cli-endpoint-config）。
 // settings.json 的 env 压过 shim → 选路由时写入 PROXY_MANAGED + 网关 BASE_URL，占住配置防其他代理改写。
-// 同时按绑定路由模型解析上下文窗口，注入 CLAUDE_CODE_MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW。
+// 对齐 cc-switch：托管只写 BASE_URL + TOKEN，不硬编码上下文窗口 env。
 function syncCliInstanceEndpointConfig(app, opts = {}) {
   try {
     const cl = require('./config-loader');
-    const { getRouteModels } = require('./app-handlers');
-    const { resolveMaxContextWindow } = require('./model-context-window');
-    const routes = (readLocalConfig().scene_routes || []);
-    const providers = (readAgentConfig() || {}).providers || [];
-    const models = getRouteModels(app, routes);
-    const contextWindow = resolveMaxContextWindow(models, providers);
     return require('./cli-endpoint-config').syncCliInstanceEndpointConfig(app, {
       expandHome: (p) => cl.expandHome(p),
       gatewayOrigin: `http://${cl.gatewayCtx().reverse}`,
-      ...(contextWindow ? { contextWindow } : {}),
       ...opts,
     });
   } catch (e) { console.warn('[cli-instance] endpoint settings sync error:', e && e.message); }
@@ -2623,9 +2616,9 @@ function registerIPC() {
   // Write Claude Code config into ~/.claude/settings.json（用户级设置；Claude Code 实际读取的就是这个，
   // settings.local.json 是「项目级」约定，写在 ~/.claude 下不会被读取）
   // AUTH_TOKEN 写 PROXY_MANAGED 占位：占住 settings.env（优先级高于其他代理/shim），不暴露真实 key
+  // 对齐 cc-switch：不写 CLAUDE_CODE_MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW（窗口随上游模型变）
   ipcMain.handle('claude:configure', async (_e, { baseUrl, models = [] }) => {
     const { PROXY_MANAGED_TOKEN } = require('./cli-endpoint-config');
-    const { resolveMaxContextWindow, autoCompactWindow } = require('./model-context-window');
     const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
     let settings = {};
     try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
@@ -2633,6 +2626,9 @@ function registerIPC() {
     settings.env.ANTHROPIC_BASE_URL = baseUrl || 'http://127.0.0.1:11430';
     // 占位标记：占住 settings.env（优先级高于其他代理），真实 key 不写入
     settings.env.ANTHROPIC_AUTH_TOKEN = PROXY_MANAGED_TOKEN;
+    // 清掉历史硬编码窗口，避免误伤大上下文模型
+    delete settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+    delete settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
 
     // Map available models to Claude tier env vars
     // Claude Code uses these to select models per task complexity
@@ -2645,14 +2641,6 @@ function registerIPC() {
       settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL    = heavy;
       // Also write MODELS so other tools can discover them
       settings.env.MODELS = models.join(',');
-      // 按绑定模型解析窗口，避免 Claude Code 对未知模型默认 200K 导致过早/过晚压缩
-      const providers = (readAgentConfig() || {}).providers || [];
-      const win = resolveMaxContextWindow(models, providers);
-      if (win) {
-        settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(win);
-        const acw = autoCompactWindow(win);
-        if (acw) settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(acw);
-      }
     }
 
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });

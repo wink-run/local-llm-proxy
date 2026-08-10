@@ -161,12 +161,19 @@ export function mergeAccountsForGateway(cfg = {}, accounts = {}) {
   };
 }
 
+/** 供给源是否启用（未写字段默认启用） */
+export function isProviderEnabled(provider) {
+  if (!provider) return false;
+  return provider.enabled !== false;
+}
+
 /**
  * 收集个人源可用模型（与供给源页 PersonalSourceModelView 同源）
  * @returns {Array<{ id: string, tier: 'free'|'paid' }>}
  */
 export function collectPersonalAvailableModels(cfg = {}, accounts = {}) {
   const providers = cfg?.providers || [];
+  const provById = Object.fromEntries(providers.map(p => [p.id, p]));
   // 刊例价覆盖存于 local-config（accounts），agent config 可能未同步
   const pricingOverrides = {
     ...(accounts?.provider_pricing_overrides || {}),
@@ -177,6 +184,12 @@ export function collectPersonalAvailableModels(cfg = {}, accounts = {}) {
   const seen = new Set();
 
   for (const inst of instances) {
+    // 网关供给源：仅统计已启用的；直连无 gateway_id，始终计入
+    const gwId = inst.gateway_id;
+    if (gwId) {
+      const prov = provById[gwId];
+      if (prov && !isProviderEnabled(prov)) continue;
+    }
     const models = resolveModelsForModelView(
       inst, providers, userPayg, userSubs, pricingOverrides, directBilling,
     );
@@ -234,8 +247,10 @@ export function enrichProvidersForRouting(providers = [], accounts = {}) {
 }
 
 function providerCanServeModel(provider, modelId, gatewayIds) {
-  const active = provider?.enabled || (gatewayIds && gatewayIds.has(provider?.id));
-  if (!active || !provider?.base_url || provider.type === 'p2p') return false;
+  // 显式关闭一律不可用；未写 enabled 时仍可用 gatewayIds / enabled 判定
+  if (!provider || provider.enabled === false) return false;
+  const active = provider.enabled || (gatewayIds && gatewayIds.has(provider.id));
+  if (!active || !provider.base_url || provider.type === 'p2p') return false;
   const list = provider.models || [];
   if (!list.length) return true;
   return list.some(m => modelEntryName(m) === modelId);

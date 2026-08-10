@@ -686,7 +686,7 @@ function enrichProvidersFromAccounts(providers, localCfg) {
   });
 }
 
-/** 将账户/刊例价模型写回 agent config，并启用已登记网关供给源 */
+/** 将账户/刊例价模型写回 agent config（不改 enabled，由供给源页开关控制） */
 function syncGatewayProvidersFromAccounts(agentCfg, localCfg) {
   if (!agentCfg || !Array.isArray(agentCfg.providers)) return { cfg: agentCfg, changed: false };
   const gatewayIds = new Set(resolveUserGatewayProviderIds(localCfg));
@@ -694,10 +694,6 @@ function syncGatewayProvidersFromAccounts(agentCfg, localCfg) {
   const providers = agentCfg.providers.map(p => {
     let next = { ...p };
     if (gatewayIds.has(p.id)) {
-      if (!next.enabled) {
-        next.enabled = true;
-        changed = true;
-      }
       const extra = collectModelsForGatewayProvider(p.id, localCfg);
       if (extra.size) {
         const merged = mergeProviderModelEntries(next.models, extra);
