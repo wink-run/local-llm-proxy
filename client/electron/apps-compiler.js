@@ -57,6 +57,8 @@ function compileApiKeyApp(e) {
   if (e.enable_3p) out.enable_3p = true;
   if (e.detect_type === 'command') out.command = e.detect_value || '';
   else out.appx = e.detect_value || '';
+  // Codex 等：appx + command 双信号（Desktop 或 CLI 任一即可）
+  if (e.detect_command) out.command = e.detect_command;
   if (e.patch && Object.keys(e.patch).length) out.patch = e.patch;
   if (e.env && Object.keys(e.env).length) out.env = e.env;
   return out;
@@ -64,9 +66,10 @@ function compileApiKeyApp(e) {
 
 function compileSessionSource(e) {
   const sid = e.session_source_id || e.id;
-  // 补录规则已由 expandEntity 从 handler 解析，优先用实体上的 session_scan
-  const scan = (e.session_scan && typeof e.session_scan === 'object')
-    ? e.session_scan
+  // 补录规则已由 expandEntity 从 handler 解析；空对象视为未解析，回落 scans 表
+  const rawScan = (e.session_scan && typeof e.session_scan === 'object') ? e.session_scan : null;
+  const scan = (rawScan && Object.keys(rawScan).length)
+    ? rawScan
     : (sessionScansById()[sid] || {});
   const overlay = {
     id: sid,
@@ -94,13 +97,29 @@ function compileSessionSource(e) {
 
 /** app_entities → 客户端运行时段 */
 function compileAppsDoc(doc) {
-  const entities = (doc.app_entities || doc.entities || []).filter(e => e?.id);
+  const { canonicalAppEntityId } = require('./app-handlers');
+  const rawEntities = (doc.app_entities || doc.entities || []).filter(e => e?.id);
+  // Codex Desktop/CLI 等别名：编译前按 canonical id 去重，优先 api_key handler
+  const RANK = { 'codex-desktop-api': 3, api_key: 3, 'codex-cli': 1 };
+  const byCanonical = new Map();
+  for (const raw of [...rawEntities].sort((a, b) => sortKey(a) - sortKey(b))) {
+    const cid = canonicalAppEntityId(raw.id);
+    const score = RANK[String(raw.handler || '')] || 2;
+    const prev = byCanonical.get(cid);
+    if (!prev || score > (RANK[String(prev.handler || '')] || 2)) {
+      // 统一展示名：Codex CLI/Desktop → Codex
+      const next = { ...raw, id: cid };
+      if (cid === 'codex') next.name = 'Codex';
+      byCanonical.set(cid, next);
+    }
+  }
+  const entities = [...byCanonical.values()];
   const tools = [];
   const api_key_apps = [];
   const session_sources = [];
   const expanded = [];
 
-  for (const raw of [...entities].sort((a, b) => sortKey(a) - sortKey(b))) {
+  for (const raw of entities) {
     let e;
     try {
       e = expandEntity(raw);

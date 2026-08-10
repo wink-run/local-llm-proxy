@@ -11,6 +11,18 @@ const SCANS_YAML = path.join(__dirname, 'config', 'session-scans.yaml');
 const OPS_YAML = path.join(__dirname, 'config', 'handler-ops.yaml');
 const CAP_KEYS = ['gateway_proxy', 'session_trace', 'session_usage_import', 'resource_project'];
 
+/** 应用实体身份别名：共用同一配置/会话的入口归一（列表与下发不重复） */
+const APP_ENTITY_ALIASES = {
+  'codex-desktop': 'codex',
+};
+
+/** 归一应用实体 id（Codex Desktop 与 CLI 都归为 codex） */
+function canonicalAppEntityId(id) {
+  const raw = String(id || '').trim();
+  if (!raw) return raw;
+  return APP_ENTITY_ALIASES[raw] || raw;
+}
+
 let _doc = null;
 let _scansBuiltin = null;
 let _cloudScans = null;   // GET /config/apps 下发的 session_scans 覆盖/扩展
@@ -91,6 +103,10 @@ function handlersMap() {
     if (baseCaps.length || cloudCaps.length) {
       merged.capabilities = [...new Set([...baseCaps, ...cloudCaps])];
     }
+    // session 深合并：云端旧快照缺 source_id 时保留内置（Codex Desktop→codex scan）
+    if (base[id]?.session && typeof base[id].session === 'object') {
+      merged.session = { ...base[id].session, ...(h.session && typeof h.session === 'object' ? h.session : {}) };
+    }
     out[id] = merged;
   }
   return out;
@@ -102,11 +118,16 @@ function handlersMap() {
  */
 function resolveSessionScan(session, vars, handlerId) {
   const v = vars && typeof vars === 'object' ? vars : {};
-  if (v.session_scan && typeof v.session_scan === 'object') return { ...v.session_scan };
+  if (v.session_scan && typeof v.session_scan === 'object' && Object.keys(v.session_scan).length) {
+    return { ...v.session_scan };
+  }
   const h = handlersMap()[handlerId] || {};
   const sess = session || h.session || null;
-  if (sess?.scan && typeof sess.scan === 'object') return { ...sess.scan };
-  const sid = sess?.source_id;
+  if (sess?.scan && typeof sess.scan === 'object' && Object.keys(sess.scan).length) {
+    return { ...sess.scan };
+  }
+  // source_id 优先；旧云端快照可能缺 source_id，回落 activity_agent_id（Codex Desktop 等）
+  const sid = sess?.source_id || sess?.activity_agent_id || null;
   if (sid) return { ...(sessionScansById()[sid] || {}) };
   return {};
 }
@@ -345,7 +366,9 @@ function resolveHandlerId(appRec) {
   if (appRec?.handler) return normalizeHandlerId(appRec.handler);
   const preset = normalizeEntityId(appRec?.preset_id || appRec?.agent_id || appRec?.id);
   if (!preset) return '';
-  const ent = (loadDoc().default_entities || []).find(e => e.id === preset || normalizeEntityId(e.id) === preset);
+  const entities = loadDoc().default_entities || [];
+  const ent = entities.find(e => e.id === preset || normalizeEntityId(e.id) === preset)
+    || entities.find(e => e.id === canonicalAppEntityId(preset));
   return normalizeHandlerId(ent?.handler || '');
 }
 
@@ -471,6 +494,8 @@ function expandEntity(compact) {
       Object.assign(entity, {
         detect_type: proxy.detect_type || 'appx',
         detect_value: proxy.detect_value || '',
+        // 可选第二探测：如 Codex 同时认 Desktop(appx) 与 CLI(command)
+        detect_command: proxy.detect_command || '',
         config_file: proxy.config_file || '',
         marker: proxy.marker || 'tokenbank',
         enable_3p: !!proxy.enable_3p,
@@ -487,7 +512,7 @@ function expandEntity(compact) {
   if (sessionImport && session) {
     entity.session_scan = scan;
     entity.standalone = session.standalone != null ? !!session.standalone : !gatewayProxy;
-    entity.session_source_id = sid || entity.id;
+    entity.session_source_id = sid || session.activity_agent_id || entity.id;
     if (gatewayProxy) {
       entity.route_bindable = entity.route_bindable != null
         ? entity.route_bindable
@@ -606,6 +631,8 @@ module.exports = {
   resolveRouteMultiSelect,
   listHandlersMeta,
   normStrList,
+  APP_ENTITY_ALIASES,
+  canonicalAppEntityId,
   TRAE_WORK_HANDLER,
   TRAE_WORK_ENTITY,
   normalizeHandlerId,

@@ -43,18 +43,7 @@ tools:
         ANTHROPIC_BASE_URL: http://{REVERSE}
         ANTHROPIC_AUTH_TOKEN: "{KEY}"
 
-  # ── Codex CLI：认 OPENAI_BASE_URL/OPENAI_API_KEY，env 重定向到网关（无需证书）──
-  - id: codex
-    name: Codex (CLI)
-    protocol: responses
-    detect:
-      command: codex
-      version-arg: --version
-    strategy: base_url-env
-    inject:
-      env:
-        OPENAI_BASE_URL: http://{REVERSE}/v1
-        OPENAI_API_KEY: "{KEY}"
+  # ── Codex CLI：与 Desktop 合并为单一应用（见 api_key_apps.codex），此处不再单独列出 ──
 
   # ── OpenCode（sst/opencode）：认 OPENAI_BASE_URL/OPENAI_API_KEY，env 重定向（环境变量优先）──
   - id: opencode
@@ -108,10 +97,13 @@ api_key_apps:
       inferenceGatewayAuthScheme: bearer
       _configManagedBy: tokenbank
 
-  - id: codex-desktop
-    name: Codex Desktop
+  # ── Codex：CLI 与 Desktop 共用 ~/.codex/config.toml，只保留一条 api_key 应用 ──
+  # 检测：Desktop（appx/ChatGPT）或 PATH 上的 `codex` 命令
+  - id: codex
+    name: Codex
     icon: "🖥️"
     appx: OpenAI.Codex
+    command: codex
     config_file: "{CODEX_HOME|~/.codex}/config.toml"
     marker: tokenbank
     route_bindable: true                    # Codex 支持模型改写

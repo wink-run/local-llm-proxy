@@ -2722,8 +2722,12 @@ async function resolveSteps(scene, ctx) {
 
 // 去掉 Claude 模型名的日期快照后缀：claude-sonnet-4-5-20250929 → claude-sonnet-4-5。
 // 仅剥形如 -YYYYMMDD 的 8 位日期尾巴，不误伤 claude-haiku-4-5 这类版本号。
+// 同时归一 UI 点号版本：claude-opus-4.8 → claude-opus-4-8。
 function stripModelDate(m) {
   return String(m || '').replace(/-\d{8}$/, '');
+}
+function normalizeClaudeModelId(m) {
+  return stripModelDate(m).replace(/(\d)\.(\d+)/g, '$1-$2');
 }
 
 // 统一路由：解析一个 scene 是否为「策略路由」——route-level strategy（旧）或
@@ -2800,6 +2804,23 @@ function orderStepsByFlow(steps, flow, reqPath, skipP2P) {
   return out;
 }
 
+/** 解析绑定场景：精确 keyScene > Claude 名/通配 > Codex gpt-* 兜底。
+ * 已绑定的多选模型必须精确命中，不能被 gpt 兜底盖成 route_ids[0]。 */
+function resolveBoundScene({
+  origModel, callerKey, isApiKeyCaller, isClaudeClientName, claudeKey,
+  shimClaudeScene = null, keyScene = {}, codexGptFallback = {},
+}) {
+  const keyBucket = (isApiKeyCaller && callerKey) ? keyScene[callerKey] : null;
+  const exactKeyScene = (keyBucket && keyBucket[origModel]) || null;
+  const claudeKeyScene = keyBucket
+    ? ((claudeKey && keyBucket[claudeKey]) || (isClaudeClientName && keyBucket['*']) || null)
+    : null;
+  const codexGptScene = (!exactKeyScene && callerKey && /^gpt/i.test(origModel))
+    ? codexGptFallback[callerKey]
+    : null;
+  return shimClaudeScene || exactKeyScene || claudeKeyScene || codexGptScene || null;
+}
+
 async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const t0          = Date.now();
   let lastErr       = null;
@@ -2814,7 +2835,13 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // （claude-sonnet-4-5-20250929）；去掉后缀匹配基名，命中 keyScene / _claudeModels 的绑定。
   const claudeKey = _claudeModels.includes(origModel)
     ? origModel
-    : (_claudeModels.includes(stripModelDate(origModel)) ? stripModelDate(origModel) : null);
+    : (() => {
+      const norm = normalizeClaudeModelId(origModel);
+      if (_claudeModels.includes(norm)) return norm;
+      const stripped = stripModelDate(origModel);
+      if (_claudeModels.includes(stripped)) return stripped;
+      return null;
+    })();
   // Claude 客户端路由区分（避免 Claude Code 与 Claude Desktop 互相顶掉）：
   //  - Claude Code CLI（anthropic shim）用自己的 claude.ai OAuth 调用、发标准 claude-* 名，
   //    callerKey 不在 appControls 的 key 集合里 → 它的所有 claude-* 请求走 _claudeShimScene；
@@ -2822,7 +2849,31 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const isClaudeClientName = /^claude-/i.test(origModel);
   const isApiKeyCaller = !!(callerKey && _appKeys.has(callerKey));
   const shimClaudeScene = (!isApiKeyCaller && isClaudeClientName) ? _claudeShimScene : null;
-  const claudeFrom = claudeKey || (shimClaudeScene ? origModel : null);
+  // 先解析绑定，再决定是否标记 Claude 透明改写（见下 claudeFrom）
+  const boundScene = resolveBoundScene({
+    origModel,
+    callerKey,
+    isApiKeyCaller,
+    isClaudeClientName,
+    claudeKey,
+    shimClaudeScene,
+    keyScene: _keyScene,
+    codexGptFallback: _codexGptFallback,
+  });
+  // claudeFrom 仅表示「Claude 客户端名被透明改写到其它模型」。
+  // Codex 等多选若把 claude-opus-4-8 当真实模型绑进 keyScene，会自指命中；
+  // 若仍标 claudeFrom，路由详情会误显示「Claude 透明映射」且请求名=实际名。
+  const claudeFrom = (() => {
+    if (shimClaudeScene) return origModel;
+    const keyBucket = (isApiKeyCaller && callerKey) ? _keyScene[callerKey] : null;
+    const slot = keyBucket
+      ? ((claudeKey && keyBucket[claudeKey]) || (isClaudeClientName && keyBucket['*']) || null)
+      : null;
+    if (!slot) return null;
+    const target = slot.steps?.[0]?.model || slot.scene_name || '';
+    if (target && (target === origModel || (claudeKey && target === claudeKey))) return null;
+    return claudeKey || origModel;
+  })();
   // 请求模型名可带分层 codec 前缀（strategy:tier:sharer:provider:model）；上游只认裸模型名。
   // tier/provider 客户端过滤候选；strategy/sharer 通过 X-TB-Route 头交服务端（p2p 派发）执行。
   let requestTier = null, requestScope = null, requestStrategy = null, requestSharer = null, requestProvider = null;
@@ -2906,17 +2957,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // ── Scene route：Claude 透明名 keyScene / llm-router-* ──
   // api_key 只绑定应用（统计归因），不改写 model；模型以请求体为准。
   // Claude Desktop：keyScene[claude-*] 按 inferenceModels.name 透明改写到绑定的 route。
-  // Codex 兜底：Codex 会用自带的 gpt-* 辅助模型（写死、非用户配置）发请求；按 gpt 前缀
-  // （future-proof：以后升级出新 gpt-* 也匹配）转到该 Codex 应用绑定的主路由。
-  const codexGptScene = (callerKey && /^gpt/i.test(origModel)) ? _codexGptFallback[callerKey] : null;
-  const boundScene =
-    shimClaudeScene ||
-    (isApiKeyCaller && _keyScene[callerKey] &&
-      // 精确命中优先；否则 claude-* 名走通配 '*'（覆盖 Claude Code 列表外的后台/快速模型名）
-      ((claudeKey && _keyScene[callerKey][claudeKey]) ||
-       (isClaudeClientName && _keyScene[callerKey]['*']))) ||
-    codexGptScene ||
-    null;
+  // Codex：keyScene[模型名] 精确命中已绑定的多选路由；其余未知 gpt-*（内建辅助模型）才兜底到主路由。
+  // boundScene 已在上方与 claudeFrom 一并解析。
   const isLlmRouter = origModel.startsWith('llm-router-');
   const interceptScene = !boundScene ? _routerModelMap[origModel] : null;
   debugLog(`route() 路由判定`, {
@@ -3847,6 +3889,7 @@ module.exports = {
   setKeySceneMap, setClaudeShimScene, setCodexGptFallback, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
   setClaudeModels,
+  resolveBoundScene,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
   stratStepOf, encodeRouteHeader, orderStepsByFlow, buildStrategyCandidates, parsePureCodec, unifySteps,

@@ -128,7 +128,8 @@ function claudeNameAtIndex(index, claudeModels = [], fallback = 'claude-sonnet-4
   return claudeModels[index % claudeModels.length] || fallback;
 }
 
-/** Claude Desktop 多路由：每个 claude-* 名 → 对应 route（与写入 inferenceModels 顺序一致） */
+/** Claude Desktop 多路由：每个 route 独占一个 claude-* name（与写入 inferenceModels 顺序一致）
+ * 选择器展示 labelOverride（真实模型），请求仍发对应 mask 名，keyScene 再 1:1 改写回该 route。 */
 // keyScene 结构：{ [callerKey]: { [claude模型名]: scene } } —— 按「调用方 app key」分桶，
 // 使多个 claude 应用（Desktop / 多个 CLI 实例）能各绑各的路由，互不覆盖。
 function bindClaudeRoutesToKeyScene(keyScene, callerKey, routeIds, routes = [], claudeModels = []) {

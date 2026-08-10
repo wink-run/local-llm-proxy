@@ -28,11 +28,12 @@ handlers:
       activity_agent_id: claude-code
       trace_agent_id: claude-code
 
+  # 遗留 handler：列表不再单独建实体，统一走 codex-desktop-api
   codex-cli:
-    label: Codex CLI
-    label_zh: Codex CLI
+    label: Codex
+    label_zh: Codex
     default_icon: "💻"
-    default_name: Codex (CLI)
+    default_name: Codex
     capabilities: [gateway_proxy, session_import, resource_project]
     proxy:
       mode: cli
@@ -153,18 +154,21 @@ handlers:
         profile: claude-jsonl
         entrypoint_data_source: session-claude-desktop
 
+  # CLI 与 Desktop 共用 ~/.codex：统一一条实体，写 config.toml + 读 sessions
   codex-desktop-api:
-    label: Codex Desktop
-    label_zh: Codex Desktop
+    label: Codex
+    label_zh: Codex
     default_icon: "🖥️"
-    default_name: Codex Desktop
-    capabilities: [gateway_proxy]
+    default_name: Codex
+    capabilities: [gateway_proxy, session_import, resource_project]
     proxy:
       mode: api_key
       route_bindable: true
       allow_direct: false
       detect_type: appx
       detect_value: OpenAI.Codex
+      # Desktop(appx) 或 PATH 上的 codex 命令任一即可探测
+      detect_command: codex
       config_file: "{CODEX_HOME|~/.codex}/config.toml"
       marker: tokenbank
       # Codex Desktop 走客户端 codex-config.js 合并写入(保留 config.toml 其他段)。
@@ -184,6 +188,8 @@ handlers:
         strategy: codex_model
         multi_select: true
     session:
+      source_id: codex
+      standalone: false
       activity_agent_id: codex
       trace_agent_id: codex
       linked_data_sources:
@@ -316,14 +322,14 @@ handlers:
         profile: trae-work-trace
 
 # 默认实体清单（导入时用）
+# Codex CLI 与 Desktop 共用 ~/.codex，只保留一条实体（写 config.toml）
 default_entities:
   - { id: claude-code, handler: claude-code-cli }
-  - { id: codex, handler: codex-cli }
+  - { id: codex, handler: codex-desktop-api }
   - { id: opencode, handler: opencode-cli }
   - { id: hermes, handler: hermes-cli }
   - { id: kimi-code, handler: kimi-code-cli }
   - { id: claude-desktop, handler: claude-desktop-api }
-  - { id: codex-desktop, handler: codex-desktop-api }
   - { id: openclaw, handler: openclaw-api }
   - { id: cursor, handler: cursor-stats }
   - { id: copilot, handler: copilot-stats }

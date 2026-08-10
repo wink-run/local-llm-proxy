@@ -209,7 +209,7 @@ function syncGateway(lc) {
         // Claude Desktop：claude-* 名 → route；api_key 仅识别应用
         if (String(app.preset_id || app.id).includes('claude-desktop')) {
           const cms = (() => { try { return configLoader.claudeModels(); } catch { return []; } })();
-          bindClaudeRoutesToKeyScene(keyScene, appRouteIds, routes, cms);
+          bindClaudeRoutesToKeyScene(keyScene, app.api_key, appRouteIds, routes, cms);
         }
       }
     } else if (app.link_method === 'shim' && app.agent_id) {

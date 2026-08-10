@@ -370,7 +370,7 @@ def enrich_entities_from_defaults(entities: list[dict]) -> list[dict]:
             out.append(defaults[e["id"]])
         else:
             out.append(norm)
-    return out
+    return _dedupe_entities_by_canonical(out)
 
 
 def legacy_doc_to_entities(doc: dict) -> list[dict]:
@@ -413,7 +413,40 @@ def legacy_doc_to_entities(doc: dict) -> list[dict]:
         entities.append(_session_to_entity(s))
         entity_ids.add(agent)
 
-    return sorted(entities, key=_sort_key)
+    return _dedupe_entities_by_canonical(sorted(entities, key=_sort_key))
+
+
+def _dedupe_entities_by_canonical(entities: list[dict]) -> list[dict]:
+    """Codex CLI/Desktop 等别名只保留一条；api_key / desktop-api 优先于 cli shim。"""
+    rank = {
+        "codex-desktop-api": 3,
+        "api_key": 3,
+        "codex-cli": 1,
+    }
+    best: dict[str, dict] = {}
+    order: list[str] = []
+    for e in entities:
+        if not isinstance(e, dict) or not e.get("id"):
+            continue
+        eid = str(e["id"])
+        cid = ah.canonical_app_entity_id(eid)
+        hid = str(e.get("handler") or e.get("link_method") or "")
+        score = rank.get(hid, 2)
+        prev = best.get(cid)
+        if prev is None:
+            best[cid] = {**e, "id": cid}
+            order.append(cid)
+            continue
+        prev_hid = str(prev.get("handler") or prev.get("link_method") or "")
+        if score > rank.get(prev_hid, 2):
+            merged = {**e, "id": cid}
+            # 统一展示名
+            if cid == "codex":
+                merged["name"] = "Codex"
+            best[cid] = merged
+        elif cid == "codex" and prev.get("name") in ("Codex (CLI)", "Codex Desktop"):
+            prev["name"] = "Codex"
+    return [best[cid] for cid in order if cid in best]
 
 
 def import_from_defaults() -> dict:
@@ -476,6 +509,9 @@ def _compile_api_key_app(e: dict) -> dict:
         out["command"] = e.get("detect_value") or ""
     else:
         out["appx"] = e.get("detect_value") or ""
+    # Codex 等：appx + command 双信号
+    if e.get("detect_command"):
+        out["command"] = e.get("detect_command") or ""
     if e.get("patch"):
         out["patch"] = e["patch"]
     if e.get("env"):
@@ -529,7 +565,7 @@ def _materialize_entity_capabilities(entities: list[dict]) -> list[dict]:
         vars_["capabilities"] = ah.resolve_user_capabilities(h, vars_)
         norm["vars"] = vars_
         out.append(norm)
-    return out
+    return _dedupe_entities_by_canonical(out)
 
 
 def compile_apps_doc(doc: dict) -> dict:

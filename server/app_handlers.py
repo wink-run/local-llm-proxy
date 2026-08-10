@@ -16,9 +16,10 @@ _SCANS_CLIENT = _REPO_ROOT / "client" / "electron" / "config" / "session-scans.y
 _SCANS_SERVER = Path(__file__).resolve().parent / "static" / "defaults" / "session-scans.yaml"
 
 # 旧实体 id → handler（DB 迁移用）
+# Codex CLI/Desktop 统一走 config.toml（codex-desktop-api）
 _LEGACY_ID_TO_HANDLER: dict[str, str] = {
     "claude-code": "claude-code-cli",
-    "codex": "codex-cli",
+    "codex": "codex-desktop-api",
     "opencode": "opencode-cli",
     "hermes": "hermes-cli",
     "claude-desktop": "claude-desktop-api",
@@ -34,6 +35,18 @@ _LEGACY_ID_TO_HANDLER: dict[str, str] = {
     "trae-work": "trae-work-stats",
     "Trae": "trae-work-stats",
 }
+
+# 列表/下发身份归一（与客户端 APP_ENTITY_ALIASES 对齐）
+_APP_ENTITY_ALIASES: dict[str, str] = {
+    "codex-desktop": "codex",
+}
+
+
+def canonical_app_entity_id(entity_id: str | None) -> str:
+    raw = str(entity_id or "").strip()
+    if not raw:
+        return raw
+    return _APP_ENTITY_ALIASES.get(raw, raw)
 
 
 @lru_cache(maxsize=1)
@@ -73,13 +86,17 @@ def resolve_session_scan(
 ) -> dict:
     """解析会话补录规则：vars.session_scan > handler.session.scan > scans[source_id]。"""
     v = vars_ if isinstance(vars_, dict) else {}
-    if isinstance(v.get("session_scan"), dict):
-        return dict(v["session_scan"])
+    raw = v.get("session_scan")
+    if isinstance(raw, dict) and raw:
+        return dict(raw)
     h = handlers_map().get(handler_id) or {}
     sess = session if isinstance(session, dict) else (h.get("session") if isinstance(h.get("session"), dict) else None)
-    if isinstance(sess, dict) and isinstance(sess.get("scan"), dict):
+    if isinstance(sess, dict) and isinstance(sess.get("scan"), dict) and sess.get("scan"):
         return dict(sess["scan"])
-    sid = str(sess.get("source_id") or "").strip() if isinstance(sess, dict) else ""
+    # source_id 优先；旧快照缺省时回落 activity_agent_id（Codex Desktop 等）
+    sid = ""
+    if isinstance(sess, dict):
+        sid = str(sess.get("source_id") or sess.get("activity_agent_id") or "").strip()
     if sid:
         merged = {**session_scans_by_id(), **(cloud_scans or {})}
         return dict(merged.get(sid) or {})
@@ -189,6 +206,7 @@ def default_entities_compact() -> list[dict]:
     doc = load_handlers_doc()
     handlers = handlers_map()
     entities: list[dict] = []
+    seen_canonical: set[str] = set()
     for i, row in enumerate(doc.get("default_entities") or []):
         if not isinstance(row, dict):
             continue
@@ -196,6 +214,13 @@ def default_entities_compact() -> list[dict]:
         hid = str(row.get("handler") or "").strip()
         if not eid or not hid or hid not in handlers:
             continue
+        # Codex Desktop/CLI 等别名：只保留一条
+        cid = canonical_app_entity_id(eid)
+        if cid in seen_canonical:
+            continue
+        seen_canonical.add(cid)
+        if cid != eid:
+            eid = cid
         h = handlers[hid]
         entities.append(normalize_compact_entity({
             "sort_order": row.get("sort_order") if row.get("sort_order") is not None else (i + 1) * 10,
@@ -316,6 +341,9 @@ def expand_entity(compact: dict) -> dict:
         else:
             entity["detect_type"] = str(p.get("detect_type") or "appx")
             entity["detect_value"] = str(p.get("detect_value") or "")
+            # 可选第二探测：如 Codex 同时认 Desktop(appx) 与 CLI(command)
+            if p.get("detect_command"):
+                entity["detect_command"] = str(p.get("detect_command") or "")
             entity["config_file"] = str(p.get("config_file") or "")
             entity["marker"] = str(p.get("marker") or "tokenbank")
             entity["enable_3p"] = bool(p.get("enable_3p"))
@@ -326,7 +354,7 @@ def expand_entity(compact: dict) -> dict:
     if session_import and session:
         s = _apply_vars_to_session(session, vars_)
         entity["standalone"] = bool(s.get("standalone", not gateway_proxy))
-        entity["session_source_id"] = str(s.get("source_id") or c["id"])
+        entity["session_source_id"] = str(s.get("source_id") or s.get("activity_agent_id") or c["id"])
         scan = resolve_session_scan(session, vars_, hid)
         if scan:
             entity["session_scan"] = scan

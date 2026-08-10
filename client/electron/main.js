@@ -188,8 +188,11 @@ function isClaudeDesktopApp(app_id) {
 function isCodexDesktopApp(app_id) {
   if (String(app_id || '').includes('codex-desktop')) return true;
   try {
+    const { canonicalAppEntityId } = require('./app-handlers');
     const app = (readLocalConfig()?.apps || []).find(a => a.id === app_id);
-    return app?.preset_id === 'codex-desktop';
+    const pid = app?.preset_id || app?.agent_id;
+    // 统一实体 id=codex（兼容旧 preset_id=codex-desktop）
+    return canonicalAppEntityId(pid) === 'codex' && (app?.link_method === 'api-key' || !!app?.config_file);
   } catch { return false; }
 }
 
@@ -939,17 +942,19 @@ function getActiveAppsForTray(lang = 'zh') {
     }
 
     // 与面板 apps:list 一致：同一 agent 只保留一行（api-key/manual > shim > session/direct）
-    // 避免 WorkBuddy 等「经网关 + 直连」各一条重复展示
+    // Codex Desktop/CLI 按 canonical id 合并，避免重复展示
+    const { canonicalAppEntityId } = require('./app-handlers');
     const LINK_PRI = { 'api-key': 3, manual: 3, shim: 2, session: 1, direct: 1 };
     const bestByAgent = new Map();
     const noAgent = [];
     for (const item of items) {
-      const aid = item.agentId;
+      const aid = canonicalAppEntityId(item.agentId);
       if (!aid) { noAgent.push(item); continue; }
       const pri = LINK_PRI[item.linkMethod] || (item.viaGateway ? 3 : 0);
       const cur = bestByAgent.get(aid);
       if (!cur) {
-        bestByAgent.set(aid, item);
+        const named = aid === 'codex' ? { ...item, agentId: aid, name: 'Codex' } : { ...item, agentId: aid };
+        bestByAgent.set(aid, named);
         continue;
       }
       const curPri = LINK_PRI[cur.linkMethod] || (cur.viaGateway ? 3 : 0);
@@ -966,6 +971,8 @@ function getActiveAppsForTray(lang = 'zh') {
       const mergedCalls = Math.max(keep.todayCalls || 0, drop.todayCalls || 0);
       bestByAgent.set(aid, {
         ...keep,
+        agentId: aid,
+        name: aid === 'codex' ? 'Codex' : keep.name,
         todayTokens: mergedTokens,
         todayCalls: mergedCalls,
         todayTokensLabel: fmtTrayTokens(mergedTokens),
@@ -3452,11 +3459,28 @@ function registerIPC() {
             const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
             bindClaudeRoutesToKeyScene(keyScene, app.api_key, appRouteIds, routes, cms);
           }
-          // Codex Desktop：它会用自带的 gpt-* 辅助模型（标题/分类等，写死在 App 里、非用户配置）发请求，
-          // 网关没有这些模型 → 401。用 gpt 前缀兜底（future-proof：以后升级出新 gpt-* 也自动匹配），
-          // 把这类请求转到该 Codex 应用绑定的主路由（route_ids[0]，= 用户在 Codex 里选的模型）。
-          if (String(app.preset_id || app.agent_id || app.id || '').includes('codex')) {
-            bindRouteToKeyScene(codexGptFallback, app.api_key, appRouteIds[0], routes);
+          // Codex：多选路由按「模型名 → 对应 route」写入 keyScene，请求 gpt-5.6-luna 就走 luna；
+          // 同时保留 gpt-* 兜底：Codex 内建辅助模型（标题/分类等，非用户配置）仍落到主路由。
+          // 跳过 Claude Desktop 透明 mask 名：与真实模型同名时自指绑定会污染路由详情，且 Responses 常 400。
+          {
+            const { canonicalAppEntityId, routeModelId } = require('./app-handlers');
+            if (canonicalAppEntityId(app.preset_id || app.agent_id) === 'codex'
+              || String(app.preset_id || app.agent_id || app.id || '').includes('codex')) {
+              const maskNames = new Set(
+                (() => { try { return require('./config-loader').claudeModels() || []; } catch { return []; } })()
+              );
+              const sub = keyScene[app.api_key] || (keyScene[app.api_key] = {});
+              for (const rid of appRouteIds) {
+                const mid = routeModelId(rid, routes);
+                if (!mid || maskNames.has(mid)) continue;
+                bindRouteToKeyScene(sub, mid, rid, routes);
+              }
+              const primary = appRouteIds.find(rid => {
+                const mid = routeModelId(rid, routes);
+                return mid && !maskNames.has(mid);
+              }) || appRouteIds[0];
+              bindRouteToKeyScene(codexGptFallback, app.api_key, primary, routes);
+            }
           }
         }
       } else if (app.link_method === 'shim' && app.agent_id) {
@@ -4248,27 +4272,29 @@ function registerIPC() {
     // 使其与透明托管(shim)一致：始终是真实条目、有完整的下拉/编辑/测试控件，
     // 「纳管」只是再写一次配置文件。去重以「目标配置文件」为准（同一文件不重复建）。
     try {
+      const { canonicalAppEntityId } = require('./app-handlers');
       const cur = getApps();
       const norm = (p) => { try { return path.resolve(resolveCfgPath(p)).toLowerCase(); } catch { return String(p || '').toLowerCase(); } };
-      const savedPresets  = new Set(cur.filter(a => a.preset_id).map(a => a.preset_id));
+      const savedPresets  = new Set(cur.filter(a => a.preset_id).map(a => canonicalAppEntityId(a.preset_id)));
       const managedFiles  = new Set(cur.filter(a => a.config_file).map(a => norm(a.config_file)));
       let mutated = false;
       for (const d of getApiKeyApps()) {
-        if (savedPresets.has(d.id)) continue;
+        const cid = canonicalAppEntityId(d.id);
+        if (savedPresets.has(cid)) continue;
         if (!apiKeyAppDetected(d)) continue;
         const nf = norm(resolveCfgPath(d.config_file));
         if (managedFiles.has(nf)) continue;
         cur.push({
-          id: 'app-apikey-' + d.id,
-          name: d.name, icon: d.icon, link_method: 'api-key', agent_id: null,
+          id: 'app-apikey-' + cid,
+          name: cid === 'codex' ? 'Codex' : d.name, icon: d.icon, link_method: 'api-key', agent_id: null,
           api_key: 'sk-local-' + rndHex(16), route_id: null,
           description: '', allowed_models: [], max_rpm: null, max_concurrent: null, allow_stream: true,
-          env: d.env || null, preset_id: d.id, inject: 'config-file',
+          env: d.env || null, preset_id: cid, inject: 'config-file',
           config_file: d.config_file || null, patch: d.patch || null,
           hosted: true,    // 默认纳管+直连：只读会话日志统计，不写配置/不走网关（绑路由才走网关）
           created_at: new Date().toISOString(),
         });
-        savedPresets.add(d.id); managedFiles.add(nf); mutated = true;
+        savedPresets.add(cid); managedFiles.add(nf); mutated = true;
       }
       if (mutated) { saveApps(cur); try { syncGatewayFromConfig(readLocalConfig()); } catch {} }
     } catch (e) { console.error('[apps:list] materialize api-key failed:', e.message); }
@@ -4378,6 +4404,51 @@ function registerIPC() {
       if (migrated) saveApps(cur);
     } catch (e) { console.error('[apps:list] migrate trae-work failed:', e.message); }
 
+    // Codex：CLI(shim) 与 Desktop(api-key) 合并为单一应用（写 ~/.codex/config.toml）
+    try {
+      const { canonicalAppEntityId } = require('./app-handlers');
+      const cur = getApps();
+      const groups = new Map(); // canonical -> apps[]
+      for (const app of cur) {
+        const aid = canonicalAppEntityId(app.agent_id || app.preset_id);
+        if (aid !== 'codex') continue;
+        if (!groups.has(aid)) groups.set(aid, []);
+        groups.get(aid).push(app);
+      }
+      if (groups.has('codex')) {
+        const list = groups.get('codex');
+        const PRI = { 'api-key': 3, manual: 3, shim: 2, session: 1, direct: 1 };
+        let best = null;
+        for (const a of list) {
+          if (!best || (PRI[a.link_method] || 0) > (PRI[best.link_method] || 0)) best = a;
+        }
+        // 优先保留 api-key；其余从持久化列表移除（展示层也会再去重）
+        const dropIds = new Set(list.filter(a => a !== best).map(a => a.id));
+        let mutated = false;
+        if (best) {
+          if (best.preset_id === 'codex-desktop' || best.agent_id === 'codex') {
+            if (best.link_method === 'api-key' || best.config_file) {
+              if (best.preset_id !== 'codex') { best.preset_id = 'codex'; mutated = true; }
+              if (best.agent_id) { best.agent_id = null; mutated = true; }
+            } else if (best.link_method === 'shim') {
+              // 仅有 shim：若本机有 api-key 预设，下次 materialize 会建 api-key；此处先改名
+            }
+          }
+          if (best.name === 'Codex (CLI)' || best.name === 'Codex Desktop') {
+            best.name = 'Codex'; mutated = true;
+          }
+        }
+        if (dropIds.size) {
+          const next = cur.filter(a => !dropIds.has(a.id));
+          saveApps(next);
+          try { syncGatewayFromConfig(readLocalConfig()); } catch {}
+        } else if (mutated) {
+          saveApps(cur);
+          try { syncGatewayFromConfig(readLocalConfig()); } catch {}
+        }
+      }
+    } catch (e) { console.error('[apps:list] migrate codex merge failed:', e.message); }
+
     // direct / shim / session 应用：补全 API Key（写入配置、网关识别、手工接入）
     try {
       const cur = getApps();
@@ -4404,11 +4475,18 @@ function registerIPC() {
     // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入。
     // 仅未安装则不虚拟展示（与 api-key/session 虚拟条目一致：卸载后即从应用列表消失，
     // 装回自动出现）；已被用户显式纳管的 shim 记录在 savedApps，不受此过滤，始终保留。
+    const { canonicalAppEntityId } = require('./app-handlers');
     const shimIds = new Set(savedApps.filter(a => a.link_method === 'shim').map(a => a.agent_id));
+    // 已有 api-key（含别名）的应用不再虚拟 shim（Codex CLI 与 Desktop 共用）
+    const apiKeyCanonical = new Set([
+      ...savedApps.filter(a => a.link_method === 'api-key' && a.preset_id).map(a => canonicalAppEntityId(a.preset_id)),
+      ...[...apiKeyIds].map(id => canonicalAppEntityId(id)),
+    ]);
     const virtualShimApps = agentTools
       .filter(t => t.installed)
       .filter(t => !shimIds.has(t.id))
       .filter(t => toolIds.has(t.id))
+      .filter(t => !apiKeyCanonical.has(canonicalAppEntityId(t.id)))
       .filter(t => {
         const caps = configLoader.appCapabilities(t.id);
         if (caps) return !!caps.gateway_proxy;
@@ -4521,7 +4599,10 @@ function registerIPC() {
         }
         // config-file 类 api-key 应用：标记 host_method + 是否已纳管（状态跟随用户操作，
         // 持久化在 app.hosted，不再扫描/匹配配置文件内容）。
-        const def = getApiKeyApps().find(d => d.id === app.preset_id);
+        const def = getApiKeyApps().find(d =>
+          d.id === app.preset_id
+          || (app.preset_id && canonicalAppEntityId(d.id) === canonicalAppEntityId(app.preset_id))
+        );
         // 从最新 yaml 预设刷新 patch/env/config_file（让 yaml 改动对已添加应用也生效；
         // config_file 对 Claude Desktop 是动态的，必须用预设解析后的最新路径=激活配置）
         const freshConfigFile = def?.config_file || app.config_file;
@@ -4555,19 +4636,19 @@ function registerIPC() {
         return app.installed !== false;
       });
 
-    // 同一 agent_id 去重：api-key(持久) > shim > session/direct。
+    // 同一 agent 去重（含别名：codex-desktop→codex）：api-key(持久) > shim > session/direct。
     // 例外——多账号 shim 实例：每个独立 CONFIG_DIR 各占一行（否则两个账号会被折叠成一行）。
     const PRI = { 'api-key': 3, manual: 3, shim: 2, session: 1, direct: 1 };
     const byAgent = new Map();
     const noAgentRows = [];
     for (const app of rows) {
-      const aid = app.agent_id || app.preset_id;
+      const aid = canonicalAppEntityId(app.agent_id || app.preset_id);
       if (!aid) { noAgentRows.push(app); continue; }
       if (!byAgent.has(aid)) byAgent.set(aid, []);
       byAgent.get(aid).push(app);
     }
     const dedupedRows = [...noAgentRows];
-    for (const group of byAgent.values()) {
+    for (const [cid, group] of byAgent.entries()) {
       const instanceRows = group.filter(a => a.link_method === 'shim' && a.instance && a.instance.config_dir);
       if (instanceRows.length) {
         // 每个 config_dir 保留一行（防重复扫描），同 agent 的非实例行让位给实例行
@@ -4578,12 +4659,21 @@ function registerIPC() {
         }
         continue;
       }
-      // 其余：同 agent_id 只保留优先级最高的一行
+      // 其余：同 canonical agent 只保留优先级最高的一行
       let best = null;
       for (const a of group) {
         if (!best || (PRI[a.link_method] || 0) > (PRI[best.link_method] || 0)) best = a;
       }
-      if (best) dedupedRows.push(best);
+      if (best) {
+        // 归一 preset/agent 与展示名，避免 UI 仍显示「Codex Desktop / Codex (CLI)」
+        const normalized = { ...best };
+        if (cid === 'codex') {
+          normalized.name = 'Codex';
+          if (normalized.preset_id) normalized.preset_id = 'codex';
+          if (normalized.link_method === 'shim') normalized.agent_id = 'codex';
+        }
+        dedupedRows.push(normalized);
+      }
     }
 
     // 追加：检测到、但还没"添加"过的 API Key 应用（虚拟行，显示「添加」）
@@ -4591,25 +4681,32 @@ function registerIPC() {
     // 例如 Claude Code（含桌面版）与 Claude Desktop 都写 ~/.claude/settings.json。
     const norm = (p) => { try { return path.resolve(resolveCfgPath(p)).toLowerCase(); } catch { return String(p || '').toLowerCase(); } };
     const managedFiles = new Set(savedApps.filter(a => a.config_file).map(a => norm(a.config_file)));
-    const linkedApiKey = new Set(savedApps.filter(a => a.preset_id).map(a => a.preset_id));
+    const linkedApiKey = new Set(savedApps.filter(a => a.preset_id).map(a => canonicalAppEntityId(a.preset_id)));
+    // 已在 dedupedRows 出现的 canonical id（含 shim 行）也不再追加虚拟 api-key
+    for (const a of dedupedRows) {
+      const cid = canonicalAppEntityId(a.agent_id || a.preset_id);
+      if (cid) linkedApiKey.add(cid);
+    }
     for (const d of getApiKeyApps()) {
       if (!apiKeyAppDetected(d)) continue;
+      const cid = canonicalAppEntityId(d.id);
       const file = resolveCfgPath(d.config_file);
-      if (linkedApiKey.has(d.id) || managedFiles.has(norm(file))) continue;
+      if (linkedApiKey.has(cid) || managedFiles.has(norm(file))) continue;
       dedupedRows.push({
-        id: 'app-apikey-' + d.id,
-        name: d.name, icon: d.icon,
+        id: 'app-apikey-' + cid,
+        name: cid === 'codex' ? 'Codex' : d.name, icon: d.icon,
         link_method: 'api-key', host_method: 'config-file',
         needs_dev_mode: d.config_file_optional === true && !file,
         _virtual_apikey: true,
-        preset_id: d.id,
-        ...entityDerived(d.id),
-        route_bindable: resolveRouteBindable({ preset_id: d.id, link_method: 'api-key' }, d.route_bindable),
-        route_multi_select: !!entityDerived(d.id).route_multi_select,
+        preset_id: cid,
+        ...entityDerived(cid),
+        route_bindable: resolveRouteBindable({ preset_id: cid, link_method: 'api-key' }, d.route_bindable),
+        route_multi_select: !!entityDerived(cid).route_multi_select,
         config_file: file, patch: d.patch, env: d.env || null,
         configured: false,
         installed: true, linked: false, api_key: null, route_id: null,
       });
+      linkedApiKey.add(cid);
     }
     return dedupedRows.map(app => {
       const aid = app.agent_id || app.preset_id;
@@ -4822,7 +4919,12 @@ function registerIPC() {
           catch (e) { return { ok: false, error: e.message || 'mkdir-failed', file }; }
         }
         const baseUrl = resolvedPatch['model_providers.tokenbank.base_url'] || `${patchCtx.base}/v1`;
-        const models = getRouteModels(appRec, readLocalConfig().scene_routes || []);
+        const models = getRouteModels(appRec, readLocalConfig().scene_routes || [])
+          // Claude Desktop 透明 mask 名不进 Codex catalog（与 keyScene 跳过一致）
+          .filter((m) => {
+            try { return !(require('./config-loader').claudeModels() || []).includes(m); }
+            catch { return true; }
+          });
         const model = resolvedPatch['model'] || models[0] || '';
         // 按供给源「图文」标志给每个模型标注 vision，驱动 catalog 的 input_modalities。
         // 供给源模型存于 agent config（与网关同源），不在 userData/local-config.json。

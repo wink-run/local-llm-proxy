@@ -4734,7 +4734,12 @@ function RouteLogDetailModal({ entry, onClose }) {
           </DetailRow>
           {entry.claude_from && (
             <DetailRow label={t('gateway.log.claudeMap')}>
-              <span className="font-mono">{entry.claude_from}</span>
+              <span className="font-mono">
+                {entry.claude_from}
+                {entry.model && entry.model !== entry.claude_from ? (
+                  <> → <span className="text-emerald-600 dark:text-emerald-400">{entry.model}</span></>
+                ) : null}
+              </span>
             </DetailRow>
           )}
           {entry.scene_name && (

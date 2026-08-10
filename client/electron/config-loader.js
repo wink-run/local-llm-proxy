@@ -168,12 +168,14 @@ function appEntitiesExpanded() {
 
 function appEntityById(id) {
   if (!id) return null;
-  const exp = appEntitiesExpanded().find(e => e.id === id);
+  const { canonicalAppEntityId, expandEntity } = require('./app-handlers');
+  const cid = canonicalAppEntityId(id);
+  const exp = appEntitiesExpanded().find(e => e.id === id || e.id === cid);
   if (exp) return exp;
   // 紧凑实体按需展开（避免 entities_expanded 未缓存时拿不到 capabilities）
-  const compact = appEntities().find(e => e.id === id);
+  const compact = appEntities().find(e => e.id === id || e.id === cid);
   if (compact?.handler) {
-    try { return require('./app-handlers').expandEntity(compact); } catch {}
+    try { return expandEntity(compact); } catch {}
   }
   return null;
 }
@@ -584,6 +586,13 @@ function agentHasModelStats(agentId) {
   // 配置了 model 字段映射的源（含 Cursor）可按模型统计
   if (src.fields && src.fields.model) return true;
   if (Array.isArray(src.meta) && src.meta.some(m => m.set && m.set.model)) return true;
+  // 运行时 session_sources 可能因旧云端 handler 缺 source_id 而丢掉 meta；回落完整 scan
+  try {
+    const { sessionScansById } = require('./app-handlers');
+    const scan = sessionScansById()[src.id] || sessionScansById()[agentId] || null;
+    if (scan?.fields?.model) return true;
+    if (Array.isArray(scan?.meta) && scan.meta.some(m => m.set && m.set.model)) return true;
+  } catch { /* ignore */ }
   // 仅工具标签、无 model 字段的源不展示按模型统计
   if (src.record_label === 'assistant_tools') return false;
   return false;
