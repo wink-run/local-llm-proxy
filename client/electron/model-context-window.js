@@ -7,6 +7,15 @@
 const FALLBACK_CONTEXT_WINDOW = 200000;
 
 /**
+ * 路由类 model_key（llm-router-auto / -cost / -speed …）不是真实模型：网关按策略把它落到
+ * 任意候选源，各源真实窗口不一。若按"未知兜底 200k"或模型族放大，Codex 会把上下文堆到
+ * 超过实际源的量，触发上游超时/过大 → 502/429/重连（v0.5.10 回归）。故对路由钉一个保守窗口，
+ * 与 v0.5.9 全员 128k 的安全口径一致。
+ */
+const ROUTE_MODEL_KEY = /^llm-router-/i;
+const ROUTE_CONTEXT_WINDOW = 128000;
+
+/**
  * 解析模型名末尾窗口后缀，如 deepseek-v4-pro[1m] / glm-5.2[200k] / model[1048576]。
  * @returns {{ slug: string, window: number|null }}
  */
@@ -142,13 +151,15 @@ function contextWindowFromModelName(modelId) {
 function resolveContextWindow(model, providers = []) {
   if (model && typeof model === 'object') {
     const explicit = readExplicitContextWindow(model);
-    if (explicit) return explicit;
+    if (explicit) return explicit;                              // 用户/源显式指定优先
     const name = model.name || model.id || model.model;
+    if (ROUTE_MODEL_KEY.test(String(name || ''))) return ROUTE_CONTEXT_WINDOW;  // 路由 → 保守
     const fromProv = contextWindowFromProviders(name, providers);
     if (fromProv) return fromProv;
     return contextWindowFromModelName(name) || FALLBACK_CONTEXT_WINDOW;
   }
   const name = String(model || '');
+  if (ROUTE_MODEL_KEY.test(name)) return ROUTE_CONTEXT_WINDOW;   // 路由 model_key → 保守 128k
   const fromProv = contextWindowFromProviders(name, providers);
   if (fromProv) return fromProv;
   return contextWindowFromModelName(name) || FALLBACK_CONTEXT_WINDOW;
@@ -174,6 +185,7 @@ function autoCompactWindow(contextWindow) {
 
 module.exports = {
   FALLBACK_CONTEXT_WINDOW,
+  ROUTE_CONTEXT_WINDOW,
   parseContextWindowSuffix,
   readExplicitContextWindow,
   contextWindowFromProviders,

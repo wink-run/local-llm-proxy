@@ -48,3 +48,18 @@ test('多模型取最大窗口；autoCompact=80%', () => {
   assert.equal(resolveMaxContextWindow(['glm-5.2', 'deepseek-v4-pro']), 1048576);
   assert.equal(autoCompactWindow(262144), Math.floor(262144 * 0.8));
 });
+
+test('路由类 model_key（llm-router-*）钉保守 128k，不走模型族/200k 兜底（v0.5.10 502 回归修复）', () => {
+  const { ROUTE_CONTEXT_WINDOW } = require('../model-context-window');
+  assert.equal(ROUTE_CONTEXT_WINDOW, 128000);
+  for (const rk of ['llm-router-auto', 'llm-router-cost', 'llm-router-speed', 'llm-router-design', 'LLM-Router-Free']) {
+    assert.equal(resolveContextWindow(rk), 128000, rk + ' 应为保守 128k');
+  }
+  // 对象形式（含 name）同样保守
+  assert.equal(resolveContextWindow({ name: 'llm-router-auto' }), 128000);
+  // 显式 context_window 仍优先（用户/源指定）
+  assert.equal(resolveContextWindow({ name: 'llm-router-auto', context_window: 400000 }), 400000);
+  // 真实模型不受影响：仍按模型族解析
+  assert.equal(resolveContextWindow('deepseek-v4-pro'), 1048576);
+  assert.equal(resolveContextWindow('glm-5.1'), 200000);
+});
