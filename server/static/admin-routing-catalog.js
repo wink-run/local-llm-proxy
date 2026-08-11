@@ -56,18 +56,23 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
     const f = rcForm.value
     const orig = f._orig || {}
     const origSteps = Array.isArray(orig.steps) ? orig.steps : []
-    // 表单只编辑 model/tier；按 index 合并回原步骤的高级字段(scope/strategy/provider/sharer/when)不丢
-    const steps = (f.steps || []).filter(s => s.model?.trim()).map((s, i) => {
+    // 表单只编辑 model/tier；无 model 但有 tier 的步也保留（过滤路由）；按 index 合并高级字段
+    const steps = (f.steps || []).filter(s => s.model?.trim() || s.tier || s.scope || s.strategy).map((s, i) => {
       const os = origSteps[i]
-      const adv = (os && os.model === s.model.trim()) ? {
+      const model = (s.model || '').trim()
+      const adv = (os && os.model === model) ? {
         ...(os.scope ? { scope: os.scope } : {}),
         ...(os.strategy ? { strategy: os.strategy } : {}),
         ...(os.provider ? { provider: os.provider } : {}),
         ...(os.sharer ? { sharer: os.sharer } : {}),
         ...(os.when ? { when: os.when } : {}),
       } : {}
-      return { model: s.model.trim(), tier: s.tier || 'paid', ...adv }
-    })
+      const step = { ...adv }
+      if (model) step.model = model
+      if (s.tier) step.tier = s.tier
+      else if (!model) step.tier = 'paid' // 无 model 时至少留 tier，避免空步
+      return step
+    }).filter(s => s.model || s.tier || s.scope || s.strategy)
     const payload = {
       sort_order: f.sort_order !== '' && f.sort_order != null ? Number(f.sort_order) : 0,
       id: (f.id || '').trim(),
@@ -91,6 +96,14 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
     const payload = buildRoutePayload()
     if (!payload.id) { rcMsg.value = lang.value === 'zh' ? '请填写 ID' : 'ID required'; return }
     if (!payload.model_key) { rcMsg.value = lang.value === 'zh' ? '请填写 model_key' : 'model_key required'; return }
+    if (!payload.scene_name) { rcMsg.value = lang.value === 'zh' ? '请填写场景名' : 'Scene name required'; return }
+    // 与服务端校验一致：来源/价格/流转 或至少一步
+    if (!payload.flow && !payload.scope && !payload.tier && !(payload.steps || []).length) {
+      rcMsg.value = lang.value === 'zh'
+        ? '请设置来源/价格/流转，或至少填一个步骤'
+        : 'Set source/price/flow, or add at least one step'
+      return
+    }
     rcSaving.value = true; rcMsg.value = ''
     try {
       const path = rcEditId.value

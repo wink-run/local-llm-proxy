@@ -41,6 +41,28 @@ class TestDefaultDoc(unittest.TestCase):
         payload = cc.catalog_payload_from_doc(cc.load_default_doc())
         self.assertIn("code-review", {p["name"] for p in payload["prompts"]})
 
+    def test_public_payload_hides_disabled(self):
+        doc = {
+            "version": 1,
+            "skills": [
+                {"catalog_id": "a", "name": "a", "metadata": {"enabled": True}},
+                {"catalog_id": "b", "name": "b", "metadata": {"enabled": False}},
+                {"catalog_id": "c", "name": "c"},
+            ],
+        }
+        pub = cc.catalog_payload_from_doc(doc, public=True)
+        ids = {s.get("catalog_id") for s in pub["skills"]}
+        self.assertIn("a", ids)
+        self.assertIn("c", ids)
+        self.assertNotIn("b", ids)
+
+    def test_slug_and_paid_flag(self):
+        self.assertEqual(cc._slug_name("Hello World!"), "hello-world")
+        paid = {"metadata": {"user_recommended": True, "recommender_user_id": 3}}
+        free = {"metadata": {"builtin": True}}
+        self.assertTrue(cc.is_paid_community_item(paid))
+        self.assertFalse(cc.is_paid_community_item(free))
+
 
 if __name__ == "__main__":
     unittest.main()

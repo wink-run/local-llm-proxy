@@ -1669,6 +1669,29 @@ function _appMatchWhere(includeSessionImport = true) {
     ')' + (includeSessionImport ? '' : " AND data_source = 'proxy'");
 }
 
+/** 时间窗内各 provider_id 的调用活跃度（托盘供给源排序/过滤用） */
+function queryProviderActivity(days = 3) {
+  if (!db) return [];
+  const since = sinceTsForDays(days);
+  try {
+    return db.prepare(
+      'SELECT provider_id AS providerId, COUNT(*) AS calls, ' +
+      'SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ' +
+      'MAX(ts) AS lastTs FROM requests ' +
+      'WHERE ts >= ? AND provider_id IS NOT NULL AND provider_id != \'\' ' +
+      'GROUP BY provider_id ORDER BY calls DESC'
+    ).all(since).map((r) => ({
+      providerId: String(r.providerId || ''),
+      calls: r.calls || 0,
+      tokens: r.tokens || 0,
+      lastTs: r.lastTs || null,
+    })).filter((r) => r.providerId && r.calls > 0);
+  } catch (e) {
+    console.error('[local-stats] queryProviderActivity failed:', e.message);
+    return [];
+  }
+}
+
 /** 时间窗口内单个应用用量（与 queryAppDetail / apps:stats 归属规则一致） */
 function queryAppStatsInPeriod({ appId, apiKey, dataSource, dataSources, days = 30, since: sinceTs, includeSessionImport = true } = {}) {
   const empty = {
@@ -1851,6 +1874,7 @@ module.exports = {
   recordToolCalls, deleteToolCallsBySourcePath,
   querySkillUsageStats, queryToolUsageStats, queryMcpUsageStats,
   todaySinceTs, sinceTsForDays, sinceMsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
+  queryProviderActivity,
   reassignProviderTier, collectProviderIdVariants,
   getDb: () => db,  // Agent 聚合系统使用
   ensureReady,

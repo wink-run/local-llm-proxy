@@ -10,6 +10,7 @@ import { getGateway, isElectron } from '../api/adapter';
 import ServiceIcon from './ServiceIcon';
 import { resolveProviderBrandIcon } from '../lib/brandIcons';
 import { speedDotClass, bucketFromMs } from '../lib/speed';
+import UsageMeter, { usageProviderForDirect } from './UsageMeter';
 
 // 服务质量(上次转发结果)：成功=绿 / 429=红 / 失败=红 / 无请求=灰。文字区分 429 与 失败。
 export const healthDotClass = (h) => h == null ? 'bg-zinc-300 dark:bg-zinc-600' : h === 'ok' ? 'bg-green-500' : 'bg-red-500';
@@ -571,6 +572,9 @@ export function DirectSourceCard({
     return parts.join(' · ') || null;
   })();
 
+  // Cursor / Codex 等直连 App：读官方订阅与 session 额度
+  const usageProvider = usageProviderForDirect(instance);
+
   return (
     <div className="tb-soft-tile rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-3.5">
@@ -605,6 +609,7 @@ export function DirectSourceCard({
               </button>
             </div>
           )}
+          {usageProvider && <UsageMeter provider={usageProvider} />}
         </div>
       </div>
 

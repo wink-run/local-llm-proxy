@@ -34,24 +34,74 @@ function providerApiKey(provider) {
  * 回退读取各 CLI 自维护的凭证文件 —— agent config 里没有该源的 OAuth token 时用它。
  * CLI（claude / codex / gemini）自己负责登录与刷新，这里只读它落盘的最新凭证。
  * 返回统一形状 { access_token, refresh_token, ... } 或 null（文件缺失/无 token）。
- *   - claude → ~/.claude/.credentials.json（claudeAiOauth.*）
+ *   - claude → ~/.claude/.credentials.json；macOS 再试钥匙串 Claude Code-credentials
  *   - codex  → ~/.codex/auth.json（tokens.*）
  *   - gemini → ~/.gemini/oauth_creds.json（access_token / refresh_token / expiry_date）
  */
+function readMacKeychainClaude() {
+  if (process.platform !== 'darwin') return null;
+  try {
+    const { execFileSync } = require('child_process');
+    // 主条目 + 带后缀的多账户条目，取第一个有 token 或有套餐元数据的
+    const dump = execFileSync('security', ['dump-keychain'], {
+      encoding: 'utf8', timeout: 8000, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const svcs = [...new Set([
+      'Claude Code-credentials',
+      ...[...dump.matchAll(/"svce"<blob>="(Claude Code-credentials[^"]*)"/g)].map((m) => m[1]),
+    ])];
+    let best = null;
+    for (const svc of svcs) {
+      try {
+        const raw = execFileSync('security', ['find-generic-password', '-s', svc, '-w'], {
+          encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+        if (!raw) continue;
+        const j = JSON.parse(raw);
+        const o = (j && (j.claudeAiOauth || j.oauth)) || {};
+        const cand = {
+          access_token: o.accessToken || null,
+          refresh_token: o.refreshToken || null,
+          expires_at: o.expiresAt || null,
+          subscriptionType: o.subscriptionType || null,
+          rateLimitTier: o.rateLimitTier || null,
+        };
+        if (cand.access_token || cand.refresh_token) return cand;
+        if (!best && (cand.subscriptionType || cand.rateLimitTier)) best = cand;
+      } catch { /* 下一条 */ }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
 function readCliCreds(name) {
   const home = os.homedir();
   try {
     if (name === 'claude') {
-      const j = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8'));
-      const o = (j && j.claudeAiOauth) || {};
-      if (!o.accessToken) return null;
-      return {
-        access_token: o.accessToken,
-        refresh_token: o.refreshToken || null,
-        expires_at: o.expiresAt || null,
-        subscriptionType: o.subscriptionType || null,
-        rateLimitTier: o.rateLimitTier || null,
-      };
+      let fromFile = null;
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8'));
+        const o = (j && j.claudeAiOauth) || {};
+        if (o.accessToken || o.refreshToken || o.subscriptionType) {
+          fromFile = {
+            access_token: o.accessToken || null,
+            refresh_token: o.refreshToken || null,
+            expires_at: o.expiresAt || null,
+            subscriptionType: o.subscriptionType || null,
+            rateLimitTier: o.rateLimitTier || null,
+          };
+        }
+      } catch { /* 无文件 */ }
+      // 文件有可用 token 优先；否则合并钥匙串（Desktop/Code 常只把 token 放钥匙串）
+      const fromKey = readMacKeychainClaude();
+      if (fromFile && (fromFile.access_token || fromFile.refresh_token)) return fromFile;
+      if (fromKey && (fromKey.access_token || fromKey.refresh_token)) return fromKey;
+      // 仅有套餐元数据时也返回，供 UsageMeter 展示订阅情况
+      if (fromFile && (fromFile.subscriptionType || fromFile.rateLimitTier)) return fromFile;
+      if (fromKey) return fromKey;
+      return null;
     }
     if (name === 'codex') {
       const j = JSON.parse(fs.readFileSync(path.join(home, '.codex', 'auth.json'), 'utf8'));

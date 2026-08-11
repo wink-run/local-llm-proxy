@@ -503,7 +503,7 @@ select.form-input{cursor:pointer}
             <div>{{ T.configLabels[key] || key }}</div>
             <div class="toggle-sub">{{ key }}</div>
           </div>
-          <input v-model="sysConfig[key]" class="form-input form-input-md" :type="key.includes('reward') ? 'number' : 'text'" />
+          <input v-model="sysConfig[key]" class="form-input form-input-md" :type="(key.includes('reward') || key.includes('cost') || key.includes('limit')) ? 'number' : 'text'" />
           <button class="btn-xs" :disabled="configSaving[key]" @click="saveConfig(key)">{{ configSaving[key] ? T.saving : T.save }}</button>
         </div>
         <div v-if="Object.keys(sysConfig).length === 0" style="color:#bcbcbc;font-size:13px">{{ T.loading }}</div>
@@ -986,6 +986,60 @@ select.form-input{cursor:pointer}
       </div>
     </div>
 
+    <!-- 社区推荐管理 -->
+    <div v-show="activeTab === 'community'" class="tab-content">
+      <div class="toolbar">
+        <span style="font-size:15px;font-weight:600">{{ lang==='zh' ? '社区 Skill 推荐' : 'Community Skill Recs' }}</span>
+        <div class="toolbar-right" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" @click="fetchCommunityRecs">{{ T.refresh }}</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#7b7b7b;margin-bottom:12px;line-height:1.6">
+        {{ lang==='zh'
+          ? '用户从客户端「推荐到社区」的 Skill。可下架/上架/删除。纳管扣减与推荐奖励也可在下方或「系统配置」中修改。'
+          : 'User-recommended skills. Enable/disable/delete. Change install cost & recommend reward below or in Config.' }}
+      </p>
+      <div class="panel" style="max-width:520px;margin-bottom:16px;padding:14px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px">{{ lang==='zh'?'积分额度':'Credit pricing' }}</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div>
+            <label style="font-size:11px;color:#7b7b7b">{{ lang==='zh'?'纳管扣减':'Install cost' }}</label>
+            <input v-model.number="ccPricing.install_cost" type="number" min="0" step="1" class="form-input form-input-md" style="width:100px;display:block" />
+          </div>
+          <div>
+            <label style="font-size:11px;color:#7b7b7b">{{ lang==='zh'?'推荐奖励':'Recommend reward' }}</label>
+            <input v-model.number="ccPricing.recommend_reward" type="number" min="0" step="1" class="form-input form-input-md" style="width:100px;display:block" />
+          </div>
+          <button class="btn btn-indigo" :disabled="ccPricingSaving" @click="saveCommunityPricing">{{ ccPricingSaving ? T.saving : T.save }}</button>
+        </div>
+        <div v-if="ccMsg" style="margin-top:8px;font-size:12px" :style="ccMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ ccMsg }}</div>
+      </div>
+      <div class="panel" style="padding:0;overflow:hidden">
+        <table>
+          <thead><tr>
+            <th>catalog_id</th>
+            <th>{{ lang==='zh'?'名称':'Name' }}</th>
+            <th>{{ lang==='zh'?'推荐人':'By' }}</th>
+            <th>{{ T.status }}</th>
+            <th>{{ T.actions }}</th>
+          </tr></thead>
+          <tbody>
+            <tr v-if="!ccRecs.length"><td colspan="5" style="color:#bcbcbc;font-size:13px;padding:16px">{{ lang==='zh'?'暂无用户推荐':'No user recommendations' }}</td></tr>
+            <tr v-for="it in ccRecs" :key="it.catalog_id">
+              <td class="mono" style="font-size:11px;max-width:180px;word-break:break-all">{{ it.catalog_id }}</td>
+              <td>{{ it.display_name || it.name }}</td>
+              <td style="font-size:12px">{{ it.recommender_email || ('#' + (it.recommender_user_id || '—')) }}</td>
+              <td>{{ it.enabled ? (lang==='zh'?'上架':'On') : (lang==='zh'?'下架':'Off') }}</td>
+              <td style="white-space:nowrap">
+                <button class="btn-xs" @click="toggleCommunityItem(it)">{{ it.enabled ? (lang==='zh'?'下架':'Disable') : (lang==='zh'?'上架':'Enable') }}</button>
+                <button class="btn-xs btn-danger" @click="deleteCommunityItem(it)">{{ T.delete }}</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- 路由管理（表单） -->
     <div v-show="activeTab === 'routes'" class="tab-content">
       <div class="toolbar">
@@ -1097,7 +1151,7 @@ const LANGS = {
     notePlaceholder: '备注（可选）', newKey: '新建 Key', note: '备注', status: '状态',
     createdAt: '创建时间', actions: '操作', noKeys: '暂无 API Key',
     copy: '复制', enabled: '启用', disabled: '禁用', enable: '启用', disable: '禁用', delete: '删除',
-    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', circles:'圈子管理', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', apps:'应用管理', routes:'路由管理' },
+    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', circles:'圈子管理', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', apps:'应用管理', routes:'路由管理', community:'社区推荐' },
     addEditModel: '新增 / 编辑模型', modelName: '模型名称', displayName: '显示名称', tier: '类型',
     contributeRate: '贡献率（积分/千token）', consumeRate: '消费率（积分/千token）',
     yes: '是', no: '否', save: '保存', saving: '保存中', edit: '编辑',
@@ -1120,7 +1174,7 @@ const LANGS = {
     confirmDissolve: (n) => `确认解散圈子「${n}」？成员与帖子将一并删除。`,
     confirmKick: (email) => `确认将 ${email} 移出该圈子？`,
     sysConfig: '系统配置',
-    configLabels: { newcomer_reward:'新人注册礼包积分', referral_reward:'推荐奖励积分', contact_info:'联系方式（付款信息）', circle_invite_reward:'邀请入圈奖励积分' },
+    configLabels: { newcomer_reward:'新人注册礼包积分', referral_reward:'推荐奖励积分', contact_info:'联系方式（付款信息）', circle_invite_reward:'邀请入圈奖励积分', community_skill_install_cost:'社区 Skill 纳管扣减积分', community_skill_recommend_reward:'社区 Skill 推荐奖励积分' },
     loading: '加载中…',
     selectModel: '选择模型', clearChat: '清空对话', noOnlineModels: '暂无在线模型',
     chatPlaceholder: '选择模型后开始对话', chatInputHint: '输入消息… Enter 发送，Shift+Enter 换行',
@@ -1150,7 +1204,7 @@ const LANGS = {
     notePlaceholder: 'Note (optional)', newKey: 'New Key', note: 'Note', status: 'Status',
     createdAt: 'Created', actions: 'Actions', noKeys: 'No API keys yet',
     copy: 'Copy', enabled: 'Active', disabled: 'Disabled', enable: 'Enable', disable: 'Disable', delete: 'Delete',
-    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', circles:'Circles', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', apps:'Apps', routes:'Routes' },
+    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', circles:'Circles', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', apps:'Apps', routes:'Routes', community:'Community' },
     addEditModel: 'Add / Edit Model', modelName: 'Model Name', displayName: 'Display Name', tier: 'Tier',
     contributeRate: 'Contribute Rate (credits/K tokens)', consumeRate: 'Consume Rate (credits/K tokens)',
     yes: 'Yes', no: 'No', save: 'Save', saving: 'Saving…', edit: 'Edit',
@@ -1173,7 +1227,7 @@ const LANGS = {
     confirmDissolve: (n) => `Dissolve circle "${n}"? Members and posts will be deleted.`,
     confirmKick: (email) => `Remove ${email} from this circle?`,
     sysConfig: 'System Configuration',
-    configLabels: { newcomer_reward:'Newcomer Reward (credits)', referral_reward:'Referral Reward (credits)', contact_info:'Contact Info (payment details)', circle_invite_reward:'Circle invite reward (credits)' },
+    configLabels: { newcomer_reward:'Newcomer Reward (credits)', referral_reward:'Referral Reward (credits)', contact_info:'Contact Info (payment details)', circle_invite_reward:'Circle invite reward (credits)', community_skill_install_cost:'Community skill install cost', community_skill_recommend_reward:'Community skill recommend reward' },
     loading: 'Loading…',
     selectModel: 'Select model', clearChat: 'Clear', noOnlineModels: 'No online models',
     chatPlaceholder: 'Select a model to start chatting', chatInputHint: 'Type a message… Enter to send, Shift+Enter for newline',
@@ -1222,6 +1276,7 @@ createApp({
         { key:'billing', label: tl.billing },
         { key:'apps',    label: tl.apps },
         { key:'routes',  label: tl.routes },
+        { key:'community', label: tl.community },
       ]
     })
 
@@ -1243,7 +1298,7 @@ createApp({
 
     /* ── API ── */
     const ADMIN_TAB_KEY = 'admin_active_tab'
-    const VALID_TABS = ['workers','keys','models','users','orders','circles','config','debug','virtual','billing','apps','routes']
+    const VALID_TABS = ['workers','keys','models','users','orders','circles','config','debug','virtual','billing','apps','routes','community']
     const _storedTab = localStorage.getItem(ADMIN_TAB_KEY)
     const activeTab = ref(VALID_TABS.includes(_storedTab) ? _storedTab : 'workers')
     async function api(path, opts = {}) {
@@ -1648,6 +1703,59 @@ createApp({
       try { await api(`/admin/virtual-agents/${agent.id}`, {method:'DELETE'}); await fetchVirtualAgents() } catch {}
     }
 
+    /* ── Community recommendations ── */
+    const ccRecs = ref([])
+    const ccPricing = ref({ install_cost: 8, recommend_reward: 5 })
+    const ccPricingSaving = ref(false)
+    const ccMsg = ref('')
+    async function fetchCommunityRecs() {
+      try {
+        const d = await (await api('/admin/community-catalog/recommendations')).json()
+        ccRecs.value = d.items || []
+        if (d.pricing) ccPricing.value = {
+          install_cost: d.pricing.install_cost,
+          recommend_reward: d.pricing.recommend_reward,
+        }
+      } catch { /* ignore */ }
+    }
+    async function saveCommunityPricing() {
+      ccPricingSaving.value = true
+      ccMsg.value = ''
+      try {
+        const r = await api('/admin/community-catalog/pricing', {
+          method: 'PUT',
+          body: JSON.stringify({
+            install_cost: Number(ccPricing.value.install_cost),
+            recommend_reward: Number(ccPricing.value.recommend_reward),
+          }),
+        })
+        const d = await r.json()
+        if (!r.ok) { ccMsg.value = d.detail || 'Error'; return }
+        ccPricing.value = { install_cost: d.install_cost, recommend_reward: d.recommend_reward }
+        ccMsg.value = '✓ ' + (lang.value === 'zh' ? '额度已保存' : 'Pricing saved')
+        // 同步系统配置面板缓存
+        try { await fetchConfig() } catch {}
+      } catch { ccMsg.value = 'Error' }
+      finally { ccPricingSaving.value = false }
+    }
+    async function toggleCommunityItem(it) {
+      try {
+        await api(`/admin/community-catalog/items/${encodeURIComponent(it.catalog_id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ enabled: !it.enabled }),
+        })
+        await fetchCommunityRecs()
+      } catch {}
+    }
+    async function deleteCommunityItem(it) {
+      const name = it.display_name || it.name || it.catalog_id
+      if (!confirm(lang.value === 'zh' ? `确认删除推荐「${name}」？` : `Delete recommendation "${name}"?`)) return
+      try {
+        await api(`/admin/community-catalog/items/${encodeURIComponent(it.catalog_id)}`, { method: 'DELETE' })
+        await fetchCommunityRecs()
+      } catch {}
+    }
+
     /* ── Billing Sources (个人源表单) ── */
     const billingAdmin = initBillingSourcesAdmin(api, lang, ref)
     const { fetchBillingSources } = billingAdmin
@@ -1670,6 +1778,7 @@ createApp({
       if (k === 'billing') fetchBillingSources()
       if (k === 'apps') fetchAppCatalog()
       if (k === 'routes') fetchRoutingCatalog()
+      if (k === 'community') fetchCommunityRecs()
     }
     function switchTab(k) {
       activeTab.value = k
@@ -1710,6 +1819,8 @@ createApp({
       ...billingAdmin,
       ...appCatalogAdmin,
       ...routingCatalogAdmin,
+      ccRecs, ccPricing, ccPricingSaving, ccMsg,
+      fetchCommunityRecs, saveCommunityPricing, toggleCommunityItem, deleteCommunityItem,
       fmtTime,
     }
   }

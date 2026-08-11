@@ -830,9 +830,44 @@ function trayAppTodayStats(app) {
   }
 }
 
-/** 托盘悬浮窗：当前已纳管应用 + 绑定的路由/模型（logo 用 lobehub 默认品牌图） */
+/**
+ * 托盘是否展示该应用：与 apps:list 一致——
+ * shim/direct/session 须本机真检测到；排除 hosted 但未安装的残留（如 OpenCode）。
+ */
+function trayAppIsPresent(app) {
+  if (!app) return false;
+  const method = app.link_method;
+  if (method !== 'shim' && method !== 'direct' && method !== 'session') return true;
+  const aid = app.agent_id || app.preset_id;
+  if (!aid) return true;
+  try {
+    return !!require('./resource-agent-targets').isAgentInstalled(aid);
+  } catch {
+    return true;
+  }
+}
+
+/** 单个应用近 N 天 token / 调用（托盘活跃度过滤） */
+function trayAppPeriodStats(app, days = 3) {
+  try {
+    const { dataSources, usageImport } = trayAppDataSources(app);
+    return localStats.queryAppStatsInPeriod({
+      appId: app.id,
+      apiKey: app.api_key,
+      dataSources,
+      days,
+      includeSessionImport: usageImport,
+    });
+  } catch {
+    return { calls: 0, tokens: 0, lastTs: null };
+  }
+}
+
+/** 托盘悬浮窗：当前已纳管应用 + 绑定的路由/模型（logo 用 lobehub 默认品牌图）
+ *  仅保留近 3 天有用量的应用，按调用次数倒序。 */
 function getActiveAppsForTray(lang = 'zh') {
   const zh = lang !== 'en';
+  const ACTIVITY_DAYS = 3;
   try {
     const cfg = readLocalConfig();
     const apps = (cfg.apps || []).filter(a => a && !a.draft);
@@ -850,6 +885,12 @@ function getActiveAppsForTray(lang = 'zh') {
       const managed = isShim ? app.hosted !== false : app.hosted === true;
       if (!managed) continue;
       if (app.needs_dev_mode) continue;
+      // 未安装残留（如 OpenCode hosted 记录）不展示
+      if (!trayAppIsPresent(app)) continue;
+
+      // 近 3 天无请求则不进托盘列表
+      const period = trayAppPeriodStats(app, ACTIVITY_DAYS);
+      if (!(period.calls > 0)) continue;
 
       const routeIds = (Array.isArray(app.route_ids) && app.route_ids.length)
         ? app.route_ids
@@ -930,6 +971,9 @@ function getActiveAppsForTray(lang = 'zh') {
         todayTokens,
         todayCalls,
         todayTokensLabel: fmtTrayTokens(todayTokens),
+        activityCalls: period.calls || 0,
+        activityTokens: period.tokens || 0,
+        activityLastTs: period.lastTs || null,
         active: true,
       });
     }
@@ -959,9 +1003,12 @@ function getActiveAppsForTray(lang = 'zh') {
         keep = item;
         drop = cur;
       }
-      // 合并重复行的今日用量，避免丢掉直连 session 补录的 token
+      // 合并重复行的今日用量与近 3 天活跃度
       const mergedTokens = Math.max(keep.todayTokens || 0, drop.todayTokens || 0);
       const mergedCalls = Math.max(keep.todayCalls || 0, drop.todayCalls || 0);
+      const mergedActCalls = (keep.activityCalls || 0) + (drop.activityCalls || 0);
+      const mergedActTok = (keep.activityTokens || 0) + (drop.activityTokens || 0);
+      const mergedLast = Math.max(keep.activityLastTs || 0, drop.activityLastTs || 0) || null;
       bestByAgent.set(aid, {
         ...keep,
         agentId: aid,
@@ -969,20 +1016,184 @@ function getActiveAppsForTray(lang = 'zh') {
         todayTokens: mergedTokens,
         todayCalls: mergedCalls,
         todayTokensLabel: fmtTrayTokens(mergedTokens),
+        activityCalls: mergedActCalls,
+        activityTokens: mergedActTok,
+        activityLastTs: mergedLast,
       });
     }
-    const deduped = [...noAgent, ...bestByAgent.values()];
+    const deduped = [...noAgent, ...bestByAgent.values()]
+      .filter((a) => (a.activityCalls || 0) > 0);
 
-    // 稳定排序：经网关优先，再按名称
+    // 按近 3 天活跃度倒序（调用次数 → 最近使用时间）
     deduped.sort((a, b) => {
-      if (a.viaGateway !== b.viaGateway) return a.viaGateway ? -1 : 1;
-      return a.name.localeCompare(b.name, zh ? 'zh' : 'en');
+      const dc = (b.activityCalls || 0) - (a.activityCalls || 0);
+      if (dc) return dc;
+      return (b.activityLastTs || 0) - (a.activityLastTs || 0);
     });
     return deduped;
   } catch (e) {
     console.warn('[tray] getActiveAppsForTray failed:', e.message);
     return [];
   }
+}
+
+/** 托盘：抓取各供给源官方额度（订阅窗 / 余额），供悬浮窗展示 */
+async function getProvidersUsageForTray(lang = 'zh') {
+  const zh = lang !== 'en';
+  const usageMod = require('./usage');
+  const deps = { getCfg: readAgentConfig, saveCfg: writeAgentConfig };
+  const LABEL = {
+    claude: 'Claude',
+    codex: 'Codex',
+    cursor: 'Cursor',
+    copilot: 'Copilot',
+    gemini: 'Gemini',
+    volcengine: zh ? '火山引擎 · 订阅' : 'Volcengine · Plan',
+    'volcengine-ark': zh ? '火山引擎 · 按量' : 'Volcengine · PAYG',
+    openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
+    siliconflow: zh ? '硅基流动' : 'SiliconFlow',
+    'kimi-code': 'Kimi Code',
+    minimax: 'MiniMax',
+    zhipu: zh ? '智谱' : 'Zhipu',
+    'agnes-ai': 'Agnes AI',
+  };
+
+  const seen = new Set();
+  const snaps = [];
+
+  const pushSnap = (r) => {
+    if (!r || r.error && !(r.windows || []).length && !r.credits) return;
+    const key = String(r.provider || r.id || '');
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    snaps.push(r);
+  };
+
+  try {
+    for (const r of await usageMod.fetchAllUsage(deps)) pushSnap(r);
+  } catch (e) {
+    console.warn('[tray] fetchAllUsage:', e.message);
+  }
+
+  // 直连 App 可能无 gateway 启用条目：补抓 CLI/IDE 凭证
+  for (const k of ['claude', 'codex', 'cursor', 'copilot', 'gemini']) {
+    if (seen.has(k)) continue;
+    const syn = usageMod.syntheticProvider(k);
+    if (!syn || !usageMod.hasCredential(syn)) continue;
+    try { pushSnap(await usageMod.fetchUsage(syn, deps)); } catch { /* ignore */ }
+  }
+
+  const fmtBal = (c) => {
+    if (!c) return null;
+    if (c.unlimited) {
+      const u = c.used != null ? Number(c.used) : null;
+      if (u == null || !Number.isFinite(u)) return zh ? '无限' : 'Unlimited';
+      if (c.currency === 'CNY') return `${zh ? '已用 ¥' : 'Used ¥'}${u.toFixed(2).replace(/\.?0+$/, '')}`;
+      return `${zh ? '已用 $' : 'Used $'}${u.toFixed(2)}`;
+    }
+    const v = c.remaining != null ? c.remaining : c.total;
+    if (v == null || !Number.isFinite(Number(v))) return null;
+    const n = Number(v);
+    if (c.currency === 'CNY') return `¥${n.toFixed(2).replace(/\.?0+$/, '')}`;
+    if (c.currency === 'USD') return `$${n.toFixed(2)}`;
+    return String(n);
+  };
+
+  const out = [];
+  for (const r of snaps) {
+    const key = String(r.provider || r.id || '');
+    const wins = (r.windows || []).filter((w) => w && w.usageKnown && w.usedPercent != null);
+    const primary = r.primary || wins[0] || null;
+    const pct = primary && primary.usageKnown ? Number(primary.usedPercent) : null;
+    const bal = fmtBal(r.credits);
+    // 紧凑摘要：优先主窗口百分比，否则余额
+    let summary = '';
+    if (pct != null && Number.isFinite(pct)) summary = `${Math.round(pct)}%`;
+    else if (bal) summary = bal;
+    else continue;
+
+    // 多窗口时附加短标签（5h / 周）
+    let detail = '';
+    if (wins.length >= 2) {
+      detail = wins.slice(0, 3).map((w) => {
+        const t = w.id === 'five_hour' || w.windowMinutes === 300 ? '5h'
+          : (w.id === 'seven_day' || w.id === 'weekly' ? (zh ? '周' : 'wk')
+            : (w.id === 'monthly' ? (zh ? '月' : 'mo') : (w.title || '').slice(0, 4)));
+        return `${t} ${Math.round(w.usedPercent)}%`;
+      }).join(' · ');
+    }
+
+    const nearLimit = (pct != null && pct >= 80)
+      || wins.some((w) => Number(w.usedPercent) >= 80);
+
+    out.push({
+      id: key,
+      label: LABEL[key] || r.plan || key,
+      plan: r.plan ? String(r.plan) : '',
+      summary,
+      detail,
+      usedPercent: pct != null && Number.isFinite(pct) ? pct : null,
+      nearLimit: !!nearLimit,
+    });
+  }
+
+  // 近 3 天本地请求活跃度：映射到 usage key，过滤无活跃项并倒序
+  const ACTIVITY_DAYS = 3;
+  const actByKey = new Map(); // usageKey → { calls, tokens, lastTs }
+  try {
+    const cfg = readAgentConfig() || {};
+    const idToKey = new Map();
+    for (const p of (cfg.providers || [])) {
+      if (!p || !p.id) continue;
+      const uk = usageMod.usageProviderName(p);
+      if (uk) idToKey.set(String(p.id), uk);
+    }
+    for (const row of localStats.queryProviderActivity(ACTIVITY_DAYS)) {
+      const pid = row.providerId;
+      let uk = idToKey.get(pid)
+        || usageMod.normalizeUsageKey(pid)
+        || usageMod.usageProviderName({ id: pid })
+        || null;
+      // acct-* 等自定义 id 已通过 idToKey；normalize 可能原样返回无抓取器的 id
+      if (uk && !usageMod.USAGE_FETCHERS[uk] && !LABEL[uk]) {
+        // 仍按原始 id 聚合，便于与 snap.id 对上
+        uk = pid;
+      }
+      if (!uk) continue;
+      const cur = actByKey.get(uk) || { calls: 0, tokens: 0, lastTs: null };
+      cur.calls += row.calls || 0;
+      cur.tokens += row.tokens || 0;
+      cur.lastTs = Math.max(cur.lastTs || 0, row.lastTs || 0) || null;
+      actByKey.set(uk, cur);
+      // 同时记在原始 provider_id 上，方便 snap.id 为网关 id 时命中
+      if (pid !== uk) {
+        const raw = actByKey.get(pid) || { calls: 0, tokens: 0, lastTs: null };
+        raw.calls += row.calls || 0;
+        raw.tokens += row.tokens || 0;
+        raw.lastTs = Math.max(raw.lastTs || 0, row.lastTs || 0) || null;
+        actByKey.set(pid, raw);
+      }
+    }
+  } catch (e) {
+    console.warn('[tray] provider activity:', e.message);
+  }
+
+  const withAct = out.map((u) => {
+    const act = actByKey.get(u.id) || { calls: 0, tokens: 0, lastTs: null };
+    return {
+      ...u,
+      activityCalls: act.calls || 0,
+      activityLastTs: act.lastTs || null,
+    };
+  }).filter((u) => (u.activityCalls || 0) > 0);
+
+  withAct.sort((a, b) => {
+    const dc = (b.activityCalls || 0) - (a.activityCalls || 0);
+    if (dc) return dc;
+    return (b.activityLastTs || 0) - (a.activityLastTs || 0);
+  });
+  return withAct;
 }
 
 /** 活跃应用已选路由/模型 → 测速探针目标（去重） */
@@ -1001,6 +1212,7 @@ function collectProbeModelsFromActiveApps() {
       const isShim = app.link_method === 'shim';
       const managed = isShim ? app.hosted !== false : app.hosted === true;
       if (!managed || app.needs_dev_mode) continue;
+      if (!trayAppIsPresent(app)) continue;
       const routeIds = (Array.isArray(app.route_ids) && app.route_ids.length)
         ? app.route_ids
         : (app.route_id ? [app.route_id] : []);
@@ -1390,6 +1602,7 @@ function createTray() {
     // 托盘刷新只读本地统计，不触发 session 全量导入
     syncStats: () => {},
     getActiveApps: () => getActiveAppsForTray(_trayLang),
+    getProvidersUsage: () => getProvidersUsageForTray(_trayLang),
     probeActiveModels: () => probeActiveAppModels(),
     refreshCirclePosts: () => refreshCirclePostsCache(),
     getCirclePosts: () => getCirclePostsSummary(),
@@ -1919,14 +2132,15 @@ function readLocalConfig() {
           cfg.scene_routes = cfg.scene_routes || [];
           for (const sr of missing) cfg.scene_routes.push({ ...sr, created_at: new Date().toISOString() });
         }
-        // 预定义 strategy-* 路由的显示名/图标以默认 yaml 为准刷新（防止旧数据/云端同步残留旧名）
+        // 未同步过的内置 strategy-*：用默认 yaml 刷新显示名/图标；
+        // 已服务端下发(from_server)或用户改过(user_owned)的，以服务端/用户为准，勿覆盖。
         const defById = new Map(defRoutes.map(r => [r.id, r]));
         for (const r of (cfg.scene_routes || [])) {
-          if (String(r.id || '').startsWith('strategy-') && defById.has(r.id)) {
-            const d = defById.get(r.id);
-            if (d.scene_name) r.scene_name = d.scene_name;
-            if (d.icon) r.icon = d.icon;
-          }
+          if (!String(r.id || '').startsWith('strategy-') || !defById.has(r.id)) continue;
+          if (r.from_server || r.user_owned) continue;
+          const d = defById.get(r.id);
+          if (d.scene_name) r.scene_name = d.scene_name;
+          if (d.icon) r.icon = d.icon;
         }
       } catch {}
       // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
@@ -2604,8 +2818,20 @@ function registerIPC() {
   ipcMain.handle('usage:fetch', async (_e, { provider } = {}) => {
     const cfg = readAgentConfig() || {};
     const list = Array.isArray(cfg.providers) ? cfg.providers : [];
-    const entry = list.find(p => p && (p.id === provider
-      || (p.auth_type === 'oauth' && p.oauth_provider === provider)));
+    const findEntry = (id) => list.find(p => p && (p.id === id
+      || (p.auth_type === 'oauth' && p.oauth_provider === id)));
+    let entry = findEntry(provider);
+    // 订阅模板别名（api-volcengine）常无凭证；回退到抓取键同名网关条目（volcengine）
+    const usageKey = usageMod.normalizeUsageKey(provider);
+    if (usageKey && usageKey !== provider) {
+      const byKey = findEntry(usageKey);
+      if (byKey) {
+        if (!entry) entry = byKey;
+        else if (!usageMod.hasCredential(entry) && usageMod.hasCredential(byKey)) entry = byKey;
+      }
+    }
+    // 直连 App（Cursor/Codex）可能无 gateway 条目：用虚拟 provider + IDE/CLI 凭证
+    if (!entry) entry = usageMod.syntheticProvider(provider);
     if (!entry) return { error: 'provider_not_found' };
     return usageMod.fetchUsage(entry, usageDeps);
   });
@@ -3119,7 +3345,7 @@ function registerIPC() {
       if (Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0) {
         // fall through to routes handling below — 简化：registry 下发通常不含 routes
       } else {
-        return { ...r, applied, addedApps, addedRoutes: [] };
+        return { ...r, applied, addedApps, addedRoutes: [], removedRoutes: [] };
       }
     }
 
@@ -3179,37 +3405,46 @@ function registerIPC() {
     // （已移除全局默认策略下发：无全局默认概念）
 
     // 路由配置（scene_routes）→ 写入 local-config
-    const hasScenes  = Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0;
-    const addedRoutes = [];   // 本次同步「新增」的场景路由（本地没有、server 有）
+    // replace 时空数组也要处理：服务端删光目录时客户端同步删除系统下发路由
+    const hasScenes = Array.isArray(parsed.scene_routes)
+      && (parsed.scene_routes.length > 0 || opts.replace === true);
+    const addedRoutes = [];     // 本次同步「新增」的场景路由（本地没有、server 有）
+    const removedRoutes = [];   // 本次同步「删除」的系统下发路由（server 已无、本地有）
     if (hasScenes) {
       const cfg = readLocalConfig();
       const now = new Date().toISOString();
       const local = cfg.scene_routes || [];
       const localKeys = new Set();
       for (const r of local) { if (r.id) localKeys.add(r.id); if (r.model_key) localKeys.add(r.model_key); }
-      // replace=true（服务端全量同步）：按 id 合并更新 steps 等字段，保留用户自建路由
+      // replace=true（服务端全量同步）：按 id 合并更新；系统下发已删的从本地移除；保留用户自建
       if (opts.replace === true) {
-        const byId = new Map();
-        for (const r of local) { if (r.id) byId.set(r.id, r); }
-        for (const r of parsed.scene_routes) {
-          if (!r.id) continue;
-          // 客户端预定义策略路由（综合最优/免费源/…）的名字与定义以本地默认 yaml 为准，云端同步不覆盖
-          if (String(r.id).startsWith('strategy-') && byId.has(r.id)) continue;
-          const existing = byId.get(r.id);
-          if (existing) {
-            Object.assign(existing, r);
-          } else {
-            byId.set(r.id, { ...r, created_at: r.created_at || now });
-            addedRoutes.push(r.scene_name || r.model_key || r.id);
+        const { mergeSceneRoutesReplace } = require('./scene-routes-sync');
+        const merged = mergeSceneRoutesReplace(local, parsed.scene_routes, {
+          prevSyncedIds: cfg.synced_server_route_ids,
+          now,
+        });
+        for (const name of merged.addedRoutes) addedRoutes.push(name);
+        for (const name of merged.removedRoutes) removedRoutes.push(name);
+        cfg.scene_routes = merged.routes;
+        cfg.synced_server_route_ids = merged.syncedIds;
+        // 同步删掉的默认路由记入 tombstone，避免启动补齐复活
+        if (merged.removedDefaultIds.length) {
+          cfg.removed_default_routes = Array.isArray(cfg.removed_default_routes)
+            ? cfg.removed_default_routes : [];
+          for (const id of merged.removedDefaultIds) {
+            if (!cfg.removed_default_routes.includes(id)) cfg.removed_default_routes.push(id);
           }
         }
-        cfg.scene_routes = [...byId.values()];
       } else {
         const newFromServer = parsed.scene_routes
           .filter(r => !localKeys.has(r.id) && !localKeys.has(r.model_key))
-          .map(r => ({ ...r, created_at: r.created_at || now }));
+          .map(r => ({ ...r, from_server: true, created_at: r.created_at || now }));
         for (const r of newFromServer) addedRoutes.push(r.scene_name || r.model_key || r.id);
         cfg.scene_routes = [...local, ...newFromServer];
+        // 增量同步也记下已见过的服务端 id，便于下次 replace 能正确删
+        const seen = new Set(Array.isArray(cfg.synced_server_route_ids) ? cfg.synced_server_route_ids : []);
+        for (const r of parsed.scene_routes || []) { if (r?.id) seen.add(r.id); }
+        cfg.synced_server_route_ids = [...seen];
       }
       cfg.initialized_routes = true;
       writeLocalConfig(cfg);
@@ -3231,7 +3466,7 @@ function registerIPC() {
     if (!applied.tools && !applied.routes) {
       return { ok: false, error: '文件中未找到可识别的配置段（app_entities / scene_routes）' };
     }
-    return { ok: true, source, applied, addedApps, addedRoutes };
+    return { ok: true, source, applied, addedApps, addedRoutes, removedRoutes };
   }
 
   function fetchYaml(url, token) {
@@ -3321,7 +3556,8 @@ function registerIPC() {
       const text = await fetchYaml(url, token);
       const parsed = require('js-yaml').load(text);
       const u = String(url || '');
-      const isServerCatalog = u.includes('/config/apps') || u.includes('/config/providers');
+      // apps / providers / scenes 均为服务端权威目录：全量合并（含同步删除）
+      const isServerCatalog = u.includes('/config/apps') || u.includes('/config/providers') || u.includes('/config/scenes');
       return applyConfigDoc(parsed, url, { replace: replace || isServerCatalog });
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -3738,6 +3974,7 @@ function registerIPC() {
       tier: tier || null,             // 路由级价格过滤(free/paid)
       caveman_level: caveman_level || null, // 输出风格
       model_key: 'llm-router-' + rndHex(6),
+      user_owned: true,               // 用户自建：在线同步不删、不覆盖
       created_at: new Date().toISOString(),
     };
     cfg.scene_routes.push(route);
@@ -3750,7 +3987,18 @@ function registerIPC() {
     const cfg = readLocalConfig();
     const idx = cfg.scene_routes.findIndex(r => r.id === id);
     if (idx === -1) return null;
-    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null, flow: flow || null, caveman_level: caveman_level || null, scope: scope || null, tier: tier || null };
+    // 用户本地改过 → 标记为自有配置，在线同步不删、不覆盖
+    const prev = cfg.scene_routes[idx];
+    const next = {
+      ...prev, scene_name, icon, steps, rules: rules || null, classifier: classifier || null,
+      flow: flow || null, caveman_level: caveman_level || null, scope: scope || null, tier: tier || null,
+      user_owned: true,
+    };
+    delete next.from_server;
+    cfg.scene_routes[idx] = next;
+    if (Array.isArray(cfg.synced_server_route_ids)) {
+      cfg.synced_server_route_ids = cfg.synced_server_route_ids.filter(x => x !== id);
+    }
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
     return cfg.scene_routes[idx];

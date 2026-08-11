@@ -105,5 +105,6 @@ module.exports = {
   injectProxyEnv,
   parseScutilProxy,
   parseWinProxyServer,
+  readSystemProxyUrl,
   hasProxyEnv,
 };

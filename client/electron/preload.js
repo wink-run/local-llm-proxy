@@ -108,6 +108,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listCatalog: (filters) => ipcRenderer.invoke('resource:listCatalog', filters || {}),
     listResources: (filters) => ipcRenderer.invoke('resource:listResources', filters || {}),
     installCatalog: (params) => ipcRenderer.invoke('resource:installCatalog', params || {}),
+    syncCommunityCatalog: () => ipcRenderer.invoke('resource:syncCommunityCatalog'),
+    upsertCommunitySkill: (params) => ipcRenderer.invoke('resource:upsertCommunitySkill', params || {}),
     ensureBuiltinAssistants: () => ipcRenderer.invoke('resource:ensureBuiltinAssistants'),
     saveResource: (data) => ipcRenderer.invoke('resource:saveResource', data || {}),
     pickImportPath: (options) => ipcRenderer.invoke('resource:pickImportPath', options || {}),

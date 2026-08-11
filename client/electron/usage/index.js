@@ -22,35 +22,107 @@ const { fetchCopilotUsage } = require('./copilot');
 const { fetchGeminiUsage } = require('./gemini');
 const { fetchGroqUsage } = require('./groq');
 const { fetchVolcengineUsage } = require('./volcengine');
+const { fetchVolcengineArkUsage } = require('./volcengine-ark');
+const { fetchCursorUsage } = require('./cursor');
+const { fetchSiliconFlowUsage } = require('./siliconflow');
+const { fetchKimiCodeUsage } = require('./kimi-code');
+const { fetchMiniMaxUsage } = require('./minimax');
+const { fetchZhipuUsage } = require('./zhipu');
+const { fetchAgnesUsage } = require('./agnes');
 
 const USAGE_FETCHERS = {
   claude: fetchClaudeUsage, // OAuth 窗口型
   codex: fetchCodexUsage, // OAuth 窗口型（ChatGPT wham/usage；回退 ~/.codex/auth.json）
+  cursor: fetchCursorUsage, // IDE state.vscdb JWT → cursor.com usage-summary
   copilot: fetchCopilotUsage, // OAuth 窗口型（用 github_token）
   gemini: fetchGeminiUsage, // Google OAuth 窗口型（回退 ~/.gemini/oauth_creds.json + 自动刷新）
-  volcengine: fetchVolcengineUsage, // API key 探针型（Ark 响应头请求配额）
+  volcengine: fetchVolcengineUsage, // Coding/Agent Plan 订阅窗口
+  'volcengine-ark': fetchVolcengineArkUsage, // 方舟按量：费用中心余额
   openrouter: fetchOpenRouterUsage, // API key 余额型
   deepseek: fetchDeepSeekUsage, // API key 余额型
+  siliconflow: fetchSiliconFlowUsage, // API key 余额型（/v1/user/info）
+  'kimi-code': fetchKimiCodeUsage, // Coding 订阅窗口（/coding/v1/usages）
+  minimax: fetchMiniMaxUsage, // Coding/Token Plan + 现金余额
+  zhipu: fetchZhipuUsage, // Coding Plan 配额 + 按量余额
+  'agnes-ai': fetchAgnesUsage, // 国际站 / 中国站 billing（密钥与站点绑定）
   groq: fetchGroqUsage, // API key 指标型（无额度概念）
 };
 
 // 前端 UsageMeter 也需要判断「该 provider 是否支持额度抓取」，导出 key 列表保持单一真相源。
 const SUPPORTED_KEYS = Object.keys(USAGE_FETCHERS);
 
+/** 订阅模板 id / 别名 → 抓取器 key（api-volcengine → volcengine）。 */
+function normalizeUsageKey(raw) {
+  const k = String(raw || '').trim().toLowerCase();
+  if (!k) return null;
+  // 按量方舟须先于 volcengine 前缀匹配
+  if (k === 'volcengine-ark' || k === 'ark-payg' || k === 'volcengine-payg') return 'volcengine-ark';
+  if (k === 'api-volcengine' || k === 'doubao' || k === 'ark') return 'volcengine';
+  if (k === 'api-kimi-code' || k === 'kimicode' || k === 'kimi_code') return 'kimi-code';
+  if (k === 'api-minimax' || k === 'minimaxi') return 'minimax';
+  if (k === 'api-zhipu' || k === 'zhipuai' || k === 'bigmodel' || k === 'glm') return 'zhipu';
+  if (k === 'api-agnes' || k === 'api-agnes-ai' || k === 'agnes' || k === 'agnesai') return 'agnes-ai';
+  return k;
+}
+
 /** 返回该 provider 条目对应的抓取器 key（不支持则 null）。 */
 function usageProviderName(provider) {
   if (!provider) return null;
-  const key = provider.auth_type === 'oauth' && provider.oauth_provider ? provider.oauth_provider : provider.id;
-  return USAGE_FETCHERS[key] ? key : null;
+  const raw = provider.auth_type === 'oauth' && provider.oauth_provider
+    ? provider.oauth_provider
+    : provider.id;
+  let key = normalizeUsageKey(raw);
+  if (key && USAGE_FETCHERS[key]) return key;
+  // 多实例 acct-*：按 base_url 分流 Coding 订阅 vs 方舟按量
+  const base = String(provider.base_url || '').toLowerCase();
+  if (/volces\.com|volcengine/.test(base)) {
+    if (/\/api\/v3/.test(base) && !/\/coding\//.test(base)) key = 'volcengine-ark';
+    else key = 'volcengine';
+    return USAGE_FETCHERS[key] ? key : null;
+  }
+  return null;
+}
+
+/** 直连 App 订阅无 gateway provider 条目时，构造虚拟条目走 CLI/IDE 凭证。 */
+function syntheticProvider(key) {
+  const k = normalizeUsageKey(key);
+  if (!k || !USAGE_FETCHERS[k]) return null;
+  if (k === 'cursor') return { id: 'cursor' };
+  if (k === 'codex') return { id: 'codex', auth_type: 'oauth', oauth_provider: 'codex' };
+  if (k === 'claude') return { id: 'claude', auth_type: 'oauth', oauth_provider: 'claude' };
+  if (k === 'gemini') return { id: 'gemini', auth_type: 'oauth', oauth_provider: 'gemini' };
+  if (k === 'copilot') return { id: 'github-copilot', auth_type: 'oauth', oauth_provider: 'copilot' };
+  if (k === 'volcengine') return { id: 'volcengine' };
+  if (k === 'volcengine-ark') return { id: 'volcengine-ark' };
+  return { id: k };
 }
 
 /** provider 是否已具备可用凭证（agent config 的 OAuth token / API key，或 CLI 落盘的凭证）。 */
 function hasCredential(provider) {
   if (!provider) return false;
   const c = provider.credentials || {};
-  if (c.access_token || c.refresh_token || c.api_key || c.key || provider.token) return true;
-  // agent config 里没存凭证时，回退看对应 CLI 是否已登录（codex/gemini/claude 自维护 token 文件）。
+  // 火山 IAM AccessKey 也可查额度（与推理 API Key 不同）
+  if (c.access_key_id && c.secret_access_key) return true;
+  if (c.access_token || c.refresh_token || c.api_key || c.key || c.session_token || c.sessionToken || provider.token) return true;
   const name = usageProviderName(provider);
+  if (name === 'cursor') {
+    try {
+      const ide = require('../cursor-ide-auth');
+      return !!ide.readIdeCursorSession()?.accessToken;
+    } catch { return false; }
+  }
+  // Claude：OAuth / 套餐元数据 / Desktop Cookie / 本地用量采样均可展示
+  if (name === 'claude') {
+    const cli = readCliCreds('claude');
+    if (cli && (cli.access_token || cli.refresh_token || cli.subscriptionType)) return true;
+    try {
+      const web = require('./claude-web');
+      if (web.readClaudeDesktopCookies()?.sessionKey) return true;
+      if (web.readClaudePlanUsageHistory()) return true;
+    } catch { /* ignore */ }
+    return false;
+  }
+  // agent config 里没存凭证时，回退看对应 CLI 是否已登录（codex/gemini/claude 自维护 token 文件）。
   return !!(name && readCliCreds(name));
 }
 
@@ -77,4 +149,8 @@ async function fetchAllUsage(deps) {
   return out;
 }
 
-module.exports = { fetchUsage, fetchAllUsage, usageProviderName, hasCredential, USAGE_FETCHERS, SUPPORTED_KEYS };
+module.exports = {
+  fetchUsage, fetchAllUsage, usageProviderName, hasCredential, syntheticProvider,
+  normalizeUsageKey,
+  USAGE_FETCHERS, SUPPORTED_KEYS,
+};

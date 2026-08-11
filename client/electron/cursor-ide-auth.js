@@ -124,6 +124,7 @@ function buildCursorSpawnEnv(baseEnv = process.env) {
 module.exports = {
   AUTH_JSON,
   resolveIdeStateDb,
+  readIdeItem,
   readIdeCursorSession,
   syncIdeAuthJson,
   buildCursorSpawnEnv,

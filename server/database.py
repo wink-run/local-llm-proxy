@@ -275,6 +275,9 @@ async def init_db() -> None:
             ("spin_daily_limit", "3"),
             ("spin_max_credits", "50"),
             ("circle_invite_reward", "50"),
+            # 社区 skill：纳管扣减 / 推荐人奖励（后台可改）
+            ("community_skill_install_cost", "8"),
+            ("community_skill_recommend_reward", "5"),
         ]:
             await db.execute(
                 "INSERT OR IGNORE INTO system_config(key,value) VALUES(?,?)", (k, v)
@@ -296,6 +299,7 @@ async def init_db() -> None:
     await _migrate_user_avatars()
     await _migrate_user_persona()
     await _migrate_password_reset_codes()
+    await _migrate_community_catalog_installs()
 
 
 async def _migrate_password_reset_codes() -> None:
@@ -314,6 +318,65 @@ async def _migrate_password_reset_codes() -> None:
         """)
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_pwd_reset_email ON password_reset_codes(email)"
+        )
+        await db.commit()
+
+
+async def _migrate_community_catalog_installs() -> None:
+    """社区 skill 纳管结算记录：同用户同 catalog_id 只扣一次。"""
+    async with connect() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS community_catalog_installs (
+                id               SERIAL PRIMARY KEY,
+                user_id          INTEGER NOT NULL,
+                catalog_id       TEXT NOT NULL,
+                recommender_id   INTEGER,
+                credits_charged  REAL NOT NULL DEFAULT 0,
+                credits_awarded  REAL NOT NULL DEFAULT 0,
+                created_at       TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(user_id, catalog_id)
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cci_catalog ON community_catalog_installs(catalog_id)"
+        )
+        # 存量库补齐积分配置键
+        for k, v in [
+            ("community_skill_install_cost", "8"),
+            ("community_skill_recommend_reward", "5"),
+        ]:
+            await db.execute(
+                "INSERT OR IGNORE INTO system_config(key,value) VALUES(?,?)", (k, v)
+            )
+        await db.commit()
+
+
+async def get_community_catalog_install(user_id: int, catalog_id: str) -> dict | None:
+    async with connect() as db:
+        async with db.execute(
+            """SELECT user_id, catalog_id, recommender_id, credits_charged, credits_awarded, created_at
+               FROM community_catalog_installs WHERE user_id=? AND catalog_id=?""",
+            (user_id, catalog_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def record_community_catalog_install(
+    *,
+    user_id: int,
+    catalog_id: str,
+    recommender_id: int | None,
+    credits_charged: float,
+    credits_awarded: float,
+) -> None:
+    async with connect() as db:
+        await db.execute(
+            """INSERT INTO community_catalog_installs
+               (user_id, catalog_id, recommender_id, credits_charged, credits_awarded)
+               VALUES(?,?,?,?,?)
+               ON CONFLICT(user_id, catalog_id) DO NOTHING""",
+            (user_id, catalog_id, recommender_id, credits_charged, credits_awarded),
         )
         await db.commit()
 

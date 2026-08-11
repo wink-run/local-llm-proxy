@@ -273,8 +273,8 @@ function getRouteModels(app, routes = []) {
 function routeStepModels(routeId, routes = []) {
   const parsed = parseRouteBinding(routeId, routes);
   if (parsed.isScene && parsed.scene) {
-    return (Array.isArray(parsed.scene.steps) ? parsed.scene.steps : [])
-      .map(s => s && s.model).filter(Boolean);
+    const { concreteModelsFromScene } = require('./model-context-window');
+    return concreteModelsFromScene(parsed.scene);
   }
   return parsed.modelId ? [String(parsed.modelId)] : [];
 }
@@ -292,10 +292,12 @@ function routeContextWindow(routeId, routes = [], providers = []) {
 
 
 /**
- * Codex model_catalog 条目：name（wire id）+ label（展示名）+ vision。
+ * Codex model_catalog 条目：name（wire id）+ label（展示名）+ vision + contextWindow。
  * 配备识图增强的场景路由一律 vision=true，写入 input_modalities 含 image。
+ * 钉了具体模型 → 取候选窗口最小值（落到哪个都不超）；纯策略路由 → 默认 200k。
  */
 function getRouteCatalogModels(app, routes = [], providers = []) {
+  const { ROUTE_CONTEXT_WINDOW } = require('./model-context-window');
   const ids = Array.isArray(app?.route_ids) && app.route_ids.length
     ? app.route_ids
     : (app?.route_id ? [app.route_id] : []);
@@ -307,16 +309,17 @@ function getRouteCatalogModels(app, routes = [], providers = []) {
     const vision = routeSupportsImages(rid, routes, providers);
     // 场景用 scene_name（如「速度优先」）；直连模型仍用模型 id
     const label = routeLabelFor(rid, routes) || name;
-    // 感知候选模型窗口，取最小（落到哪个候选都不超其真实窗口）；纯策略路由为 null → 下游回退保守 128k
+    // 感知候选模型窗口，取最小；纯策略无候选 → 默认 200k
     const cw = routeContextWindow(rid, routes, providers);
+    const contextWindow = (cw && cw > 0) ? cw : ROUTE_CONTEXT_WINDOW;
     if (byName.has(name)) {
       const prev = byName.get(name);
       if (vision) prev.vision = true;
       if (label && !prev.label) prev.label = label;
-      if (cw && (!prev.contextWindow || cw < prev.contextWindow)) prev.contextWindow = cw;  // 同名多路由取更小
+      if (contextWindow < (prev.contextWindow || Infinity)) prev.contextWindow = contextWindow;
       continue;
     }
-    const entry = { name, label, vision, ...(cw ? { contextWindow: cw } : {}) };
+    const entry = { name, label, vision, contextWindow };
     byName.set(name, entry);
     out.push(entry);
   }

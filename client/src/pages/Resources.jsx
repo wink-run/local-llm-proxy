@@ -30,6 +30,12 @@ import {
 } from '../lib/idle-skill-ai';
 import { classifyLifecycle, isLifecycleExempt } from '../lib/resource-lifecycle';
 import { buildInvokeText, copyText } from '../lib/resource-enable';
+import { catalogSharerHandle } from '../lib/catalog-sharer';
+import {
+  formatApiError,
+  recommendCommunitySkill,
+  settleCommunityCatalogInstall,
+} from '../api/client';
 
 const VIEW_TAB_KEY = 'tokenbank.resources.viewTab';
 const TYPE_FILTER_KEY = 'tokenbank.resources.typeFilter';
@@ -886,13 +892,44 @@ export default function Resources() {
     }
     setBusy(catalogId);
     setMsg('');
+    setError('');
     try {
+      // 用户推荐项：先服务端结算（扣 8 / 奖推荐人 5，额度后台可改）
+      const meta = catalogItem?.metadata || {};
+      const needSettle = !!(meta.user_recommended && meta.recommender_user_id);
+      if (needSettle) {
+        if (!localStorage.getItem('token')) {
+          setError(t('resources.recommendNeedLogin'));
+          return;
+        }
+        try {
+          const { data: settled } = await settleCommunityCatalogInstall(catalogId);
+          if (settled?.item) {
+            try {
+              await window.electronAPI.resource.upsertCommunitySkill?.({ item: settled.item });
+            } catch { /* 缓存写入失败仍尝试本地纳管 */ }
+          }
+          if (settled?.charged) {
+            setMsg(t('resources.installCharged', {
+              cost: settled.install_cost,
+              reward: settled.recommend_reward,
+            }));
+          }
+        } catch (e) {
+          setError(formatApiError(e, t('resources.installSettleFailed')));
+          return;
+        }
+      }
+
       const res = await window.electronAPI.resource.installCatalog({ catalogId });
       if (!res.success) {
         setError(res.error || t('resources.installFailed'));
         return;
       }
-      setMsg(res.alreadyInstalled ? t('resources.alreadyManaged') : t('resources.installOk'));
+      setMsg((prev) => {
+        const base = res.alreadyInstalled ? t('resources.alreadyManaged') : t('resources.installOk');
+        return prev && needSettle ? `${prev} · ${base}` : base;
+      });
       // 局部更新目录/本机列表，避免 loadAll 整页闪烁
       if (res.resource) {
         upsertResourceLocally(res.resource);
@@ -915,6 +952,71 @@ export default function Resources() {
       // 留在当前「社区推荐」Tab，不跳转到已纳管
     } catch (e) {
       setError(e.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  /** 推荐本机 Skill 到社区：他人可见并可纳管（纳管扣积分、推荐人获奖） */
+  async function handleRecommendToCommunity(skillLike) {
+    if (!localStorage.getItem('token')) {
+      setError(t('resources.recommendNeedLogin'));
+      return;
+    }
+    const managed = skillLike?.resourceId
+      ? resourcesById.get(skillLike.resourceId)
+      : (skillLike?.id ? resourcesById.get(skillLike.id) : null);
+    const name = String(managed?.name || skillLike?.name || '').trim();
+    if (!name) {
+      setError(t('resources.recommendNeedContent'));
+      return;
+    }
+    let content = String(managed?.content || skillLike?.content || '').trim();
+    // 列表行常无正文：从权威路径读文件
+    if (!content && skillLike?.authorityPath && window.electronAPI?.resource?.previewFile) {
+      try {
+        const prev = await window.electronAPI.resource.previewFile({
+          targetPath: skillLike.authorityPath,
+        });
+        if (prev?.success && prev.content) content = String(prev.content).trim();
+      } catch { /* ignore */ }
+    }
+    if (!content) {
+      setError(t('resources.recommendNeedContent'));
+      return;
+    }
+    const busyKey = `rec-${managed?.id || skillLike?.resourceId || name}`;
+    if (!window.confirm(t('resources.recommendConfirm', { name }))) return;
+    setBusy(busyKey);
+    setError('');
+    setMsg('');
+    try {
+      const { data } = await recommendCommunitySkill({
+        name,
+        content,
+        display_name: managed?.display_name || skillLike?.display_name || name,
+        description: managed?.description || skillLike?.description || '',
+        metadata: {
+          ...(managed?.metadata || skillLike?.metadata || {}),
+          tags: managed?.metadata?.tags || skillLike?.metadata?.tags,
+        },
+      });
+      if (data?.item) {
+        try {
+          await window.electronAPI.resource.upsertCommunitySkill?.({ item: data.item });
+        } catch { /* ignore */ }
+      }
+      try {
+        await window.electronAPI.resource.syncCommunityCatalog?.();
+      } catch { /* ignore */ }
+      // 刷新目录列表，推荐 Tab 可见
+      try {
+        const catRes = await window.electronAPI.resource.listCatalog({});
+        if (catRes.success) setCatalog(catRes.items || []);
+      } catch { /* ignore */ }
+      setMsg(t('resources.recommendOk', { name: data?.item?.display_name || name }));
+    } catch (e) {
+      setError(formatApiError(e, t('resources.recommendFailed')));
     } finally {
       setBusy('');
     }
@@ -2114,6 +2216,15 @@ export default function Resources() {
           <>
             <button
               type="button"
+              disabled={!!busy && busy !== `rec-${item.resourceId}` && busy !== item.resourceId}
+              onClick={() => handleRecommendToCommunity(item)}
+              className={ASSET_BTN_GHOST}
+              title={t('resources.recommendHint')}
+            >
+              {busy === `rec-${item.resourceId}` ? t('resources.busy') : t('resources.recommendCommunity')}
+            </button>
+            <button
+              type="button"
               disabled={!!busy && busy !== item.resourceId}
               onClick={(e) => openProjectMenu(e, item.resourceId)}
               className={ASSET_BTN_PRIMARY}
@@ -2226,6 +2337,14 @@ export default function Resources() {
         className={catalogMode && expanded ? 'sm:col-span-2' : ''}
         badges={(
           <>
+            {catalogMode && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-md bg-zinc-100/90 dark:bg-zinc-800/80 text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
+                title={t('resources.sharedByHint')}
+              >
+                {t('resources.sharedBy', { handle: catalogSharerHandle(resource) })}
+              </span>
+            )}
             {!catalogMode && (
               <span className="text-[10px] text-zinc-400 tracking-wide">{sourceLabel(resource.source, t)}</span>
             )}
@@ -2335,6 +2454,17 @@ export default function Resources() {
           </button>
         ) : (
           <>
+            {resource.type === 'skill' && (
+              <button
+                type="button"
+                className={ASSET_BTN_GHOST}
+                disabled={!!busy && busy !== `rec-${resource.id}`}
+                onClick={() => handleRecommendToCommunity(resource)}
+                title={t('resources.recommendHint')}
+              >
+                {busy === `rec-${resource.id}` ? t('resources.busy') : t('resources.recommendCommunity')}
+              </button>
+            )}
             <button
               type="button"
               className={ASSET_BTN_GHOST}
@@ -2403,6 +2533,15 @@ export default function Resources() {
       if (ub.lastUsed !== ua.lastUsed) return ub.lastUsed - ua.lastUsed;
       return byManagedAt(a, b);
     };
+    // Hit-or-Exit：与分层计数同源；Skill 扫描行回退到已纳管资源再判定
+    const matchLayer = (item) => {
+      if (!layerFilter) return true;
+      const linked = item?.resourceId ? resourcesById.get(item.resourceId) : null;
+      const probe = linked || item;
+      const life = classifyLifecycle(probe);
+      if (life.layer === 'exempt') return false;
+      return life.layer === layerFilter;
+    };
     const managedRows = (typeFilter === 'skill'
       ? []
       : (typeFilter ? resources : resources.filter(r => r.type !== 'skill')))
@@ -2410,17 +2549,25 @@ export default function Resources() {
         if (r.type === 'prompt' && !matchPromptKind(r)) return false;
         if (!matchTag(r)) return false;
         if (!matchQuery(r)) return false;
-        if (layerFilter) {
-          const life = classifyLifecycle(r);
-          if (life.layer === 'exempt' || life.layer !== layerFilter) return false;
-        }
+        if (!matchLayer(r)) return false;
         if (!effectiveAppFilter) return true;
         // Prompt / 智能体：按已投射到的 Agent 筛选
         return (r.projections || []).some(p => p.agentId === effectiveAppFilter);
       })
       .slice()
       .sort(byUsage);
-    const skillRows = (showSkills ? filteredDiscovered : []).slice().sort(byUsage);
+    // 技能优先磁盘扫描行；扫描为空时回退已纳管 skill（避免分层有数、列表空白）
+    const useDiscoveredSkills = showSkills && discovered.length > 0;
+    const skillBase = !showSkills
+      ? []
+      : useDiscoveredSkills
+        ? filteredDiscovered
+        : resources
+          .filter(r => r.type === 'skill')
+          .filter(r => matchTag(r) && matchQuery(r))
+          .filter(r => !effectiveAppFilter
+            || (r.projections || []).some(p => p.agentId === effectiveAppFilter));
+    const skillRows = skillBase.filter(matchLayer).slice().sort(byUsage);
 
     if (managedRows.length + skillRows.length === 0) {
       // 有本机 skill / 资源,但被来源应用筛选过滤空了
@@ -2445,6 +2592,20 @@ export default function Resources() {
               <p className="text-xs text-zinc-400">{t('resources.emptyTagFiltered')}</p>
               <button type="button" onClick={() => setTagFilter('')} className="text-xs text-blue-600 hover:underline">
                 {t('resources.clearTagFilter')}
+              </button>
+            </div>
+          </div>
+        );
+      }
+      // 分层筛空：提示切回「全部」，避免误显示「暂无已纳管」
+      if (layerFilter && resources.length > 0) {
+        return (
+          <div className="space-y-3">
+            {showAppFilterBar && renderAppFilter()}
+            <div className="text-center py-10 space-y-2">
+              <p className="text-xs text-zinc-400">{t('resources.emptyLayerFiltered')}</p>
+              <button type="button" onClick={() => changeLayerFilter('')} className="text-xs text-blue-600 hover:underline">
+                {t('resources.clearLayerFilter')}
               </button>
             </div>
           </div>
@@ -2478,7 +2639,9 @@ export default function Resources() {
         )}
         <div className="space-y-3">
           {managedRows.map(r => renderResourceRow(r))}
-          {skillRows.map(item => renderDiscoveredRow(item))}
+          {skillRows.map(item => (
+            useDiscoveredSkills ? renderDiscoveredRow(item) : renderResourceRow(item)
+          ))}
         </div>
       </div>
     );

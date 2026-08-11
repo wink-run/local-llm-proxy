@@ -265,9 +265,11 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
   function importedMsg(r, prefix) {
     const apps = Array.isArray(r.addedApps) ? r.addedApps : [];
     const routes = Array.isArray(r.addedRoutes) ? r.addedRoutes : [];
+    const removed = Array.isArray(r.removedRoutes) ? r.removedRoutes : [];
     const parts = [];
-    if (apps.length)   parts.push(t('gateway.sync.addedApps', { n: apps.length, list: apps.join('、') }));
-    if (routes.length) parts.push(t('gateway.sync.addedRoutes', { n: routes.length, list: routes.join('、') }));
+    if (apps.length)    parts.push(t('gateway.sync.addedApps', { n: apps.length, list: apps.join('、') }));
+    if (routes.length)  parts.push(t('gateway.sync.addedRoutes', { n: routes.length, list: routes.join('、') }));
+    if (removed.length) parts.push(t('gateway.sync.removedRoutes', { n: removed.length, list: removed.join('、') }));
     if (parts.length)  return `${prefix}，${parts.join('；')}`;
     return t('gateway.sync.noChanges', { prefix });
   }
@@ -283,9 +285,9 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     setMsg('');
     const token = localStorage.getItem('token');
 
-    // 桌面端：apps/sources 全量覆盖，scenes 增量合并
+    // 桌面端：apps/sources/scenes 全量覆盖（scenes 含系统下发路由的同步删除）
     if (window.electronAPI?.toolsConfig?.importUrl) {
-      const replace = endpoint.includes('/apps') || endpoint.includes('/sources');
+      const replace = endpoint.includes('/apps') || endpoint.includes('/sources') || endpoint.includes('/scenes');
       const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token, { replace });
       setMsg(r.ok ? '✓ ' + importedMsg(r, t('gateway.sync.done')) : '✗ ' + r.error);
       if (r.ok && onImported) onImported();

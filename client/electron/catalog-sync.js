@@ -195,6 +195,42 @@ async function syncCommunityCatalog(opts = {}) {
   return { ok: !!payload, wrote };
 }
 
+/** 将单条 skill（如刚推荐/结算返回）立即写入本机社区缓存，便于纳管 */
+function upsertCommunitySkillItem(rawItem) {
+  if (!rawItem || typeof rawItem !== 'object') return false;
+  const catalogId = String(rawItem.catalog_id || rawItem.catalogId || '').trim();
+  const name = String(rawItem.name || '').trim();
+  if (!catalogId || !name) return false;
+  let doc = { version: 1, mcp: [], prompts: [], skills: [], assistants: [] };
+  try {
+    if (fs.existsSync(USER_COMMUNITY_CATALOG)) {
+      const cur = yaml.load(fs.readFileSync(USER_COMMUNITY_CATALOG, 'utf8')) || {};
+      doc = {
+        version: cur.version || 1,
+        mcp: Array.isArray(cur.mcp) ? cur.mcp : [],
+        prompts: Array.isArray(cur.prompts) ? cur.prompts : [],
+        skills: Array.isArray(cur.skills) ? cur.skills : [],
+        assistants: Array.isArray(cur.assistants) ? cur.assistants : [],
+      };
+    }
+  } catch { /* 用空文档 */ }
+  const item = {
+    catalog_id: catalogId,
+    type: 'skill',
+    name,
+    display_name: rawItem.display_name || rawItem.displayName || name,
+    description: rawItem.description || '',
+    content: rawItem.content || '',
+    metadata: rawItem.metadata && typeof rawItem.metadata === 'object' ? rawItem.metadata : {},
+  };
+  const skills = doc.skills.slice();
+  const idx = skills.findIndex(s => String(s?.catalog_id || s?.catalogId || '') === catalogId);
+  if (idx >= 0) skills[idx] = item;
+  else skills.push(item);
+  doc.skills = skills;
+  return writeCommunityCatalogCache(doc);
+}
+
 /** catalog provider → registry.providers 条目 */
 function catalogProviderToRegistry(p) {
   if (!p?.id) return null;
@@ -478,4 +514,5 @@ module.exports = {
   fetchCommunityCatalog,
   writeCommunityCatalogCache,
   syncCommunityCatalog,
+  upsertCommunitySkillItem,
 };

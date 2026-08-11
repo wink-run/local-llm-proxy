@@ -49,14 +49,13 @@ test('多模型取最大窗口；autoCompact=80%', () => {
   assert.equal(autoCompactWindow(262144), Math.floor(262144 * 0.8));
 });
 
-test('路由类 model_key（llm-router-*）钉保守 128k，不走模型族/200k 兜底（v0.5.10 502 回归修复）', () => {
+test('路由类 model_key（llm-router-*）默认 200k，显式字段仍优先', () => {
   const { ROUTE_CONTEXT_WINDOW } = require('../model-context-window');
-  assert.equal(ROUTE_CONTEXT_WINDOW, 128000);
+  assert.equal(ROUTE_CONTEXT_WINDOW, 200000);
   for (const rk of ['llm-router-auto', 'llm-router-cost', 'llm-router-speed', 'llm-router-design', 'LLM-Router-Free']) {
-    assert.equal(resolveContextWindow(rk), 128000, rk + ' 应为保守 128k');
+    assert.equal(resolveContextWindow(rk), 200000, rk + ' 应为默认 200k');
   }
-  // 对象形式（含 name）同样保守
-  assert.equal(resolveContextWindow({ name: 'llm-router-auto' }), 128000);
+  assert.equal(resolveContextWindow({ name: 'llm-router-auto' }), 200000);
   // 显式 context_window 仍优先（用户/源指定）
   assert.equal(resolveContextWindow({ name: 'llm-router-auto', context_window: 400000 }), 400000);
   // 真实模型不受影响：仍按模型族解析
@@ -74,4 +73,35 @@ test('resolveMinContextWindow：路由取候选模型最小窗口，感知模型
   assert.equal(resolveMinContextWindow(['deepseek-v4-pro', 'glm-4']), 128000);
   // 空 → null（调用方回退保守默认）
   assert.equal(resolveMinContextWindow([]), null);
+});
+
+test('场景钉死具体模型时，上下文取这些模型窗口的最小值', () => {
+  const {
+    concreteModelsFromScene,
+    resolveContextWindowForScene,
+    ROUTE_CONTEXT_WINDOW,
+  } = require('../model-context-window');
+
+  const withModels = {
+    model_key: 'llm-router-chain',
+    steps: [{ model: 'glm-5.2' }, { model: 'deepseek-v4-flash' }],
+  };
+  assert.deepEqual(concreteModelsFromScene(withModels), ['glm-5.2', 'deepseek-v4-flash']);
+  // glm 200k < deepseek 1M → 取最小 200k
+  assert.equal(resolveContextWindowForScene(withModels), 200000);
+
+  const strategyOnly = {
+    model_key: 'llm-router-auto',
+    flow: 'auto',
+    steps: [{ strategy: 'auto' }],
+  };
+  assert.deepEqual(concreteModelsFromScene(strategyOnly), []);
+  assert.equal(resolveContextWindowForScene(strategyOnly), ROUTE_CONTEXT_WINDOW);
+
+  const withRules = {
+    model_key: 'llm-router-r',
+    steps: [{ model: 'glm-5.2' }],
+    rules: [{ steps: [{ model: 'kimi-k3' }] }],
+  };
+  assert.equal(resolveContextWindowForScene(withRules), 200000); // glm 200k < kimi-k3 1M
 });

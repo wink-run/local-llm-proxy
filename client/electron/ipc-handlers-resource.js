@@ -195,6 +195,33 @@ function registerResourceHandlers() {
     }
   });
 
+  // 拉取最新社区目录到本机缓存（推荐/纳管后刷新）
+  ipcMain.handle('resource:syncCommunityCatalog', async () => {
+    try {
+      const catalogSync = require('./catalog-sync');
+      const result = await catalogSync.syncCommunityCatalog({});
+      return { success: true, ...result };
+    } catch (error) {
+      console.error('[IPC] resource:syncCommunityCatalog error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 把单条 skill 写入本机社区缓存（结算返回 item 后即可纳管）
+  ipcMain.handle('resource:upsertCommunitySkill', async (_event, { item } = {}) => {
+    try {
+      const catalogSync = require('./catalog-sync');
+      const ok = catalogSync.upsertCommunitySkillItem(item);
+      if (ok) {
+        try { require('./resource-catalog').resetCatalogCache(); } catch {}
+      }
+      return { success: !!ok };
+    } catch (error) {
+      console.error('[IPC] resource:upsertCommunitySkill error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('resource:saveResource', async (_event, data = {}) => {
     try {
       resourceManager.init();

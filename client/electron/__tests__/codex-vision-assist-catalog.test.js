@@ -53,11 +53,21 @@ test('routeSupportsImages：配备识图增强的场景 → true；纯文本场�
 test('getRouteCatalogModels：识图场景写入 vision=true，供 Codex catalog 含 image', () => {
   const app = { route_ids: ['llm-router-vision-assist', 'llm-router-plain'] };
   const catalog = getRouteCatalogModels(app, ROUTES, []);
-  // 只校验 vision（本用例意图）；contextWindow 由候选模型窗口另测，避免规则变动脆断
   assert.deepEqual(catalog.map(({ name, label, vision }) => ({ name, label, vision })), [
     { name: 'llm-router-vision-assist', label: 'llm-router-vision-assist', vision: true },
     { name: 'llm-router-plain', label: 'llm-router-plain', vision: false },
   ]);
+  // 钉了 deepseek-v4-* → 按其模型窗口（1M），而非路由默认 200k
+  assert.equal(catalog[0].contextWindow, 1048576);
+  assert.equal(catalog[1].contextWindow, 1048576);
+});
+
+test('getRouteCatalogModels：纯策略路由 contextWindow 默认 200k', () => {
+  const routes = [
+    { id: 'r1', model_key: 'llm-router-speed', scene_name: '速度优先', flow: 'speed' },
+  ];
+  const catalog = getRouteCatalogModels({ route_ids: ['llm-router-speed'] }, routes, []);
+  assert.equal(catalog[0].contextWindow, 200000);
 });
 
 test('getRouteCatalogModels：场景路由带 scene_name 作 label', () => {

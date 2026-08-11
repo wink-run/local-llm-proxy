@@ -46,7 +46,7 @@ const RULES = [
   [/grok/i, 'grok.svg'],
   [/workbuddy|codebuddy/i, 'codebuddy-color.svg'],
   [/trae/i, 'trae-color.svg'],
-  [/volcengine|火山|volc|doubao|豆包/i, 'volcengine-color.svg'],
+  [/volcengine|火山|volc|doubao|豆包|volcengine-ark/i, 'volcengine-color.svg'],
 ];
 
 const cache = new Map();

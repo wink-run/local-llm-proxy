@@ -53,7 +53,10 @@ async def export_routing_defaults():
 @router.post("/routing/catalog/routes", dependencies=[Depends(auth_admin)])
 async def create_route(body: RouteBody):
     r = rc.normalize_route(body.route)
-    rc.validate_route(r)
+    try:
+        rc.validate_route(r)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     doc = await rc.load_catalog_doc()
     if any(x.get("id") == r["id"] for x in doc.get("routes") or []):
         raise HTTPException(409, "id 已存在")
@@ -65,7 +68,10 @@ async def create_route(body: RouteBody):
 @router.put("/routing/catalog/routes/{route_id}", dependencies=[Depends(auth_admin)])
 async def update_route(route_id: str, body: RouteBody):
     r = rc.normalize_route({**body.route, "id": route_id})
-    rc.validate_route(r)
+    try:
+        rc.validate_route(r)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     doc = await rc.load_catalog_doc()
     items = doc.get("routes") or []
     idx = next((i for i, x in enumerate(items) if x.get("id") == route_id), -1)

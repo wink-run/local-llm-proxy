@@ -426,3 +426,67 @@ async def user_stats(uid: int = Depends(get_current_user_id)):
         "active_workers": len(user_workers),
         "active_requests": sum(w.active_requests for w in user_workers),
     }
+
+
+# ── 社区 skill 推荐 / 纳管结算 ─────────────────────────────────────────────────
+
+class CommunityRecommendRequest(BaseModel):
+    name: str
+    content: str
+    display_name: str = ""
+    description: str = ""
+    metadata: dict = {}
+
+
+@router.get("/community-catalog/pricing")
+async def community_catalog_pricing(uid: int = Depends(get_current_user_id)):
+    """当前纳管扣减 / 推荐奖励（只读，供客户端提示）。"""
+    import community_catalog as cc
+    return await cc.get_pricing()
+
+
+@router.post("/community-catalog/recommend")
+async def recommend_community_skill(
+    req: CommunityRecommendRequest,
+    uid: int = Depends(get_current_user_id),
+):
+    """把本机 skill 推荐到社区目录，其他用户可见并可纳管。"""
+    import community_catalog as cc
+    user = await db.get_user_by_id(uid)
+    email = (user or {}).get("email") or ""
+    try:
+        result = await cc.upsert_user_skill_recommendation(
+            user_id=uid,
+            name=req.name,
+            content=req.content,
+            display_name=req.display_name,
+            description=req.description,
+            metadata=req.metadata or {},
+            recommender_email=email,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return result
+
+
+class CommunityInstallRequest(BaseModel):
+    catalog_id: str
+
+
+@router.post("/community-catalog/install")
+async def install_community_skill(
+    req: CommunityInstallRequest,
+    uid: int = Depends(get_current_user_id),
+):
+    """社区 skill 纳管结算：用户推荐项扣积分并奖励推荐人；官方项免费。"""
+    import community_catalog as cc
+    try:
+        return await cc.settle_community_install(
+            installer_id=uid,
+            catalog_id=req.catalog_id,
+        )
+    except PermissionError as e:
+        raise HTTPException(402, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+

@@ -74,7 +74,7 @@ const RULES = [
   [/grok/i, grok],
   [/workbuddy|codebuddy/i, codebuddy],   // WorkBuddy = 腾讯 CodeBuddy
   [/trae/i, trae],
-  [/volcengine|火山|volc|doubao|豆包|api-volcengine/i, volcengine],
+  [/volcengine|火山|volc|doubao|豆包|api-volcengine|volcengine-ark/i, volcengine],
 ];
 
 /** 供给源 catalog id → 本地 logo 资源（无 lobehub 条目时使用） */
@@ -90,6 +90,7 @@ const PROVIDER_LOCAL_ICONS = {
   gemini: iconAistudio,
   volcengine: iconVolcFavicon,
   'api-volcengine': iconVolcFavicon,
+  'volcengine-ark': iconVolcFavicon,
   'openai-compatible': iconOpenaiCompatible,
   'anthropic-compatible': iconAnthropicCompatible,
   minimax: iconMinimax,

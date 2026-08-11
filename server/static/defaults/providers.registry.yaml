@@ -617,6 +617,48 @@ providers:
   keyless: false
   key_prefix: []
   signup_url: ''
+- id: volcengine-ark
+  label: 火山引擎（按量）
+  icon: 🌋
+  tier: paid
+  hint: 方舟按量付费：ark.cn-beijing.volces.com/api/v3
+  base_url: https://ark.cn-beijing.volces.com/api/v3/
+  modalities:
+    language: true
+  models:
+  - name: doubao-seed-2.0-pro
+    type: chat
+  - name: doubao-seed-2.0-code
+    type: chat
+  - name: doubao-seed-2.0-flash
+    type: chat
+  - name: deepseek-v3.2
+    type: chat
+  - name: kimi-k2.6
+    type: chat
+  pricing:
+    doubao-seed-2.0-pro:
+      in: 0.4
+      out: 1.2
+    doubao-seed-2.0-code:
+      in: 0.4
+      out: 1.2
+    doubao-seed-2.0-flash:
+      in: 0.1
+      out: 0.3
+    deepseek-v3.2:
+      in: 0.14
+      out: 0.28
+    kimi-k2.6:
+      in: 0.15
+      out: 2.5
+  handler: openai
+  api_format: openai
+  enabled_default: false
+  keyless: false
+  key_prefix: []
+  signup_url: https://console.volcengine.com/ark
+  payg: true
 - id: kimi-code
   label: Kimi Code
   icon: 🌙
@@ -1029,6 +1071,69 @@ billing_sources:
     monthly_usd: 28.57
   agent_id: ''
   plan_provider_id: volcengine
+  subscription_to_api: false
+- id: volcengine-ark
+  sort_order: 7
+  category: payg
+  source_id: volcengine-ark
+  label: 火山引擎（按量）
+  icon: 🌋
+  tier: paid
+  base_url: https://ark.cn-beijing.volces.com/api/v3/
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 方舟按量付费：ark.cn-beijing.volces.com/api/v3
+  keyless: false
+  key_prefix: []
+  signup_url: https://console.volcengine.com/ark
+  aliases: []
+  enabled_default: false
+  models:
+  - id: doubao-seed-2.0-pro
+    modality: chat
+    pricing:
+      in: 0.4
+      out: 1.2
+  - id: doubao-seed-2.0-code
+    modality: chat
+    pricing:
+      in: 0.4
+      out: 1.2
+  - id: doubao-seed-2.0-flash
+    modality: chat
+    pricing:
+      in: 0.1
+      out: 0.3
+  - id: deepseek-v3.2
+    modality: chat
+    pricing:
+      in: 0.14
+      out: 0.28
+  - id: kimi-k2.6
+    modality: chat
+    pricing:
+      in: 0.15
+      out: 2.5
+  pricing:
+    doubao-seed-2.0-pro:
+      in: 0.4
+      out: 1.2
+    doubao-seed-2.0-code:
+      in: 0.4
+      out: 1.2
+    doubao-seed-2.0-flash:
+      in: 0.1
+      out: 0.3
+    deepseek-v3.2:
+      in: 0.14
+      out: 0.28
+    kimi-k2.6:
+      in: 0.15
+      out: 2.5
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
   subscription_to_api: false
 - id: api-kimi-code
   sort_order: 8

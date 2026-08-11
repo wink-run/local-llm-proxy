@@ -8,13 +8,17 @@ const { BrowserWindow, screen, ipcMain } = require('electron');
 const path = require('path');
 
 const POPOVER_W = 360;
-const POPOVER_H = 500;
+const POPOVER_H = 560;
 
 let win = null;
 let ready = false;
 let deps = null;
 let blurTimer = null;
 let lastRefreshAt = 0;
+/** 供给源额度缓存（异步刷新，避免卡住亮窗） */
+let usageCache = { at: 0, items: [] };
+const USAGE_TTL_MS = 45_000;
+let usageRefreshInflight = null;
 
 function formatRelativeRefresh(lang, ts) {
   if (!ts) return null;
@@ -69,8 +73,12 @@ function labelsFor(lang) {
     quit: '退出',
     callsUnit: '次',
     appsTitle: '活跃应用',
-    appsEmpty: '暂无已纳管应用',
+    appsEmpty: '近 3 天无活跃应用',
     appsTag: 'APPS',
+    usageTitle: '供给源额度',
+    usageTag: 'QUOTA',
+    usageEmpty: '近 3 天无活跃供给源',
+    usageLoading: '额度加载中…',
   } : {
     notRefreshed: 'Not tested yet',
     gateway: 'Local Gateway',
@@ -109,13 +117,50 @@ function labelsFor(lang) {
     quit: 'Quit',
     callsUnit: '×',
     appsTitle: 'Active Apps',
-    appsEmpty: 'No managed apps',
+    appsEmpty: 'No activity in 3 days',
     appsTag: 'APPS',
+    usageTitle: 'Provider Quota',
+    usageTag: 'QUOTA',
+    usageEmpty: 'No active providers in 3 days',
+    usageLoading: 'Loading quota…',
   };
 }
 
 function gatewayRunningLabel(lang, port) {
   return lang === 'en' ? `Running :${port}` : `运行中 :${port}`;
+}
+
+/** 后台刷新供给源额度；force 忽略 TTL */
+function refreshUsageCache(force = false) {
+  const d = deps;
+  if (!d?.getProvidersUsage) return Promise.resolve();
+  const fresh = !force && usageCache.at && (Date.now() - usageCache.at < USAGE_TTL_MS);
+  if (fresh) return Promise.resolve(usageCache.items);
+  if (usageRefreshInflight) return usageRefreshInflight;
+  usageRefreshInflight = Promise.resolve()
+    .then(() => d.getProvidersUsage())
+    .then((items) => {
+      usageCache = {
+        at: Date.now(),
+        items: Array.isArray(items) ? items.map((u) => ({
+          id: String(u.id || ''),
+          label: String(u.label || u.id || ''),
+          plan: String(u.plan || ''),
+          summary: String(u.summary || ''),
+          detail: String(u.detail || ''),
+          usedPercent: u.usedPercent != null ? Number(u.usedPercent) : null,
+          nearLimit: !!u.nearLimit,
+        })) : [],
+      };
+      pushState();
+      return usageCache.items;
+    })
+    .catch((e) => {
+      console.warn('[tray-popover] usage refresh:', e?.message || e);
+      return usageCache.items;
+    })
+    .finally(() => { usageRefreshInflight = null; });
+  return usageRefreshInflight;
 }
 
 function buildState() {
@@ -174,6 +219,9 @@ function buildState() {
       active: a.active !== false,
     }));
 
+    const providersUsage = Array.isArray(usageCache.items) ? usageCache.items : [];
+    const usageLoading = !usageCache.at && !!usageRefreshInflight;
+
     const circleCount = Number(circlePosts.count) || 0;
     let circleLabel;
     if (!circlePosts.loggedIn) circleLabel = L.circleLogin;
@@ -222,6 +270,8 @@ function buildState() {
       circlePostsOk: !!circlePosts.ok,
       circleLoggedIn: !!circlePosts.loggedIn,
       apps,
+      providersUsage,
+      usageLoading,
       generalsTodayCount,
       quickInvokes,
       labels: {
@@ -248,6 +298,8 @@ function buildState() {
       subtitle: String(e?.message || e),
       lastRefreshAt: 0,
       apps: [],
+      providersUsage: [],
+      usageLoading: false,
       circlePostsCount: 0,
       circlePostsLabel: '',
       circlePostsOk: false,
@@ -370,10 +422,11 @@ function show(tray) {
   if (!win.isVisible()) win.show();
   win.focus();
   if (ready) pushState();
-  // 延迟刷用量，优先保证亮窗动画流畅
+  // 延迟刷用量 + 供给源额度，优先保证亮窗动画流畅
   setTimeout(() => {
     try { deps?.syncStats?.(); } catch { /* ignore */ }
     pushState();
+    refreshUsageCache(false);
   }, 40);
 }
 
@@ -433,6 +486,7 @@ function registerIpc() {
           console.warn('[tray-popover] probe failed:', e.message);
         }
         try { await d.refreshCirclePosts?.(); } catch { /* ignore */ }
+        try { await refreshUsageCache(true); } catch { /* ignore */ }
         lastRefreshAt = Date.now();
         d.refreshTrayIcon?.();
         const state = buildState();

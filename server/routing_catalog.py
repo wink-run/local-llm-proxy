@@ -138,10 +138,11 @@ def validate_route(r: dict) -> None:
         raise ValueError("model_key 必填")
     if not r.get("scene_name"):
         raise ValueError("scene_name 必填")
-    if r.get("strategy") or r.get("flow"):
-        return   # 策略/流转路由无需具体步骤
+    # 策略/流转，或路由级来源/价格过滤：均可无 steps（与管理端文案一致）
+    if r.get("strategy") or r.get("flow") or r.get("scope") or r.get("tier"):
+        return
     if not r.get("steps"):
-        raise ValueError("至少需要一个路由步骤或策略")
+        raise ValueError("至少需要一个路由步骤，或设置来源/价格/流转策略")
 
 
 def compile_route(r: dict) -> dict:
@@ -155,7 +156,8 @@ def compile_route(r: dict) -> dict:
         out["strategy"] = r["strategy"]
     if r.get("steps"):
         out["steps"] = [normalize_step(s) for s in r["steps"]]   # 全字段保留
-    for k in ("flow", "rules", "classifier", "caveman_level"):
+    # flow / scope / tier 与客户端 scene_routes 对齐，缺一则过滤路由下发后失效
+    for k in ("flow", "scope", "tier", "rules", "classifier", "caveman_level"):
         if r.get(k):
             out[k] = r[k]
     return out

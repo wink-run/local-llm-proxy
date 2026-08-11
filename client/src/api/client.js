@@ -108,6 +108,27 @@ export function getContributeSummary() {
   return http.get('/user/contribute-summary');
 }
 
+/** 社区 skill 纳管/推荐积分额度 */
+export function getCommunityCatalogPricing() {
+  const token = localStorage.getItem('token');
+  return authRequest('GET', '/user/community-catalog/pricing', { token });
+}
+
+/** 推荐本机 skill 到社区目录 */
+export function recommendCommunitySkill(body) {
+  const token = localStorage.getItem('token');
+  return authRequest('POST', '/user/community-catalog/recommend', { body, token });
+}
+
+/** 社区 skill 纳管结算（用户推荐项扣积分） */
+export function settleCommunityCatalogInstall(catalogId) {
+  const token = localStorage.getItem('token');
+  return authRequest('POST', '/user/community-catalog/install', {
+    body: { catalog_id: catalogId },
+    token,
+  });
+}
+
 export function getNetwork() {
   return http.get('/public/network');
 }

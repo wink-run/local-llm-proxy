@@ -1,41 +1,54 @@
 'use strict';
 /**
- * Codex（OpenAI ChatGPT 订阅）额度抓取（窗口型，移植自 CodexBar wham/usage）。
- * 端点：GET https://chatgpt.com/backend-api/wham/usage
- * 头：Authorization: Bearer <access_token> + ChatGPT-Account-Id（若有）
- * 响应：rate_limit.{primary_window,secondary_window}{ used_percent, reset_at(unix秒), limit_window_seconds }
- * 凭证：复用 oauth.prepare（local 已支持 codex 设备码 OAuth）。
+ * Codex（OpenAI ChatGPT 订阅）额度抓取。
+ *
+ * 优先级（对齐 token-monitor）：
+ *   1) 本机 `codex app-server` JSON-RPC（account/rateLimits/read）—— 不依赖直连 chatgpt.com
+ *   2) GET https://chatgpt.com/backend-api/wham/usage（OAuth / ~/.codex/auth.json）
+ *
+ * 窗口：primary/secondary → 会话 5h / 周 / 月（按 windowDurationMins / limit_window_seconds）
  */
 const oauth = require('../oauth');
 const { num, readCliCreds } = require('./shared');
+const { codexPlanLabelFromParts } = require('./plan-labels');
+const { readCodexRpc } = require('./codex-rpc');
 
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 
 function unixToISO(ts) {
-  return typeof ts === 'number' && isFinite(ts) ? new Date(ts * 1000).toISOString() : null;
+  if (typeof ts !== 'number' || !isFinite(ts)) return null;
+  // RPC resetsAt 有时是秒、有时已是毫秒
+  const ms = ts > 1e12 ? ts : ts * 1000;
+  return new Date(ms).toISOString();
 }
 
-/** limit_window_seconds → { id, title }（5h / 24h / 7d / 30d / 其它）。 */
-function windowLabel(sec) {
-  if (sec == null) return { id: 'window', title: '额度' };
-  const min = Math.round(sec / 60);
+/** 窗口时长（分钟）→ { id, title } */
+function windowLabelFromMinutes(min) {
+  if (min == null) return { id: 'window', title: '额度' };
   if (min <= 6 * 60) return { id: 'five_hour', title: '会话 · 5h' };
   if (min <= 24 * 60) return { id: 'one_day', title: '今日 · 24h' };
   if (min <= 7 * 24 * 60 + 60) return { id: 'seven_day', title: '本周 · 7d' };
-  if (min <= 31 * 24 * 60) return { id: 'monthly', title: '本月 · 30d' };
+  if (min <= 31 * 24 * 60) return { id: 'monthly', title: '本月额度' };
   return { id: 'window', title: '额度' };
 }
 
-/** rate_limit 的一个 window → 统一窗口；按 limit_window_seconds 归类窗口名。 */
-function mapWindow(raw, overrides = {}) {
+function windowLabel(sec) {
+  if (sec == null) return { id: 'window', title: '额度' };
+  return windowLabelFromMinutes(Math.round(sec / 60));
+}
+
+/** wham 风格 window → 统一窗口 */
+function mapWhamWindow(raw, overrides = {}) {
   if (!raw || typeof raw !== 'object') return null;
-  const usedPercent = num(raw.used_percent);
-  if (usedPercent == null && raw.reset_at == null && raw.reset_after_seconds == null) return null;
+  const usedPercent = num(raw.used_percent ?? raw.usedPercent);
+  if (usedPercent == null && raw.reset_at == null && raw.resetsAt == null && raw.reset_after_seconds == null) {
+    return null;
+  }
   const sec = num(raw.limit_window_seconds);
-  const windowMinutes = sec != null ? Math.round(sec / 60) : null;
-  const label = windowLabel(sec);
-  // reset_at（unix 秒）优先；缺失时用 reset_after_seconds 相对量推算。
-  let resetsAt = unixToISO(raw.reset_at);
+  const mins = num(raw.windowDurationMins ?? raw.window_duration_mins)
+    ?? (sec != null ? Math.round(sec / 60) : null);
+  const label = mins != null ? windowLabelFromMinutes(mins) : windowLabel(sec);
+  let resetsAt = unixToISO(raw.reset_at ?? raw.resetsAt);
   if (!resetsAt && num(raw.reset_after_seconds) != null) {
     resetsAt = new Date(Date.now() + num(raw.reset_after_seconds) * 1000).toISOString();
   }
@@ -45,11 +58,10 @@ function mapWindow(raw, overrides = {}) {
     usedPercent: usedPercent == null ? 0 : usedPercent,
     usageKnown: usedPercent != null,
     resetsAt,
-    windowMinutes,
+    windowMinutes: mins,
   };
 }
 
-/** additional_rate_limits（模型专属限额，如 Codex Spark）→ 额外窗口列表。 */
 function mapAdditionalWindows(list) {
   if (!Array.isArray(list)) return [];
   const out = [];
@@ -59,45 +71,107 @@ function mapAdditionalWindows(list) {
     const rl = entry.rate_limit || {};
     const name = (entry.limit_name || entry.metered_feature || '').trim();
     for (const [w, suffix] of [[rl.primary_window, ''], [rl.secondary_window, ' · 周']]) {
-      const mapped = mapWindow(w, name ? { id: `extra:${name}${suffix}`, title: name + suffix } : {});
+      const mapped = mapWhamWindow(w, name ? { id: `extra:${name}${suffix}`, title: name + suffix } : {});
       if (mapped && !seen.has(mapped.id)) { seen.add(mapped.id); out.push(mapped); }
     }
   }
   return out;
 }
 
-/** usage 响应 → 统一快照（纯函数，可单测）。 */
+function pickCredits(c) {
+  if (!c || typeof c !== 'object') return null;
+  if (!(c.has_credits || c.hasCredits || c.balance != null)) return null;
+  const bal = typeof c.balance === 'string' ? parseFloat(c.balance) : c.balance;
+  return {
+    total: num(bal),
+    currency: 'USD',
+    usedPercent: null,
+    unlimited: !!(c.unlimited),
+  };
+}
+
+/** wham /usage JSON → 统一快照 */
 function mapCodexUsage(data, provider) {
   const d = data || {};
   const rl = d.rate_limit || {};
   const windows = [];
-  for (const w of [mapWindow(rl.primary_window), mapWindow(rl.secondary_window)]) if (w) windows.push(w);
+  for (const w of [mapWhamWindow(rl.primary_window), mapWhamWindow(rl.secondary_window)]) if (w) windows.push(w);
   for (const w of mapAdditionalWindows(d.additional_rate_limits)) windows.push(w);
   const session = windows.find((w) => w.id === 'five_hour');
   const weekly = windows.find((w) => w.id === 'seven_day');
   const primary = session && session.usageKnown ? session : weekly || session || windows[0] || null;
 
-  let credits = null;
-  const c = d.credits;
-  if (c && (c.has_credits || c.balance != null)) {
-    const bal = typeof c.balance === 'string' ? parseFloat(c.balance) : c.balance;
-    credits = { total: num(bal), currency: 'USD', usedPercent: null, unlimited: !!c.unlimited };
-  }
+  const rawPlan = d.plan_type
+    || (d.account && (d.account.plan_type || d.account.planType))
+    || null;
+  const plan = codexPlanLabelFromParts(rawPlan) || rawPlan || null;
 
   return {
     provider: 'codex',
     id: (provider && provider.id) || 'codex',
-    plan: d.plan_type || null,
+    email: (d.email || (d.account && d.account.email) || null),
+    plan,
     primary,
     windows,
-    credits,
+    credits: pickCredits(d.credits),
+    source: 'http',
     fetchedAt: new Date().toISOString(),
   };
 }
 
-async function fetchCodexUsage(provider, { getCfg, saveCfg } = {}) {
-  // 优先走 agent config 里的 OAuth 凭证（oauth.prepare 会顺带刷新）；
-  // 拿不到时回退读 Codex CLI 自维护的 ~/.codex/auth.json（CLI 自己保活）。
+/**
+ * app-server RPC payload → 统一快照。
+ * rateLimits.primary 使用 usedPercent / windowDurationMins / resetsAt。
+ */
+function mapCodexRpcUsage(payload, provider) {
+  const p = payload || {};
+  const byId = p.rateLimitsByLimitId || {};
+  const rl = p.rateLimits || byId.codex || {};
+  // 有的版本把额度再包一层 rateLimits
+  const snap = rl.primary || rl.secondary || rl.planType
+    ? rl
+    : (rl.rateLimits || rl);
+  const windows = [];
+  for (const [key, titleHint] of [['primary', null], ['secondary', null]]) {
+    const w = mapWhamWindow(snap[key], titleHint ? { title: titleHint } : {});
+    if (w) windows.push(w);
+  }
+  const session = windows.find((w) => w.id === 'five_hour');
+  const weekly = windows.find((w) => w.id === 'seven_day');
+  const primary = session && session.usageKnown ? session : weekly || session || windows[0] || null;
+
+  const account = p.account || {};
+  const rawPlan = snap.planType || snap.plan_type || account.planType || account.plan_type || null;
+  const plan = codexPlanLabelFromParts(rawPlan) || rawPlan || null;
+
+  return {
+    provider: 'codex',
+    id: (provider && provider.id) || 'codex',
+    email: account.email || null,
+    plan,
+    primary,
+    windows,
+    credits: pickCredits(snap.credits || snap.Credits),
+    source: 'rpc',
+    sourceDetail: p.sourceDetail || null,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+function describeFetchError(e) {
+  const msg = (e && e.message) || String(e);
+  const cause = e && e.cause;
+  const code = cause && cause.code;
+  if (code === 'UND_ERR_CONNECT_TIMEOUT' || /timeout/i.test(msg)) {
+    return '无法连接 chatgpt.com（超时）。已尝试本地 Codex RPC，请确认已安装 ChatGPT/Codex 应用';
+  }
+  if (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || /fetch failed/i.test(msg)) {
+    return '网络不可用，无法拉取 Codex 额度。请检查网络或使用本机 ChatGPT.app';
+  }
+  return msg;
+}
+
+async function fetchCodexUsageHttp(provider, { getCfg, saveCfg } = {}) {
   let prepared = provider;
   let creds = null;
   try {
@@ -118,4 +192,32 @@ async function fetchCodexUsage(provider, { getCfg, saveCfg } = {}) {
   return mapCodexUsage(await resp.json(), prepared);
 }
 
-module.exports = { fetchCodexUsage, mapCodexUsage, mapWindow };
+async function fetchCodexUsage(provider, deps = {}) {
+  let rpcError = null;
+  try {
+    const payload = await readCodexRpc(deps);
+    const snap = mapCodexRpcUsage(payload, provider);
+    // 有窗口或至少有套餐名就采用 RPC 结果
+    if ((snap.windows && snap.windows.length > 0) || snap.plan) return snap;
+  } catch (e) {
+    rpcError = e;
+  }
+
+  try {
+    return await fetchCodexUsageHttp(provider, deps);
+  } catch (httpErr) {
+    // 网络失败时：若 RPC 曾成功拿到空窗，仍尽量回落；否则抛可读中文错误
+    if (rpcError && /未找到 Codex|not found|ENOENT/i.test(String(rpcError.message))) {
+      throw new Error(`未找到本机 Codex/ChatGPT 应用，且 ${describeFetchError(httpErr)}`);
+    }
+    throw new Error(describeFetchError(httpErr));
+  }
+}
+
+module.exports = {
+  fetchCodexUsage,
+  mapCodexUsage,
+  mapCodexRpcUsage,
+  mapWindow: mapWhamWindow,
+  fetchCodexUsageHttp,
+};

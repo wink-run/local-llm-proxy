@@ -839,6 +839,32 @@ function serverTemplatesByKey(cfg = {}) {
     };
     paygByKey[id] = m[id];
   }
+  // 云端 billing_sources 滞后时：内置/本地 registry 显式 payg 仍进模板库
+  for (const reg of configLoader.registryProviders()) {
+    const id = reg && reg.id;
+    if (!id || m[id] || SUBSCRIPTION_ONLY_CATALOG_IDS.has(id) || planPids.has(id)) continue;
+    if (reg.payg !== true) continue;
+    const details = Array.isArray(reg.models) ? reg.models : [];
+    const modelNames = details.map((x) => (typeof x === 'string' ? x : (x && (x.name || x.id)))).filter(Boolean);
+    const modelTypes = {};
+    for (const x of details) {
+      if (x && typeof x === 'object' && (x.name || x.id)) {
+        modelTypes[x.name || x.id] = x.type || x.modality || 'chat';
+      }
+    }
+    m[id] = {
+      kind: 'payg', key: id,
+      label: reg.label || id,
+      icon: reg.icon || '🔧',
+      tier: reg.tier === 'free' || reg.tier === 'p2p' ? reg.tier : 'paid',
+      api_format: reg.api_format || 'openai',
+      base_url: reg.base_url || '',
+      models: modelNames,
+      pricing: reg.pricing || {},
+      model_types: modelTypes,
+    };
+    paygByKey[id] = m[id];
+  }
   const fillSub = (models, pricing, planPid) => {
     if ((Array.isArray(models) && models.length) || Object.keys(pricing || {}).length) {
       return { models: models || [], pricing: pricing || {} };

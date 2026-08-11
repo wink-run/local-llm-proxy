@@ -451,6 +451,86 @@
       color: var(--fg-tertiary);
       margin-right: 2px;
     }
+
+    /* 供给源额度 */
+    .usage-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 4px 6px;
+    }
+    .usage-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      min-height: 28px;
+    }
+    .usage-row:hover { background: var(--fill-hover); }
+    .usage-meta { flex: 1; min-width: 0; }
+    .usage-name {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .usage-plan {
+      margin-top: 1px;
+      font-size: 10px;
+      color: var(--fg-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .usage-right {
+      flex-shrink: 0;
+      text-align: right;
+      max-width: 48%;
+    }
+    .usage-summary {
+      font-size: 12px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      color: var(--fg);
+      letter-spacing: -0.01em;
+    }
+    .usage-summary.near {
+      color: #ff3b30;
+      font-weight: 700;
+    }
+    .usage-detail {
+      margin-top: 1px;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      color: var(--fg-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .usage-detail.near { color: #ff3b30; opacity: 0.85; }
+    .usage-bar {
+      margin-top: 4px;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--chip);
+      overflow: hidden;
+    }
+    .usage-bar > i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: #007aff;
+    }
+    .usage-bar.near > i { background: #ff3b30; }
+    @media (prefers-color-scheme: dark) {
+      .usage-summary.near,
+      .usage-detail.near { color: #ff453a; }
+      .usage-bar.near > i { background: #ff453a; }
+    }
+
     .empty {
       padding: 18px 12px;
       text-align: center;
@@ -593,6 +673,12 @@
       <div class="apps-list" id="squadList"></div>
 
       <div class="apps-hd">
+        <span class="name" id="usageTitle">—</span>
+        <span class="tag" id="usageTag">QUOTA</span>
+      </div>
+      <div class="usage-list" id="usageList"></div>
+
+      <div class="apps-hd">
         <span class="name" id="appsTitle">—</span>
         <span class="tag" id="appsTag">APPS</span>
       </div>
@@ -623,6 +709,7 @@
     const $ = (id) => document.getElementById(id);
     let refreshing = false;
     let lastAppsKey = '';
+    let lastUsageKey = '';
 
     function L(state) { return state.labels || {}; }
 
@@ -631,6 +718,73 @@
       return (apps || []).map((a) =>
         [a.id, a.name, a.routeLabel, a.ttftLabel, a.speedBucket, a.statusLabel, a.viaGateway ? 1 : 0, a.iconUrl || '', a.todayTokensLabel || '0', a.todayCalls || 0].join('\t')
       ).join('\n');
+    }
+
+    function usageSignature(items, loading) {
+      return `${loading ? 1 : 0}\n` + (items || []).map((u) =>
+        [u.id, u.label, u.plan, u.summary, u.detail, u.nearLimit ? 1 : 0, u.usedPercent ?? ''].join('\t')
+      ).join('\n');
+    }
+
+    function renderUsage(state) {
+      const labels = L(state);
+      $('usageTitle').textContent = labels.usageTitle || '供给源额度';
+      $('usageTag').textContent = labels.usageTag || 'QUOTA';
+      const list = $('usageList');
+      const items = Array.isArray(state.providersUsage) ? state.providersUsage : [];
+      const loading = !!state.usageLoading;
+      const sig = usageSignature(items, loading);
+      if (sig === lastUsageKey) return;
+      lastUsageKey = sig;
+      list.innerHTML = '';
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = loading
+          ? (labels.usageLoading || '…')
+          : (labels.usageEmpty || '—');
+        list.appendChild(empty);
+        return;
+      }
+      for (const u of items) {
+        const row = document.createElement('div');
+        row.className = 'usage-row';
+        const meta = document.createElement('div');
+        meta.className = 'usage-meta';
+        const name = document.createElement('div');
+        name.className = 'usage-name';
+        name.textContent = u.label || u.id || '—';
+        meta.appendChild(name);
+        if (u.plan) {
+          const plan = document.createElement('div');
+          plan.className = 'usage-plan';
+          plan.textContent = u.plan;
+          meta.appendChild(plan);
+        }
+        if (u.usedPercent != null && Number.isFinite(Number(u.usedPercent))) {
+          const bar = document.createElement('div');
+          bar.className = 'usage-bar' + (u.nearLimit ? ' near' : '');
+          const fill = document.createElement('i');
+          fill.style.width = `${Math.min(100, Math.max(0, Number(u.usedPercent)))}%`;
+          bar.appendChild(fill);
+          meta.appendChild(bar);
+        }
+        row.appendChild(meta);
+        const right = document.createElement('div');
+        right.className = 'usage-right';
+        const sum = document.createElement('div');
+        sum.className = 'usage-summary' + (u.nearLimit ? ' near' : '');
+        sum.textContent = u.summary || '—';
+        right.appendChild(sum);
+        if (u.detail) {
+          const det = document.createElement('div');
+          det.className = 'usage-detail' + (u.nearLimit ? ' near' : '');
+          det.textContent = u.detail;
+          right.appendChild(det);
+        }
+        row.appendChild(right);
+        list.appendChild(row);
+      }
     }
 
     function renderSquad(state) {
@@ -679,6 +833,7 @@
       $('subtitle').textContent = state.subtitle || labels.notRefreshed || '—';
 
       try { renderSquad(state); } catch { /* ignore */ }
+      try { renderUsage(state); } catch { /* ignore */ }
 
       // Control deck：网关 / 用量 / 贡献 / 圈子
       const deck = $('deck');

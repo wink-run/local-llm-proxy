@@ -7,13 +7,11 @@
 const FALLBACK_CONTEXT_WINDOW = 200000;
 
 /**
- * 路由类 model_key（llm-router-auto / -cost / -speed …）不是真实模型：网关按策略把它落到
- * 任意候选源，各源真实窗口不一。若按"未知兜底 200k"或模型族放大，Codex 会把上下文堆到
- * 超过实际源的量，触发上游超时/过大 → 502/429/重连（v0.5.10 回归）。故对路由钉一个保守窗口，
- * 与 v0.5.9 全员 128k 的安全口径一致。
+ * 路由类 model_key（llm-router-auto / -cost / -speed …）不是真实模型：网关按策略落到候选源。
+ * 无钉死模型时写入应用配置默认 200k；若 steps 钉了具体模型，则以这些模型窗口为准（取最大）。
  */
 const ROUTE_MODEL_KEY = /^llm-router-/i;
-const ROUTE_CONTEXT_WINDOW = 128000;
+const ROUTE_CONTEXT_WINDOW = 200000;
 
 /**
  * 解析模型名末尾窗口后缀，如 deepseek-v4-pro[1m] / glm-5.2[200k] / model[1048576]。
@@ -159,10 +157,50 @@ function resolveContextWindow(model, providers = []) {
     return contextWindowFromModelName(name) || FALLBACK_CONTEXT_WINDOW;
   }
   const name = String(model || '');
-  if (ROUTE_MODEL_KEY.test(name)) return ROUTE_CONTEXT_WINDOW;   // 路由 model_key → 保守 128k
+  if (ROUTE_MODEL_KEY.test(name)) return ROUTE_CONTEXT_WINDOW;   // 路由 model_key → 默认 200k
   const fromProv = contextWindowFromProviders(name, providers);
   if (fromProv) return fromProv;
   return contextWindowFromModelName(name) || FALLBACK_CONTEXT_WINDOW;
+}
+
+/**
+ * 从场景路由 steps / rules[].steps 收集钉死的具体模型名（跳过 strategy-only / 空 model）。
+ */
+function concreteModelsFromScene(scene) {
+  const out = [];
+  const seen = new Set();
+  const add = (raw) => {
+    const id = String(raw || '').trim();
+    if (!id || ROUTE_MODEL_KEY.test(id) || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
+  const walk = (steps) => {
+    if (!Array.isArray(steps)) return;
+    for (const s of steps) {
+      if (!s || typeof s !== 'object') continue;
+      add(s.model || s.label);
+    }
+  };
+  if (!scene || typeof scene !== 'object') return out;
+  walk(scene.steps);
+  if (Array.isArray(scene.rules)) {
+    for (const rule of scene.rules) walk(rule && rule.steps);
+  }
+  return out;
+}
+
+/**
+ * 场景路由写入应用配置时的上下文窗口：
+ * 有钉死模型 → 取这些模型窗口的最小值（落到哪个都不超）；纯策略/过滤路由 → 默认 200k。
+ */
+function resolveContextWindowForScene(scene, providers = []) {
+  const models = concreteModelsFromScene(scene);
+  if (models.length) {
+    const min = resolveMinContextWindow(models, providers);
+    if (min && min > 0) return min;
+  }
+  return ROUTE_CONTEXT_WINDOW;
 }
 
 /** 多个模型取最大窗口（Claude Code 注入 ACW/MAX 时用） */
@@ -200,11 +238,14 @@ function autoCompactWindow(contextWindow) {
 module.exports = {
   FALLBACK_CONTEXT_WINDOW,
   ROUTE_CONTEXT_WINDOW,
+  ROUTE_MODEL_KEY,
   parseContextWindowSuffix,
   readExplicitContextWindow,
   contextWindowFromProviders,
   contextWindowFromModelName,
+  concreteModelsFromScene,
   resolveContextWindow,
+  resolveContextWindowForScene,
   resolveMaxContextWindow,
   resolveMinContextWindow,
   autoCompactWindow,

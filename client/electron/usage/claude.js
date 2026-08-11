@@ -11,23 +11,29 @@
  * 窗口映射：five_hour→会话 / seven_day→本周 / seven_day_opus|sonnet→模型周窗 / extra_usage→月度额外用量。
  */
 const oauth = require('../oauth');
-const { num, anthropicOAuthGet } = require('./shared');
+const { num, anthropicOAuthGet, readCliCreds } = require('./shared');
+const { claudePlanLabelFromParts } = require('./plan-labels');
+const { fetchClaudeWebUsageRaw } = require('./claude-web');
 
 /**
- * 从 /api/oauth/profile 推断订阅计划（公共方法，可单测，可被其他流程复用）。
- * 优先 account 标志位，回退 organization 的 type / rate_limit_tier。
+ * 从 /api/oauth/profile 推断订阅计划展示标签（对齐 token-monitor accountLabel）。
+ * 优先 account 标志位定档，再结合 organization.rate_limit_tier 保留 Max 5x/20x。
  */
 function inferClaudePlan(profile) {
   const acct = (profile && profile.account) || {};
   const org = (profile && profile.organization) || {};
-  if (acct.has_claude_max) return 'Max';
-  if (acct.has_claude_pro) return 'Pro';
-  const tier = String(org.organization_type || org.rate_limit_tier || '').toLowerCase();
-  if (tier.includes('max')) return 'Max';
-  if (tier.includes('pro')) return 'Pro';
-  if (tier.includes('team')) return 'Team';
-  if (tier.includes('enterprise')) return 'Enterprise';
-  return null;
+  let subscriptionType = '';
+  if (acct.has_claude_max) subscriptionType = 'max';
+  else if (acct.has_claude_pro) subscriptionType = 'pro';
+  else {
+    const type = String(org.organization_type || org.rate_limit_tier || '').toLowerCase();
+    if (type.includes('max')) subscriptionType = 'max';
+    else if (type.includes('pro')) subscriptionType = 'pro';
+    else if (type.includes('team')) subscriptionType = 'team';
+    else if (type.includes('enterprise')) subscriptionType = 'enterprise';
+  }
+  const label = claudePlanLabelFromParts(subscriptionType, org.rate_limit_tier);
+  return label || null;
 }
 
 /**
@@ -106,19 +112,186 @@ function mapUsage(data, { profile = null, provider = null } = {}) {
   };
 }
 
-/** 抓取 + 映射。provider 为 config 里的 oauth 条目；deps 提供 getCfg/saveCfg 供刷新回写。 */
-async function fetchClaudeUsage(provider, { getCfg, saveCfg } = {}) {
-  const prepared = await oauth.prepare(provider, getCfg, saveCfg); // 复用：判过期→刷新→回写
-  const token = prepared.credentials && prepared.credentials.access_token;
-  if (!token) throw new Error('缺少 access_token，请重新登录 Claude');
-
-  // usage 必需；profile 尽力而为（失败仅丢 plan/name，不致命）。
-  const [usage, profile] = await Promise.all([
-    anthropicOAuthGet('/api/oauth/usage', token),
-    anthropicOAuthGet('/api/oauth/profile', token).catch(() => null),
-  ]);
-
-  return mapUsage(usage, { profile, provider: prepared });
+/** 仅凭钥匙串/本地落盘的 subscriptionType + rateLimitTier 展示订阅情况（无 access_token 时）。 */
+function planOnlyFromCreds(creds, provider) {
+  if (!creds) return null;
+  const label = claudePlanLabelFromParts(creds.subscriptionType, creds.rateLimitTier);
+  if (!label) return null;
+  return {
+    provider: 'claude',
+    id: (provider && provider.id) || 'claude',
+    email: creds.email || null,
+    plan: label,
+    subscription: null,
+    primary: null,
+    windows: [],
+    extra: null,
+    fetchedAt: new Date().toISOString(),
+  };
 }
 
-module.exports = { fetchClaudeUsage, mapUsage, mapWindow, inferClaudePlan, detectClaudeSubscription };
+/**
+ * 解析可用 access_token：
+ * 1) agent config OAuth（oauth.prepare，可刷新）
+ * 2) Claude Code 文件 / macOS 钥匙串（直连 Desktop 卡常用）
+ */
+async function resolveClaudeAccess(provider, { getCfg, saveCfg } = {}) {
+  const c = (provider && provider.credentials) || {};
+  const cli = readCliCreds('claude');
+
+  // 直连虚拟条目：优先 CLI/钥匙串，避免无 refresh_token 时 oauth.prepare 直接抛错
+  if (cli && cli.access_token && !(c.refresh_token || c.access_token)) {
+    return {
+      token: cli.access_token,
+      provider: { ...(provider || {}), credentials: { ...c, ...cli } },
+      creds: { ...cli, ...c },
+    };
+  }
+
+  if (c.refresh_token || c.access_token) {
+    try {
+      const prepared = await oauth.prepare(provider, getCfg, saveCfg);
+      const token = prepared.credentials && prepared.credentials.access_token;
+      if (token) return { token, provider: prepared, creds: { ...cli, ...prepared.credentials } };
+    } catch (e) {
+      if (!/refresh_token|access_token/i.test(String(e && e.message))) {
+        // 网络类错误：若 CLI 仍有 token 可继续
+        if (!(cli && cli.access_token)) throw e;
+      }
+    }
+  }
+
+  if (cli && cli.access_token) {
+    return {
+      token: cli.access_token,
+      provider: { ...(provider || {}), credentials: { ...c, ...cli } },
+      creds: { ...c, ...cli },
+    };
+  }
+  return { token: null, provider, creds: cli || null };
+}
+
+/** 从 Claude Web 组织对象推断套餐短标签（capability / rate_limit_tier）。 */
+function planFromWebOrganization(org) {
+  if (!org || typeof org !== 'object') return null;
+  const caps = new Set(
+    []
+      .concat(org.capabilities || [])
+      .concat((org.settings && org.settings.capabilities) || [])
+      .map((c) => String(c || '').toLowerCase()),
+  );
+  let subscriptionType = '';
+  if (caps.has('claude_max') || caps.has('max')) subscriptionType = 'max';
+  else if (caps.has('claude_pro') || caps.has('pro')) subscriptionType = 'pro';
+  else if (caps.has('raven')) {
+    const raven = String(org.raven_type || '').toLowerCase();
+    subscriptionType = raven === 'enterprise' ? 'enterprise' : 'team';
+  }
+  const tier = org.rate_limit_tier || org.rateLimitTier || '';
+  return claudePlanLabelFromParts(subscriptionType, tier) || null;
+}
+
+/** Desktop Web 用量 → 统一快照（窗口形状与 OAuth /api/oauth/usage 一致）。 */
+function mapWebUsage(raw, provider) {
+  const usage = (raw && raw.usage) || {};
+  const org = (raw && raw.organization) || {};
+  const account = (raw && raw.account) || {};
+  // 合成 profile，复用 inferClaudePlan / mapUsage
+  const profile = {
+    account: {
+      email: account.email || account.email_address || null,
+      display_name: account.display_name || account.name || null,
+      has_claude_max: !!(org.capabilities || []).includes?.('claude_max')
+        || (Array.isArray(org.capabilities) && org.capabilities.map(String).some((c) => /max/i.test(c))),
+      has_claude_pro: Array.isArray(org.capabilities) && org.capabilities.map(String).some((c) => /pro/i.test(c) && !/max/i.test(c)),
+    },
+    organization: {
+      rate_limit_tier: org.rate_limit_tier || null,
+      organization_type: org.raven_type || org.organization_type || null,
+      subscription_status: 'active',
+    },
+  };
+  // capabilities 更准时覆盖 account 标志
+  if (Array.isArray(org.capabilities)) {
+    const lower = org.capabilities.map((c) => String(c).toLowerCase());
+    profile.account.has_claude_max = lower.some((c) => c.includes('claude_max') || c === 'max');
+    profile.account.has_claude_pro = lower.some((c) => c.includes('claude_pro') || c === 'pro');
+  }
+  const snap = mapUsage(usage, { profile, provider });
+  snap.source = (raw && raw.source) || 'web';
+  if (!snap.plan) snap.plan = planFromWebOrganization(org);
+  if (raw && raw.warning) snap.warning = raw.warning;
+  if (raw && raw.sampledAt && !snap.fetchedAt) snap.fetchedAt = raw.sampledAt;
+  // 本地采样时间更贴近 Desktop 侧刷新点
+  if (raw && raw.sampledAt && snap.source === 'local-history') {
+    snap.fetchedAt = raw.sampledAt;
+  }
+  return snap;
+}
+
+/** 抓取 + 映射。无 OAuth 时回退 Claude Desktop Web Cookie（session 额度主路径）。 */
+async function fetchClaudeUsage(provider, { getCfg, saveCfg } = {}) {
+  const { token, provider: prepared, creds } = await resolveClaudeAccess(provider, { getCfg, saveCfg });
+
+  // 1) OAuth / Claude Code token
+  if (token) {
+    try {
+      const [usage, profile] = await Promise.all([
+        anthropicOAuthGet('/api/oauth/usage', token),
+        anthropicOAuthGet('/api/oauth/profile', token).catch(() => null),
+      ]);
+      const snap = mapUsage(usage, { profile, provider: prepared });
+      if (!snap.plan && creds) {
+        snap.plan = claudePlanLabelFromParts(creds.subscriptionType, creds.rateLimitTier) || null;
+      }
+      snap.source = 'oauth';
+      return snap;
+    } catch (e) {
+      // OAuth 失败再试 Desktop Web，勿过早返回仅套餐名
+      try {
+        const raw = await fetchClaudeWebUsageRaw();
+        const snap = mapWebUsage(raw, provider);
+        if (!snap.plan && creds) {
+          snap.plan = claudePlanLabelFromParts(creds.subscriptionType, creds.rateLimitTier) || null;
+        }
+        return snap;
+      } catch {
+        const soft = planOnlyFromCreds(creds, provider);
+        if (soft) {
+          soft.warning = (e && e.message) || String(e);
+          return soft;
+        }
+        const msg = (e && e.message) || String(e);
+        if (/fetch failed|timeout|ENOTFOUND|ECONN/i.test(msg)) {
+          throw new Error('无法连接 Anthropic 用量接口，请检查网络后重试');
+        }
+        throw e;
+      }
+    }
+  }
+
+  // 2) 无 OAuth token：Claude Desktop Cookie → Web usage（含 session 窗）
+  try {
+    const raw = await fetchClaudeWebUsageRaw();
+    const snap = mapWebUsage(raw, provider);
+    if (!snap.plan && creds) {
+      snap.plan = claudePlanLabelFromParts(creds.subscriptionType, creds.rateLimitTier) || null;
+    }
+    return snap;
+  } catch (webErr) {
+    const soft = planOnlyFromCreds(creds, provider);
+    if (soft) {
+      soft.warning = (webErr && webErr.message) || String(webErr);
+      return soft;
+    }
+    throw new Error(
+      (webErr && webErr.message)
+      || '未检测到 Claude 登录，请打开 Claude Desktop 并登录后刷新',
+    );
+  }
+}
+
+module.exports = {
+  fetchClaudeUsage, mapUsage, mapWindow, inferClaudePlan, detectClaudeSubscription,
+  resolveClaudeAccess, planOnlyFromCreds, mapWebUsage, planFromWebOrganization,
+};

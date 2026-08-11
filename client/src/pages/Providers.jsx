@@ -16,6 +16,7 @@ import { resolveModelsForModelView } from '../lib/personalAvailableModels';
 import { buildPersonalModelTypeMap, inferModelTypeFromName } from '../api/gatewayModels';
 import { avatarColor } from '../components/UserAvatar';
 import McpProvidersTab, { readSupplyTab, saveSupplyTab } from '../components/McpProvidersTab';
+import UsageMeter from '../components/UsageMeter';
 
 /** 按当前语言覆盖 meta 中的 label / hint / getKey / oauth.label */
 function localizeProviderMeta(metaMap, t) {
@@ -2544,6 +2545,50 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPers
     else onUpdate(provider.id, { token: next });
   }
 
+  // API 订阅（如 Volcengine）走本卡：需把 plan_provider_id 映射到 usage 抓取键
+  const usageProvider = (() => {
+    const pid = accountInst?.plan_provider_id || accountInst?.source_id || provider.id;
+    if (pid && pid !== provider.id) return { ...provider, id: pid };
+    return provider;
+  })();
+  const isVolcCustom = (() => {
+    const id = String(usageProvider?.id || provider?.id || '').toLowerCase();
+    const sid = String(accountInst?.source_id || '').toLowerCase();
+    return id === 'volcengine' || id === 'api-volcengine' || id === 'volcengine-ark'
+      || sid === 'api-volcengine' || sid === 'volcengine-ark' || sid.includes('volc');
+  })();
+  const isVolcPayg = (() => {
+    const id = String(usageProvider?.id || provider?.id || '').toLowerCase();
+    const sid = String(accountInst?.source_id || '').toLowerCase();
+    const base = String(provider?.base_url || '').toLowerCase();
+    return id === 'volcengine-ark' || sid === 'volcengine-ark'
+      || (/ark\.cn-beijing\.volces\.com/.test(base) && /\/api\/v3/.test(base) && !/\/coding\//.test(base));
+  })();
+  const [akDraft, setAkDraft] = useState(() => provider.credentials?.access_key_id || '');
+  const [skDraft, setSkDraft] = useState(() => provider.credentials?.secret_access_key || '');
+  useEffect(() => {
+    setAkDraft(provider.credentials?.access_key_id || '');
+    setSkDraft(provider.credentials?.secret_access_key || '');
+  }, [provider.id, provider.credentials?.access_key_id, provider.credentials?.secret_access_key]);
+
+  function commitVolcAkSk() {
+    if (!isVolcCustom) return;
+    const ak = (akDraft || '').trim();
+    const sk = (skDraft || '').trim();
+    const prevAk = provider.credentials?.access_key_id || '';
+    const prevSk = provider.credentials?.secret_access_key || '';
+    if (ak === prevAk && sk === prevSk) return;
+    const credentials = {
+      ...(provider.credentials || {}),
+      access_key_id: ak || undefined,
+      secret_access_key: sk || undefined,
+    };
+    if (!ak) delete credentials.access_key_id;
+    if (!sk) delete credentials.secret_access_key;
+    if (onSilentPersist) onSilentPersist(provider.id, { credentials });
+    else onUpdate(provider.id, { credentials });
+  }
+
   const displayLabel = provider.displayName || provider.label || (() => {
     try { const h = new URL(provider.base_url || '').hostname; return h || t('providers.custom.defaultName'); } catch { return t('providers.custom.defaultName'); }
   })();
@@ -2670,6 +2715,30 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPers
                 {showKey ? t('providers.common.hide') : t('providers.common.show')}
               </button>
             </div>
+            {/* 火山：AccessKey + 订阅额度同卡；额度条默认展开 */}
+            {isVolcCustom ? (
+              <UsageMeter
+                provider={usageProvider}
+                planHint={accountInst?.plan_label || null}
+                defaultOpen
+                accessKey={{
+                  ak: akDraft,
+                  sk: skDraft,
+                  showSecret: showKey,
+                  onAkChange: setAkDraft,
+                  onSkChange: setSkDraft,
+                  onCommit: commitVolcAkSk,
+                  emptyHint: isVolcPayg
+                    ? '填写 AccessKey 以查询按量余额'
+                    : '填写 AccessKey 以查询 Coding Plan 额度',
+                }}
+              />
+            ) : (
+              <UsageMeter
+                provider={usageProvider}
+                planHint={accountInst?.plan_label || null}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -2710,116 +2779,16 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPers
   );
 }
 
-// 订阅额度条：直接打供给方官方 usage 端点（复用 OAuth 凭证），展示剩余额度 + 重置倒计时。
-// 与网关的 token 统计互补；目前支持 Claude OAuth，其余 oauth_provider 后续在 electron/usage 注册。
-function fmtReset(iso) {
-  if (!iso) return null;
-  const ms = new Date(iso).getTime() - Date.now();
-  if (!isFinite(ms)) return null;
-  if (ms <= 0) return '即将重置';
-  const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
-  if (d >= 1) return `${d}天${h % 24}小时后重置`;
-  if (h >= 1) return `${h}小时${m % 60}分后重置`;
-  return `${m}分钟后重置`;
-}
-function usageBarColor(p) {
-  if (p >= 90) return 'bg-red-500';
-  if (p >= 70) return 'bg-amber-500';
-  return 'bg-blue-500';
-}
-// 与 electron/usage 注册表 SUPPORTED_KEYS 同步：OAuth 类按 oauth_provider，其余按 id。
-// 「订阅额度」主要面向订阅账户（额度窗口）；groq 不在内 —— 它只有吞吐速率指标（无额度/余额概念），
-// 且 metrics 端点多数账户返回 404，这个块对它既报错又无可展示数据。
-const USAGE_SUPPORTED = new Set(['claude', 'codex', 'copilot', 'gemini', 'volcengine', 'openrouter', 'deepseek']);
-function usageKey(p) {
-  return p?.auth_type === 'oauth' && p?.oauth_provider ? p.oauth_provider : p?.id;
-}
-function fmtBalance(c) {
-  if (!c) return null;
-  const v = c.remaining != null ? c.remaining : c.total;
-  if (v == null) return null;
-  const sym = c.currency === 'USD' ? '$' : c.currency === 'CNY' ? '¥' : '';
-  return `${sym}${v.toFixed(2)}`;
-}
-function UsageMeter({ provider }) {
-  const api = typeof window !== 'undefined' ? window.electronAPI?.usage : null;
-  // Gemini 的「订阅额度」需 Google OAuth access_token；纯 API Key 账户拿不到，不显示该块
-  // （否则会一直报「缺少 Google access_token」）。其余源（含 api-key 的 openrouter/deepseek/groq）照常。
-  const k = usageKey(provider);
-  const supported = USAGE_SUPPORTED.has(k) && !(k === 'gemini' && !provider?.credentials?.access_token);
-  const [state, setState] = useState({ loading: false, data: null, error: '' });
-  const load = useCallback(() => {
-    if (!api || !supported) return;
-    setState(s => ({ ...s, loading: true, error: '' }));
-    api.fetch(provider.id)
-      .then(r => setState(r && r.error
-        ? { loading: false, data: null, error: r.error }
-        : { loading: false, data: r, error: '' }))
-      .catch(e => setState({ loading: false, data: null, error: e?.message || String(e) }));
-  }, [api, supported, provider?.id]);
-  useEffect(() => { load(); }, [load]);
-  if (!api || !supported) return null;
-  const d = state.data;
-  return (
-    <div className="mt-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-800/40 p-2.5 space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">订阅额度</span>
-        <button onClick={load} disabled={state.loading}
-          className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 disabled:opacity-50">
-          {state.loading ? '…' : '刷新'}
-        </button>
-      </div>
-      {state.error ? (
-        <p className="text-xs text-red-500">{state.error}</p>
-      ) : !d ? (
-        <p className="text-xs text-zinc-400">{state.loading ? '加载中…' : '—'}</p>
-      ) : (
-        <div className="space-y-1.5">
-          {(d.windows || []).map(w => (
-            <div key={w.id}>
-              <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
-                <span>{w.title}</span>
-                <span className="tabular-nums">
-                  {w.usageKnown ? `${Math.round(w.usedPercent)}%` : '—'}
-                  {w.resetsAt ? <span className="ml-2 text-zinc-400 dark:text-zinc-600">{fmtReset(w.resetsAt)}</span> : null}
-                </span>
-              </div>
-              <div className="mt-0.5 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
-                <div className={`h-full ${usageBarColor(w.usedPercent)} transition-[width] duration-200 ease-out`}
-                  style={{ width: `${Math.min(100, Math.max(0, w.usedPercent))}%` }} />
-              </div>
-            </div>
-          ))}
-          {d.credits && fmtBalance(d.credits) && (
-            <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
-              <span>余额</span>
-              <span className="tabular-nums">{fmtBalance(d.credits)}</span>
-            </div>
-          )}
-          {d.metrics && (
-            <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5">
-              {d.metrics.requestsPerMin != null && (
-                <div className="flex justify-between"><span>请求/分</span><span className="tabular-nums">{d.metrics.requestsPerMin.toFixed(1)}</span></div>
-              )}
-              {d.metrics.tokensPerMin != null && (
-                <div className="flex justify-between"><span>Token/分</span><span className="tabular-nums">{Math.round(d.metrics.tokensPerMin)}</span></div>
-              )}
-              {d.metrics.cacheHitsPerMin != null && (
-                <div className="flex justify-between"><span>缓存命中/分</span><span className="tabular-nums">{d.metrics.cacheHitsPerMin.toFixed(1)}</span></div>
-              )}
-            </div>
-          )}
-          {d.extra && d.extra.enabled && (
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 pt-0.5">
-              额外用量 {d.extra.usedPercent != null ? Math.round(d.extra.usedPercent) + '%' : ''}
-              {d.extra.monthlyLimit != null ? ` · 上限 $${d.extra.monthlyLimit}` : ''}
-            </p>
-          )}
-          {d.plan && <p className="text-[11px] text-zinc-400 dark:text-zinc-600">计划：{d.plan}</p>}
-        </div>
-      )}
-    </div>
-  );
+// 订阅额度 / 用量条见 components/UsageMeter.jsx（供给源卡与直连 App 订阅卡共用）
+
+/** Agnes：按 base_url 区分中国站 / 国际站，标签展示在链接后 */
+function agnesSiteLabel(provider) {
+  const id = String(provider?.id || '').toLowerCase();
+  const base = String(provider?.base_url || '').toLowerCase();
+  if (!(id.includes('agnes') || /agnes-ai\.(com|cn)/.test(base))) return null;
+  if (/\.cn(\/|$|:)/.test(base) || base.includes('agnes-ai.cn')) return '中国站';
+  if (base.includes('agnes-ai.com') || !base) return '国际站';
+  return null;
 }
 
 function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPersist, onPersistEnabled, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl, onPersistTier, cooldown = null, onRetryCooldown = null }) {
@@ -2845,6 +2814,44 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPers
       else onUpdate(provider.id, { token: next, auth_type: 'api_key' });
     }
     setTokenEditing(false);
+  }
+
+  // 火山 Coding Plan / 按量余额查询用 AccessKey（与推理 API Key 不同）
+  const isVolcengine = provider.id === 'volcengine' || provider.id === 'api-volcengine'
+    || provider.id === 'volcengine-ark'
+    || accountInst?.plan_provider_id === 'volcengine'
+    || accountInst?.source_id === 'api-volcengine'
+    || accountInst?.source_id === 'volcengine-ark';
+  const isVolcPayg = provider.id === 'volcengine-ark'
+    || accountInst?.source_id === 'volcengine-ark'
+    || (() => {
+      const base = String(provider.base_url || '').toLowerCase();
+      return /ark\.cn-beijing\.volces\.com/.test(base) && /\/api\/v3/.test(base) && !/\/coding\//.test(base);
+    })();
+  const agnesSite = agnesSiteLabel(provider);
+  const [akDraft, setAkDraft] = useState(() => provider.credentials?.access_key_id || '');
+  const [skDraft, setSkDraft] = useState(() => provider.credentials?.secret_access_key || '');
+  useEffect(() => {
+    setAkDraft(provider.credentials?.access_key_id || '');
+    setSkDraft(provider.credentials?.secret_access_key || '');
+  }, [provider.id, provider.credentials?.access_key_id, provider.credentials?.secret_access_key]);
+
+  function commitVolcAkSk() {
+    if (!isVolcengine) return;
+    const ak = (akDraft || '').trim();
+    const sk = (skDraft || '').trim();
+    const prevAk = provider.credentials?.access_key_id || '';
+    const prevSk = provider.credentials?.secret_access_key || '';
+    if (ak === prevAk && sk === prevSk) return;
+    const credentials = {
+      ...(provider.credentials || {}),
+      access_key_id: ak || undefined,
+      secret_access_key: sk || undefined,
+    };
+    if (!ak) delete credentials.access_key_id;
+    if (!sk) delete credentials.secret_access_key;
+    if (onSilentPersist) onSilentPersist(provider.id, { credentials });
+    else onUpdate(provider.id, { credentials });
   }
 
   meta = meta || {};
@@ -2989,6 +2996,12 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPers
               <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                 {displayName || meta.label}
               </span>
+              {/* 账户登记的套餐名（静态）；实时订阅档位见下方 UsageMeter 徽章 */}
+              {accountInst?.plan_label && (
+                <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/50 truncate max-w-[8rem]">
+                  {accountInst.plan_label}
+                </span>
+              )}
               <StatusBadge verified={provider.test_verified === true} />
               <PersonalSourceTypeBadge
                 tag={personalTag}
@@ -3052,9 +3065,15 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPers
                 <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-300">{t('providers.common.edit')}</button>
               </div>
               {provider.base_url && (
-                <p className="text-xs text-zinc-400 dark:text-zinc-600 font-mono break-all">{provider.base_url}</p>
+                <p className="text-xs text-zinc-400 dark:text-zinc-600 font-mono break-all">
+                  {provider.base_url}
+                  {agnesSite && (
+                    <span className="ml-1.5 inline-block align-middle font-sans not-italic text-[11px] px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/50">
+                      {agnesSite}
+                    </span>
+                  )}
+                </p>
               )}
-              <UsageMeter provider={provider} />
             </div>
           )}
 
@@ -3231,6 +3250,40 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPers
                 <button onClick={() => setExpanded(false)} className="text-xs text-zinc-600 hover:text-zinc-600 dark:text-zinc-400">{t('providers.common.cancel')}</button>
               )}
             </div>
+          )}
+
+          {/* 订阅额度：折叠/展开都显示；火山卡把 AccessKey 并入同卡且额度默认展开 */}
+          {!isP2P && configured && (
+            isVolcengine ? (
+              <UsageMeter
+                provider={(() => {
+                  // API 订阅卡：凭证在 plan_provider_id（volcengine）网关条目上
+                  const pid = accountInst?.plan_provider_id || provider.id;
+                  return pid && pid !== provider.id ? { ...provider, id: pid } : provider;
+                })()}
+                planHint={accountInst?.plan_label || null}
+                defaultOpen
+                accessKey={{
+                  ak: akDraft,
+                  sk: skDraft,
+                  showSecret: showKey,
+                  onAkChange: setAkDraft,
+                  onSkChange: setSkDraft,
+                  onCommit: commitVolcAkSk,
+                  emptyHint: isVolcPayg
+                    ? '填写 AccessKey 以查询按量余额'
+                    : '填写 AccessKey 以查询 Coding Plan 额度',
+                }}
+              />
+            ) : (
+              <UsageMeter
+                provider={(() => {
+                  const pid = accountInst?.plan_provider_id || provider.id;
+                  return pid && pid !== provider.id ? { ...provider, id: pid } : provider;
+                })()}
+                planHint={accountInst?.plan_label || null}
+              />
+            )
           )}
 
           {/* P2P info */}
