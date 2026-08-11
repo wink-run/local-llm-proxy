@@ -430,9 +430,11 @@ function resolveProvider(modelStr, providers) {
   if (!modelStr) return null;
   const slash = modelStr.indexOf('/');
   if (slash > 0) {
+    // 仅当斜杠前缀是真实 providerId 时才拆分（如 openai/dall-e-3）
+    // 硅基流动等源模型名本身带 org/model（如 qwen/qwen-image...），前缀不是 provider → 继续按全名匹配
     const pid = modelStr.slice(0, slash);
     const p   = providers.find(p => p.id === pid || p.id?.startsWith(pid));
-    return p ? { provider: p, model: modelStr.slice(slash + 1) } : null;
+    if (p) return { provider: p, model: modelStr.slice(slash + 1) };
   }
   // Match by image model list entry first
   const byModel = providers.find(p => hasImageModel(p, modelStr));
