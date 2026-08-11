@@ -27,6 +27,7 @@ function codexCommandCandidates(env = process.env, platform = process.platform) 
   const home = env.HOME || os.homedir();
   const out = [];
   if (platform === 'darwin') {
+    // 应用包路径始终列入候选（不依赖本机是否已安装；spawn 时 ENOENT 再试下一个）
     out.push(
       '/Applications/Codex.app/Contents/Resources/codex',
       '/Applications/ChatGPT.app/Contents/Resources/codex',
@@ -41,6 +42,8 @@ function codexCommandCandidates(env = process.env, platform = process.platform) 
   );
   return unique(out).filter((cmd) => {
     if (!path.isAbsolute(cmd)) return true;
+    // /Applications/*.app 内置 CLI：按平台列入，不因 CI/未安装而滤掉
+    if (/^\/Applications\/[^/]+\.app\/Contents\/Resources\/codex$/.test(cmd)) return true;
     try { return fs.existsSync(cmd); } catch { return false; }
   });
 }
