@@ -53,7 +53,8 @@ test('routeSupportsImages：配备识图增强的场景 → true；纯文本场�
 test('getRouteCatalogModels：识图场景写入 vision=true，供 Codex catalog 含 image', () => {
   const app = { route_ids: ['llm-router-vision-assist', 'llm-router-plain'] };
   const catalog = getRouteCatalogModels(app, ROUTES, []);
-  assert.deepEqual(catalog, [
+  // 只校验 vision（本用例意图）；contextWindow 由候选模型窗口另测，避免规则变动脆断
+  assert.deepEqual(catalog.map(({ name, label, vision }) => ({ name, label, vision })), [
     { name: 'llm-router-vision-assist', label: 'llm-router-vision-assist', vision: true },
     { name: 'llm-router-plain', label: 'llm-router-plain', vision: false },
   ]);
