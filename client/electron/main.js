@@ -4908,6 +4908,7 @@ function registerIPC() {
         }
         const baseUrl = resolvedPatch['model_providers.tokenbank.base_url'] || `${patchCtx.base}/v1`;
         // 供给源「图文」或场景配备识图增强 → catalog.input_modalities 含 image，Codex 才能附图。
+        // 每条路由的 context_window 按其候选模型窗口取最小值（感知模型，避免一律 128k）——见 getRouteCatalogModels。
         const providersCfg = (readAgentConfig() || {}).providers || [];
         const sceneRoutes = readLocalConfig().scene_routes || [];
         const catalogModels = getRouteCatalogModels(appRec, sceneRoutes, providersCfg)

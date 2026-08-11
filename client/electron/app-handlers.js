@@ -269,6 +269,28 @@ function getRouteModels(app, routes = []) {
   return out;
 }
 
+/** 路由的候选模型名（chain 路由取 steps[].model；直连模型路由取自身）。纯策略路由返回空。 */
+function routeStepModels(routeId, routes = []) {
+  const parsed = parseRouteBinding(routeId, routes);
+  if (parsed.isScene && parsed.scene) {
+    return (Array.isArray(parsed.scene.steps) ? parsed.scene.steps : [])
+      .map(s => s && s.model).filter(Boolean);
+  }
+  return parsed.modelId ? [String(parsed.modelId)] : [];
+}
+
+/**
+ * 路由的上下文窗口：感知它候选模型的窗口，取「最小」（落到哪个候选都不超其真实窗口）。
+ * 纯策略路由（无固定候选模型，可落到全池任意模型）返回 null，交调用方回退保守默认。
+ */
+function routeContextWindow(routeId, routes = [], providers = []) {
+  const { resolveMinContextWindow } = require('./model-context-window');
+  const models = routeStepModels(routeId, routes);
+  if (!models.length) return null;
+  return resolveMinContextWindow(models, providers);
+}
+
+
 /**
  * Codex model_catalog 条目：name（wire id）+ label（展示名）+ vision。
  * 配备识图增强的场景路由一律 vision=true，写入 input_modalities 含 image。
@@ -285,13 +307,16 @@ function getRouteCatalogModels(app, routes = [], providers = []) {
     const vision = routeSupportsImages(rid, routes, providers);
     // 场景用 scene_name（如「速度优先」）；直连模型仍用模型 id
     const label = routeLabelFor(rid, routes) || name;
+    // 感知候选模型窗口，取最小（落到哪个候选都不超其真实窗口）；纯策略路由为 null → 下游回退保守 128k
+    const cw = routeContextWindow(rid, routes, providers);
     if (byName.has(name)) {
       const prev = byName.get(name);
       if (vision) prev.vision = true;
       if (label && !prev.label) prev.label = label;
+      if (cw && (!prev.contextWindow || cw < prev.contextWindow)) prev.contextWindow = cw;  // 同名多路由取更小
       continue;
     }
-    const entry = { name, label, vision };
+    const entry = { name, label, vision, ...(cw ? { contextWindow: cw } : {}) };
     byName.set(name, entry);
     out.push(entry);
   }
@@ -693,6 +718,8 @@ module.exports = {
   applyRouteToProxyPatch,
   resolveHandlerId,
   routeModelId,
+  routeStepModels,
+  routeContextWindow,
   getRouteModels,
   getRouteCatalogModels,
   modelVision,

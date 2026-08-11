@@ -176,6 +176,20 @@ function resolveMaxContextWindow(models, providers = []) {
   return max > 0 ? max : null;
 }
 
+/**
+ * 多个候选模型取最小窗口。用于路由：路由会落到候选里任意一个，取最小才保证落到哪个都不超其真实窗口。
+ * 空列表返回 null（调用方回退保守默认）。
+ */
+function resolveMinContextWindow(models, providers = []) {
+  const list = Array.isArray(models) ? models : [];
+  let min = Infinity;
+  for (const m of list) {
+    const w = resolveContextWindow(m, providers);
+    if (w > 0 && w < min) min = w;
+  }
+  return Number.isFinite(min) ? min : null;
+}
+
 /** Claude Code 自动压缩阈值 ≈ 窗口 × 80%（与 cc-switch 一致） */
 function autoCompactWindow(contextWindow) {
   const w = Number(contextWindow);
@@ -192,5 +206,6 @@ module.exports = {
   contextWindowFromModelName,
   resolveContextWindow,
   resolveMaxContextWindow,
+  resolveMinContextWindow,
   autoCompactWindow,
 };

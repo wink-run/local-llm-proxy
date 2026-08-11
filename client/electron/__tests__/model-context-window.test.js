@@ -63,3 +63,15 @@ test('路由类 model_key（llm-router-*）钉保守 128k，不走模型族/200k
   assert.equal(resolveContextWindow('deepseek-v4-pro'), 1048576);
   assert.equal(resolveContextWindow('glm-5.1'), 200000);
 });
+
+test('resolveMinContextWindow：路由取候选模型最小窗口，感知模型而非一律 128k', () => {
+  const { resolveMinContextWindow } = require('../model-context-window');
+  // design 候选：glm-5.1(200k) + deepseek-v4-pro(1M)*… → 最小 200k
+  assert.equal(resolveMinContextWindow(['glm-5.1', 'deepseek-v4-pro', 'minimax-m3', 'mimo-v2.5']), 200000);
+  // 全是大窗口 → 取到大值（不再被压成 128k）
+  assert.equal(resolveMinContextWindow(['deepseek-v4-pro', 'mimo-v2.5']), 1048576);
+  // 含小窗口 → 取小（安全，落到它也不超）：glm-4(裸)=128k、deepseek-v4-pro=1M → 128k
+  assert.equal(resolveMinContextWindow(['deepseek-v4-pro', 'glm-4']), 128000);
+  // 空 → null（调用方回退保守默认）
+  assert.equal(resolveMinContextWindow([]), null);
+});
