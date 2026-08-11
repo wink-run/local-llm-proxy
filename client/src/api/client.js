@@ -108,6 +108,11 @@ export function getContributeSummary() {
   return http.get('/user/contribute-summary');
 }
 
+/** 公开：社区推荐目录（仅上架；含 resources 扁平列表） */
+export function getCommunityCatalog() {
+  return http.get('/api/community-catalog');
+}
+
 /** 社区 skill 纳管/推荐积分额度 */
 export function getCommunityCatalogPricing() {
   const token = localStorage.getItem('token');

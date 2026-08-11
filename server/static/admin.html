@@ -986,20 +986,22 @@ select.form-input{cursor:pointer}
       </div>
     </div>
 
-    <!-- 社区推荐管理 -->
+    <!-- 社区推荐管理：完整目录展示 + 用户推荐 + 积分额度 -->
     <div v-show="activeTab === 'community'" class="tab-content">
       <div class="toolbar">
-        <span style="font-size:15px;font-weight:600">{{ lang==='zh' ? '社区 Skill 推荐' : 'Community Skill Recs' }}</span>
-        <div class="toolbar-right" style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-sm" @click="fetchCommunityRecs">{{ T.refresh }}</button>
+        <span style="font-size:15px;font-weight:600">{{ lang==='zh' ? '社区推荐资源' : 'Community Catalog' }}</span>
+        <div class="toolbar-right" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn-sm" @click="importCommunityDefaults">{{ lang==='zh'?'从默认导入':'Import defaults' }}</button>
+          <button class="btn-sm" @click="fetchCommunityCatalog">{{ T.refresh }}</button>
         </div>
       </div>
       <p style="font-size:12px;color:#7b7b7b;margin-bottom:12px;line-height:1.6">
         {{ lang==='zh'
-          ? '用户从客户端「推荐到社区」的 Skill。可下架/上架/删除。纳管扣减与推荐奖励也可在下方或「系统配置」中修改。'
-          : 'User-recommended skills. Enable/disable/delete. Change install cost & recommend reward below or in Config.' }}
+          ? '下发到客户端的社区目录（提示词 / 技能 / 智能体）。可下架、删除；用户推荐的 Skill 会标「用户」。纳管扣减与推荐奖励可在下方修改。'
+          : 'Full community catalog shipped to clients. Disable/delete items; user-recommended skills are tagged. Pricing below.' }}
       </p>
-      <div class="panel" style="max-width:520px;margin-bottom:16px;padding:14px">
+
+      <div class="panel" style="max-width:560px;margin-bottom:16px;padding:14px">
         <div style="font-size:13px;font-weight:600;margin-bottom:10px">{{ lang==='zh'?'积分额度':'Credit pricing' }}</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
           <div>
@@ -1014,21 +1016,45 @@ select.form-input{cursor:pointer}
         </div>
         <div v-if="ccMsg" style="margin-top:8px;font-size:12px" :style="ccMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ ccMsg }}</div>
       </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center">
+        <button
+          v-for="tab in ccTypeTabs" :key="tab.id"
+          class="btn-sm"
+          :style="ccTypeFilter===tab.id ? 'background:#111;color:#fff;border-color:#111' : ''"
+          @click="ccTypeFilter=tab.id"
+        >{{ tab.label }} <span style="opacity:.7">({{ ccCountFor(tab.id) }})</span></button>
+        <input v-model="ccQuery" class="form-input form-input-md" style="margin-left:auto;min-width:180px"
+          :placeholder="lang==='zh'?'搜索名称/描述…':'Search name/desc…'" />
+      </div>
+
       <div class="panel" style="padding:0;overflow:hidden">
         <table>
           <thead><tr>
-            <th>catalog_id</th>
+            <th>{{ lang==='zh'?'类型':'Type' }}</th>
             <th>{{ lang==='zh'?'名称':'Name' }}</th>
-            <th>{{ lang==='zh'?'推荐人':'By' }}</th>
+            <th>{{ lang==='zh'?'说明':'Description' }}</th>
+            <th>{{ lang==='zh'?'分享人':'Sharer' }}</th>
+            <th>{{ lang==='zh'?'来源':'Source' }}</th>
             <th>{{ T.status }}</th>
             <th>{{ T.actions }}</th>
           </tr></thead>
           <tbody>
-            <tr v-if="!ccRecs.length"><td colspan="5" style="color:#bcbcbc;font-size:13px;padding:16px">{{ lang==='zh'?'暂无用户推荐':'No user recommendations' }}</td></tr>
-            <tr v-for="it in ccRecs" :key="it.catalog_id">
-              <td class="mono" style="font-size:11px;max-width:180px;word-break:break-all">{{ it.catalog_id }}</td>
-              <td>{{ it.display_name || it.name }}</td>
-              <td style="font-size:12px">{{ it.recommender_email || ('#' + (it.recommender_user_id || '—')) }}</td>
+            <tr v-if="!ccFilteredItems.length">
+              <td colspan="7" style="color:#bcbcbc;font-size:13px;padding:16px">{{ lang==='zh'?'暂无条目':'No items' }}</td>
+            </tr>
+            <tr v-for="it in ccFilteredItems" :key="it.catalog_id">
+              <td style="white-space:nowrap;font-size:12px">{{ ccTypeLabel(it.type) }}</td>
+              <td>
+                <div style="font-weight:500">{{ it.display_name || it.name }}</div>
+                <div class="mono" style="font-size:10px;color:#9a9a9a;max-width:200px;word-break:break-all">{{ it.catalog_id }}</div>
+              </td>
+              <td style="font-size:12px;color:#555;max-width:280px">{{ it.description || '—' }}</td>
+              <td style="font-size:12px;white-space:nowrap">@{{ it.sharer }}</td>
+              <td style="font-size:12px;white-space:nowrap">
+                <span v-if="it.user_recommended" style="color:#7c3aed">{{ lang==='zh'?'用户':'User' }}</span>
+                <span v-else style="color:#7b7b7b">{{ lang==='zh'?'系统':'System' }}</span>
+              </td>
               <td>{{ it.enabled ? (lang==='zh'?'上架':'On') : (lang==='zh'?'下架':'Off') }}</td>
               <td style="white-space:nowrap">
                 <button class="btn-xs" @click="toggleCommunityItem(it)">{{ it.enabled ? (lang==='zh'?'下架':'Disable') : (lang==='zh'?'上架':'Enable') }}</button>
@@ -1038,6 +1064,8 @@ select.form-input{cursor:pointer}
           </tbody>
         </table>
       </div>
+    </div>
+
     </div>
 
     <!-- 路由管理（表单） -->
@@ -1703,21 +1731,142 @@ createApp({
       try { await api(`/admin/virtual-agents/${agent.id}`, {method:'DELETE'}); await fetchVirtualAgents() } catch {}
     }
 
-    /* ── Community recommendations ── */
-    const ccRecs = ref([])
+    /* ── Community catalog（完整资源列表） ── */
+    const CC_SYSTEM_HANDLES = [
+      '云舟', '拾光', '未央', '青禾', '星野', '听潮', '南风', '墨白',
+      '远山', '疏影', '清欢', '知夏', '晚晴', '栖梧', '望舒', '既白',
+      'nova', 'kai', 'mira', 'leo', 'aria', 'rex', 'luna', 'orin',
+      'pixel', 'sage', 'quill', 'ember', 'haze', 'frost', 'echo', 'bloom',
+    ]
+    function ccHashSeed(seed) {
+      let h = 0
+      const s = String(seed || 'sys')
+      for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+      return Math.abs(h)
+    }
+    function ccSharerHandle(item) {
+      const meta = item?.metadata && typeof item.metadata === 'object' ? item.metadata : {}
+      const explicit = String(meta.recommender_handle || meta.recommender_nickname || '').replace(/^@+/, '').trim()
+      if (explicit) return explicit
+      if (meta.user_recommended || meta.recommender_user_id) {
+        const email = String(meta.recommender_email || '')
+        const local = (email.split('@')[0] || '').replace(/[^a-zA-Z0-9._\u4e00-\u9fff-]/g, '').slice(0, 24)
+        if (local) return local
+        if (meta.recommender_user_id != null) return 'u' + meta.recommender_user_id
+      }
+      const seed = item?.catalog_id || item?.catalogId || item?.name || 'system'
+      return CC_SYSTEM_HANDLES[ccHashSeed(seed) % CC_SYSTEM_HANDLES.length]
+    }
+    function ccNormalizeItem(raw, sectionType) {
+      if (!raw || typeof raw !== 'object') return null
+      const catalog_id = String(raw.catalog_id || raw.catalogId || raw.id || '').trim()
+      if (!catalog_id) return null
+      const meta = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {}
+      const type = sectionType === 'assistants' ? 'assistant'
+        : sectionType === 'prompts' ? 'prompt'
+          : sectionType === 'skills' ? 'skill'
+            : (raw.type === 'agent' ? 'assistant' : (raw.type || 'skill'))
+      return {
+        catalog_id,
+        type,
+        name: raw.name || catalog_id,
+        display_name: raw.display_name || raw.displayName || raw.name || catalog_id,
+        description: raw.description || '',
+        metadata: meta,
+        enabled: meta.enabled !== false,
+        user_recommended: !!meta.user_recommended,
+        recommender_email: meta.recommender_email || '',
+        recommender_user_id: meta.recommender_user_id,
+        sharer: ccSharerHandle({ ...raw, catalog_id, metadata: meta }),
+      }
+    }
+
+    const ccItems = ref([])
+    const ccCounts = ref({ prompts: 0, skills: 0, assistants: 0, all: 0 })
+    const ccTypeFilter = ref('all')
+    const ccQuery = ref('')
     const ccPricing = ref({ install_cost: 8, recommend_reward: 5 })
     const ccPricingSaving = ref(false)
     const ccMsg = ref('')
-    async function fetchCommunityRecs() {
+    const ccTypeTabs = computed(() => {
+      const zh = lang.value === 'zh'
+      return [
+        { id: 'all', label: zh ? '全部' : 'All' },
+        { id: 'prompt', label: zh ? '提示词' : 'Prompts' },
+        { id: 'skill', label: zh ? '技能' : 'Skills' },
+        { id: 'assistant', label: zh ? '智能体' : 'Assistants' },
+        { id: 'user', label: zh ? '用户推荐' : 'User recs' },
+      ]
+    })
+    function ccCountFor(id) {
+      if (id === 'all') return ccCounts.value.all
+      if (id === 'user') return ccItems.value.filter(i => i.user_recommended).length
+      if (id === 'prompt') return ccCounts.value.prompts
+      if (id === 'skill') return ccCounts.value.skills
+      if (id === 'assistant') return ccCounts.value.assistants
+      return 0
+    }
+    function ccTypeLabel(type) {
+      if (lang.value !== 'zh') return type
+      return ({ prompt: '提示词', skill: '技能', assistant: '智能体' })[type] || type
+    }
+    const ccFilteredItems = computed(() => {
+      const q = String(ccQuery.value || '').trim().toLowerCase()
+      return ccItems.value.filter((it) => {
+        if (ccTypeFilter.value === 'user' && !it.user_recommended) return false
+        if (ccTypeFilter.value !== 'all' && ccTypeFilter.value !== 'user' && it.type !== ccTypeFilter.value) return false
+        if (!q) return true
+        const hay = [it.name, it.display_name, it.description, it.catalog_id, it.sharer].join('\n').toLowerCase()
+        return hay.includes(q)
+      })
+    })
+
+    async function fetchCommunityCatalog() {
       try {
-        const d = await (await api('/admin/community-catalog/recommendations')).json()
-        ccRecs.value = d.items || []
-        if (d.pricing) ccPricing.value = {
-          install_cost: d.pricing.install_cost,
-          recommend_reward: d.pricing.recommend_reward,
+        const [catRes, priceRes] = await Promise.all([
+          api('/admin/community-catalog'),
+          api('/admin/community-catalog/pricing'),
+        ])
+        const d = await catRes.json()
+        const catalog = d.catalog || {}
+        const rows = []
+        for (const section of ['prompts', 'skills', 'assistants']) {
+          for (const raw of (catalog[section] || [])) {
+            const row = ccNormalizeItem(raw, section)
+            if (row) rows.push(row)
+          }
         }
+        ccItems.value = rows
+        ccCounts.value = {
+          prompts: (catalog.prompts || []).length,
+          skills: (catalog.skills || []).length,
+          assistants: (catalog.assistants || []).length,
+          all: rows.length,
+        }
+        try {
+          const p = await priceRes.json()
+          if (p && p.install_cost != null) {
+            ccPricing.value = { install_cost: p.install_cost, recommend_reward: p.recommend_reward }
+          }
+        } catch { /* ignore */ }
       } catch { /* ignore */ }
     }
+    // 兼容旧名
+    async function fetchCommunityRecs() { return fetchCommunityCatalog() }
+
+    async function importCommunityDefaults() {
+      if (!confirm(lang.value === 'zh'
+        ? '从默认 YAML 重置社区目录？用户推荐也会被覆盖。'
+        : 'Reset community catalog from defaults? User recommendations will be overwritten.')) return
+      try {
+        const r = await api('/admin/community-catalog/import-defaults', { method: 'POST' })
+        const d = await r.json()
+        if (!r.ok) { ccMsg.value = d.detail || 'Error'; return }
+        ccMsg.value = '✓ ' + (lang.value === 'zh' ? '已导入默认目录' : 'Defaults imported')
+        await fetchCommunityCatalog()
+      } catch { ccMsg.value = 'Error' }
+    }
+
     async function saveCommunityPricing() {
       ccPricingSaving.value = true
       ccMsg.value = ''
@@ -1733,7 +1882,6 @@ createApp({
         if (!r.ok) { ccMsg.value = d.detail || 'Error'; return }
         ccPricing.value = { install_cost: d.install_cost, recommend_reward: d.recommend_reward }
         ccMsg.value = '✓ ' + (lang.value === 'zh' ? '额度已保存' : 'Pricing saved')
-        // 同步系统配置面板缓存
         try { await fetchConfig() } catch {}
       } catch { ccMsg.value = 'Error' }
       finally { ccPricingSaving.value = false }
@@ -1744,15 +1892,15 @@ createApp({
           method: 'PATCH',
           body: JSON.stringify({ enabled: !it.enabled }),
         })
-        await fetchCommunityRecs()
+        await fetchCommunityCatalog()
       } catch {}
     }
     async function deleteCommunityItem(it) {
       const name = it.display_name || it.name || it.catalog_id
-      if (!confirm(lang.value === 'zh' ? `确认删除推荐「${name}」？` : `Delete recommendation "${name}"?`)) return
+      if (!confirm(lang.value === 'zh' ? `确认删除「${name}」？` : `Delete "${name}"?`)) return
       try {
         await api(`/admin/community-catalog/items/${encodeURIComponent(it.catalog_id)}`, { method: 'DELETE' })
-        await fetchCommunityRecs()
+        await fetchCommunityCatalog()
       } catch {}
     }
 
@@ -1778,7 +1926,7 @@ createApp({
       if (k === 'billing') fetchBillingSources()
       if (k === 'apps') fetchAppCatalog()
       if (k === 'routes') fetchRoutingCatalog()
-      if (k === 'community') fetchCommunityRecs()
+      if (k === 'community') fetchCommunityCatalog()
     }
     function switchTab(k) {
       activeTab.value = k
@@ -1819,8 +1967,11 @@ createApp({
       ...billingAdmin,
       ...appCatalogAdmin,
       ...routingCatalogAdmin,
-      ccRecs, ccPricing, ccPricingSaving, ccMsg,
-      fetchCommunityRecs, saveCommunityPricing, toggleCommunityItem, deleteCommunityItem,
+      ccItems, ccCounts, ccTypeFilter, ccQuery, ccTypeTabs, ccFilteredItems,
+      ccPricing, ccPricingSaving, ccMsg,
+      ccCountFor, ccTypeLabel,
+      fetchCommunityCatalog, fetchCommunityRecs, importCommunityDefaults,
+      saveCommunityPricing, toggleCommunityItem, deleteCommunityItem,
       fmtTime,
     }
   }

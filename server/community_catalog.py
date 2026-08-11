@@ -113,6 +113,71 @@ def catalog_payload_from_doc(doc: dict, *, public: bool = False) -> dict:
     return out
 
 
+# 系统分享人：稳定伪随机昵称（与客户端 catalog-sharer 对齐）
+_SYSTEM_HANDLES = (
+    "云舟", "拾光", "未央", "青禾", "星野", "听潮", "南风", "墨白",
+    "远山", "疏影", "清欢", "知夏", "晚晴", "栖梧", "望舒", "既白",
+    "nova", "kai", "mira", "leo", "aria", "rex", "luna", "orin",
+    "pixel", "sage", "quill", "ember", "haze", "frost", "echo", "bloom",
+)
+
+
+def _hash_seed(seed: str) -> int:
+    h = 0
+    for ch in str(seed or "sys"):
+        h = (h * 31 + ord(ch)) & 0x7FFFFFFF
+    return h
+
+
+def sharer_handle_for_item(item: dict) -> str:
+    """社区条目分享人展示名（无 @ 前缀）。"""
+    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    for key in ("recommender_handle", "recommender_nickname", "sharer_handle"):
+        raw = str(meta.get(key) or "").strip().lstrip("@")
+        if raw:
+            return raw[:24]
+    if meta.get("user_recommended") or meta.get("recommender_user_id"):
+        email = str(meta.get("recommender_email") or "")
+        local = email.split("@")[0] if email else ""
+        local = "".join(c for c in local if c.isalnum() or c in "._-" or "\u4e00" <= c <= "\u9fff")
+        if local:
+            return local[:24]
+        if meta.get("recommender_user_id") is not None:
+            return f"u{meta['recommender_user_id']}"
+    seed = _item_catalog_id(item) or str(item.get("name") or "system")
+    return _SYSTEM_HANDLES[_hash_seed(seed) % len(_SYSTEM_HANDLES)]
+
+
+def flatten_public_resources(doc: dict) -> list[dict]:
+    """上架中的 prompt/skill/assistant 扁平列表（供全球网络等展示）。"""
+    doc = catalog_payload_from_doc(doc, public=True)
+    section_type = {
+        "prompts": "prompt",
+        "skills": "skill",
+        "assistants": "assistant",
+    }
+    out: list[dict] = []
+    for section, typ in section_type.items():
+        for item in doc.get(section) or []:
+            cid = _item_catalog_id(item)
+            if not cid:
+                continue
+            meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            name = str(item.get("name") or cid).strip()
+            out.append({
+                "catalog_id": cid,
+                "type": typ if item.get("type") != "agent" else "assistant",
+                "name": name,
+                "display_name": str(item.get("display_name") or name).strip() or name,
+                "description": str(item.get("description") or "").strip(),
+                "sharer": sharer_handle_for_item(item),
+                "user_recommended": bool(meta.get("user_recommended")),
+            })
+    # 用户推荐靠前，其余按名称
+    out.sort(key=lambda x: (0 if x["user_recommended"] else 1, x["display_name"]))
+    return out
+
+
 async def load_community_catalog_doc() -> dict:
     raw = await db.get_config(CONFIG_KEY, "")
     if raw.strip():
@@ -134,8 +199,10 @@ async def import_from_defaults() -> dict:
 
 
 async def community_catalog_payload() -> dict:
-    """公开下发：隐藏已下架条目。"""
-    return catalog_payload_from_doc(await load_community_catalog_doc(), public=True)
+    """公开下发：隐藏已下架条目；附带扁平 resources 列表（含分享人）。"""
+    doc = catalog_payload_from_doc(await load_community_catalog_doc(), public=True)
+    resources = flatten_public_resources(doc)
+    return {**doc, "resources": resources, "resource_count": len(resources)}
 
 
 async def publish_community_catalog() -> dict:

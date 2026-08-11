@@ -40,6 +40,7 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .panel-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
 .panel-h h2{font-size:13px;font-weight:600}
 .panel-h .meta{font-size:11px;color:var(--text-muted)}
+.panel-h .hint{font-size:11px;color:var(--text-muted);margin-top:3px;font-weight:400}
 .list{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto}
 .row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--bg-muted);border:1px solid transparent;cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
 .row:hover{border-color:var(--border);background:#fff}
@@ -51,6 +52,13 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .side{margin-left:auto;text-align:right;flex-shrink:0;font-size:11px;color:var(--text-muted)}
 .side b{display:block;color:var(--text);font-weight:600;font-size:12px}
 .avatar{width:28px;height:28px;border-radius:9px;background:#dbeafe;color:#2563eb;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.tag{font-size:10px;padding:2px 6px;border-radius:6px;background:#eeeae6;color:var(--text-muted);flex-shrink:0;white-space:nowrap}
+.catalog-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:4px}
+@media(max-width:800px){.catalog-grid{grid-template-columns:1fr}}
+.catalog-group{min-width:0;background:var(--bg-muted);border-radius:12px;padding:12px}
+.catalog-group h3{font-size:12px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between}
+.catalog-group h3 .n{font-weight:400;color:var(--text-muted);font-size:11px}
+.catalog-group .list{max-height:280px}
 .rank.top{color:#d97706}
 .state{text-align:center;padding:32px;color:var(--text-muted);font-size:13px}
 .footer{margin-top:28px;text-align:center;color:var(--text-faint);font-size:12px}
@@ -121,6 +129,42 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
           </a>
         </div>
         <div v-else class="state">{{ T.emptyAgents }}</div>
+      </div>
+
+      <!-- 可用资源：按类型分栏，一行两列 -->
+      <div class="panel" style="grid-column:1 / -1">
+        <div class="panel-h">
+          <div>
+            <h2>{{ T.catalogTitle }}</h2>
+            <div class="hint">{{ T.catalogHint.replace('{n}', String(catalogResources.length)) }}</div>
+          </div>
+          <span class="meta">{{ T.catalogUseHint }}</span>
+        </div>
+        <div v-if="catalogByType.length" class="catalog-grid">
+          <div v-for="g in catalogByType" :key="g.type" class="catalog-group">
+            <h3>
+              <span>{{ g.label }}</span>
+              <span class="n">{{ g.items.length }}</span>
+            </h3>
+            <div class="list">
+              <div
+                v-for="r in g.items"
+                :key="r.catalog_id"
+                class="row disabled"
+              >
+                <div style="min-width:0;flex:1">
+                  <div class="name" style="font-family:inherit">{{ r.display_name || r.name }}</div>
+                  <div class="desc">{{ r.description || T.noDesc }}</div>
+                </div>
+                <div class="side">
+                  <b>{{ T.sharedBy.replace('{handle}', r.sharer || '—') }}</b>
+                  {{ r.user_recommended ? T.catalogUser : '' }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else class="state">{{ T.emptyCatalog }}</div>
       </div>
 
       <div class="panel" style="grid-column:1 / -1">
@@ -201,6 +245,10 @@ createApp({
         typeChat: '文本', typeVision: '图文', typeImage: '生图', typeEmbedding: '嵌入',
         membersN: '{n} 人', circleOpen: '可申请', circleFull: '已满', circleJoined: '已加入', circlePending: '已申请',
         circlesNav: '圈子', circlesMore: '管理圈子 →', emptyCircles: '暂无公开圈子',
+        catalogTitle: '可用资源', catalogCount: '{n} 项上架', emptyCatalog: '暂无上架的社区资源',
+        catalogHint: '{n} 项上架', catalogUseHint: '可以在客户端中纳管使用',
+        catalogTypePrompt: '提示词', catalogTypeSkill: '技能', catalogTypeAssistant: '智能体',
+        catalogUser: '用户分享', sharedBy: '分享人 @{handle}',
         circleApplyConfirm: '是否申请加入「{name}」？',
         circleApplySent: '已向「{name}」发送入圈申请',
         circlePendingHint: '已申请，等待圈主通过',
@@ -217,6 +265,10 @@ createApp({
         typeChat: 'Text', typeVision: 'Vision', typeImage: 'Image', typeEmbedding: 'Embedding',
         membersN: '{n} members', circleOpen: 'Open', circleFull: 'Full', circleJoined: 'Joined', circlePending: 'Pending',
         circlesNav: 'Circles', circlesMore: 'Manage circles →', emptyCircles: 'No public circles yet',
+        catalogTitle: 'Available resources', catalogCount: '{n} listed', emptyCatalog: 'No listed community resources yet',
+        catalogHint: '{n} listed', catalogUseHint: 'Adopt and use in the client app',
+        catalogTypePrompt: 'Prompt', catalogTypeSkill: 'Skill', catalogTypeAssistant: 'Assistant',
+        catalogUser: 'User share', sharedBy: 'Shared by @{handle}',
         circleApplyConfirm: 'Apply to join “{name}”?',
         circleApplySent: 'Join request sent to “{name}”',
         circlePendingHint: 'Request pending owner approval',
@@ -239,11 +291,32 @@ createApp({
     const availableModelTypes = ref({})
     const agents = ref([])
     const circles = ref([])
+    const catalogResources = ref([])
     const circleBusyId = ref(null)
 
     function getToken() {
       try { return localStorage.getItem('user_token') || '' } catch { return '' }
     }
+
+    function catalogTypeShort(type) {
+      if (type === 'prompt') return T.value.catalogTypePrompt
+      if (type === 'assistant') return T.value.catalogTypeAssistant
+      return T.value.catalogTypeSkill
+    }
+
+    // 按资源类型分组，供两列分栏展示
+    const catalogByType = computed(() => {
+      const order = ['skill', 'prompt', 'assistant']
+      const map = { skill: [], prompt: [], assistant: [] }
+      for (const r of catalogResources.value) {
+        const t = r.type === 'agent' ? 'assistant' : r.type
+        if (map[t]) map[t].push(r)
+        else map.skill.push(r)
+      }
+      return order
+        .filter((k) => map[k].length)
+        .map((k) => ({ type: k, label: catalogTypeShort(k), items: map[k].slice(0, 24) }))
+    })
 
     function circleStatus(c) {
       if (circleBusyId.value === c.id) return lang.value === 'zh' ? '申请中…' : 'Applying…'
@@ -396,9 +469,12 @@ createApp({
         const headers = {}
         const tok = getToken()
         if (tok) headers.Authorization = 'Bearer ' + tok
-        const r = await fetch('/public/network', { headers })
-        const data = await r.json()
-        if (!r.ok) throw new Error('fail')
+        const [netRes, catalogRes] = await Promise.all([
+          fetch('/public/network', { headers }),
+          fetch('/api/community-catalog'),
+        ])
+        const data = await netRes.json()
+        if (!netRes.ok) throw new Error('fail')
         summary.value = data.summary || {}
         workers.value = Array.isArray(data.workers) ? data.workers : []
         availableModels.value = Array.isArray(data.available_models) ? data.available_models : []
@@ -406,6 +482,16 @@ createApp({
           ? data.available_model_types : {}
         agents.value = Array.isArray(data.available_agents) ? data.available_agents : []
         circles.value = Array.isArray(data.available_circles) ? data.available_circles : []
+        // 社区推荐：公开接口仅返回上架资源
+        try {
+          const catalogData = await catalogRes.json()
+          const rows = Array.isArray(catalogData?.resources)
+            ? catalogData.resources
+            : (Array.isArray(catalogData?.data?.resources) ? catalogData.data.resources : [])
+          catalogResources.value = catalogRes.ok ? rows : []
+        } catch {
+          catalogResources.value = []
+        }
         fatal.value = ''
       } catch {
         fatal.value = lang.value === 'zh' ? '无法连接服务器' : 'Cannot reach server'
@@ -420,8 +506,8 @@ createApp({
     })
 
     return {
-      lang, T, toggleLang, loading, fatal, summary, models, agents, circles, circleBusyId,
-      topWorkers, fmtTok, offerText, typeLabel, tryLabel, circleStatus, onCircleClick,
+      lang, T, toggleLang, loading, fatal, summary, models, agents, circles, catalogResources, catalogByType, circleBusyId,
+      topWorkers, fmtTok, offerText, typeLabel, tryLabel, catalogTypeShort, circleStatus, onCircleClick,
     }
   }
 }).mount('#app')
