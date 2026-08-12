@@ -119,7 +119,7 @@ export function getCommunityCatalogPricing() {
   return authRequest('GET', '/user/community-catalog/pricing', { token });
 }
 
-/** 推荐本机 skill 到社区目录 */
+/** 推荐本机 skill / prompt / assistant 到社区目录 */
 export function recommendCommunitySkill(body) {
   const token = localStorage.getItem('token');
   return authRequest('POST', '/user/community-catalog/recommend', { body, token });

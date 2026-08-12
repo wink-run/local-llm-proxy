@@ -14,7 +14,7 @@ import { updateProfilePersona } from '../api/client';
 
 const FINDER_NAME = 'resource-finder';
 const PORTRAIT_NAME = 'resource-portrait';
-const MAX_RECS = 30;
+const MAX_RECS = 20;
 const LAST_KEY = 'tokenbank.resources.recommend.last';
 /** 跨技能/提示词/智能体共享的稳定画像(不必每种资产重头分析) */
 const PORTRAIT_KEY = 'tokenbank.resources.recommend.portrait';
@@ -109,6 +109,11 @@ function slugifyAssistantId(name, fallback) {
 function lastKey(tf) { return `${LAST_KEY}.${normType(tf)}`; }
 function loadLast(tf) { try { const r = JSON.parse(localStorage.getItem(lastKey(tf))); if (r && Array.isArray(r.items)) return r; } catch { /* */ } return null; }
 function saveLast(tf, items) { try { localStorage.setItem(lastKey(tf), JSON.stringify({ items, savedAt: Date.now() })); } catch { /* */ } }
+function clearAllLast() {
+  for (const tf of ['skill', 'prompt', 'assistant']) {
+    try { localStorage.removeItem(lastKey(tf)); } catch { /* */ }
+  }
+}
 function recKey(rec) { return rec.slug || rec.name || ''; }
 
 /** 推荐卡片是否对应当前已纳管资源 */
@@ -241,6 +246,11 @@ function savePortrait(patch) {
 function clearPortrait() {
   try { localStorage.removeItem(PORTRAIT_KEY); } catch { /* */ }
   syncPersonaToServer('');
+  clearAllLast();
+  // 进行中的挖掘/发现任务状态一并清掉
+  try {
+    for (const rt of ['skill', 'prompt', 'assistant']) clearRun(rt);
+  } catch { /* ignore */ }
 }
 /** 某类型尚无 needs 时,用能力域顶上去,避免换资产还要重跑画像 */
 function seedNeedsFromGoals(goals) {
@@ -694,9 +704,27 @@ function recMatchesPurpose(rec, purposeFilter) {
   return tagToPurpose(cat) === purposeFilter;
 }
 
+/** 推荐卡是否命中搜索词（名称/slug/说明/分类/匹配理由） */
+function recMatchesQuery(rec, searchQuery) {
+  const q = String(searchQuery || '').trim().toLowerCase();
+  if (!q) return true;
+  const hay = [
+    rec?.name,
+    rec?.slug,
+    rec?.display_name,
+    rec?.description,
+    rec?.reason,
+    rec?.match,
+    rec?.match_reason,
+    rec?.category,
+  ].filter(Boolean).join('\n').toLowerCase();
+  return hay.includes(q);
+}
+
 export default function PersonalizedRecommend({
   typeFilter,
   purposeFilter = '',
+  searchQuery = '',
   LogoComp,
   onNeedProject,
   onNeedAgent,
@@ -750,12 +778,15 @@ export default function PersonalizedRecommend({
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
-  // 用途筛选：只展示命中 category 的推荐卡
+  // 用途 + 顶部搜索：共同过滤推荐卡
   const visibleItems = useMemo(() => {
     if (!items || !items.length) return items;
-    if (!purposeFilter) return items;
-    return items.filter((rec) => recMatchesPurpose(rec, purposeFilter));
-  }, [items, purposeFilter]);
+    return items.filter(
+      (rec) => recMatchesPurpose(rec, purposeFilter) && recMatchesQuery(rec, searchQuery),
+    );
+  }, [items, purposeFilter, searchQuery]);
+
+  const hasListFilter = !!(purposeFilter || String(searchQuery || '').trim());
 
   // 打开画像/推荐时：若本地已有一句话画像，补同步到云端（贡献者主页）
   useEffect(() => {
@@ -1455,6 +1486,34 @@ export default function PersonalizedRecommend({
     );
   }
 
+  /** 删除本机画像（及基于画像的推荐缓存），可重新挖掘 */
+  const deletePortrait = () => {
+    if (busy) return;
+    if (!window.confirm(t('resources.reco.deleteConfirm'))) return;
+    clearPortrait();
+    setDigest(null);
+    setInstalled(null);
+    setPersona('');
+    setTraits([]);
+    setGoals([]);
+    setExtensions([]);
+    setNeeds([]);
+    setSupplement('');
+    setItems(null);
+    setSavedAt(null);
+    setInstalling({});
+    setExpandedKey(null);
+    setShareOpen(false);
+    setPhase('idle');
+    setTaskId(null);
+    setActivity([]);
+    setSteps(0);
+    setStatus('');
+    setMsg(t('resources.reco.deleteOk'));
+    setErr('');
+    try { if (typeof onItemsChange === 'function') onItemsChange(); } catch { /* ignore */ }
+  };
+
   /** 画像页审阅完成：只落盘画像，不进入资源发现 */
   const finishPortrait = () => {
     savePortrait({
@@ -1531,6 +1590,14 @@ export default function PersonalizedRecommend({
                     {t('resources.reco.share')}
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={deletePortrait}
+                  disabled={busy || runtimeBusy}
+                  className="px-3 py-1.5 rounded-md border border-red-300/80 dark:border-red-800/60 text-xs text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50"
+                >
+                  {t('resources.reco.delete')}
+                </button>
                 {sharedPortrait.digest && sharedPortrait.digest.sessions != null && (
                   <span className="text-[10px] text-zinc-400">{t('resources.reco.sessions', { n: sharedPortrait.digest.sessions })}</span>
                 )}
@@ -1702,7 +1769,7 @@ export default function PersonalizedRecommend({
         <>
           <div className="flex items-center justify-between text-[11px] text-zinc-400">
             <span>{t('resources.reco.forYou', {
-              n: purposeFilter ? (visibleItems?.length || 0) : items.length,
+              n: hasListFilter ? (visibleItems?.length || 0) : items.length,
               type: typeLabel,
               ago: savedAt ? fmtAgo(savedAt, t) : '',
             })}</span>
@@ -1715,9 +1782,13 @@ export default function PersonalizedRecommend({
               <span>{t('resources.reco.remineHint')}</span>
             </div>
           </div>
-          {purposeFilter && (!visibleItems || visibleItems.length === 0) ? (
+          {hasListFilter && (!visibleItems || visibleItems.length === 0) ? (
             <div className="text-center py-6 space-y-2">
-              <p className="text-xs text-zinc-400">{t('resources.emptyTagFiltered')}</p>
+              <p className="text-xs text-zinc-400">
+                {String(searchQuery || '').trim()
+                  ? t('resources.reco.searchFilteredEmpty')
+                  : t('resources.emptyTagFiltered')}
+              </p>
               <p className="text-[11px] text-zinc-400">
                 {t('resources.reco.purposeFilteredHint', { n: items.length })}
               </p>

@@ -433,6 +433,7 @@ async def user_stats(uid: int = Depends(get_current_user_id)):
 class CommunityRecommendRequest(BaseModel):
     name: str
     content: str
+    type: str = "skill"  # skill | prompt | assistant
     display_name: str = ""
     description: str = ""
     metadata: dict = {}
@@ -450,15 +451,16 @@ async def recommend_community_skill(
     req: CommunityRecommendRequest,
     uid: int = Depends(get_current_user_id),
 ):
-    """把本机 skill 推荐到社区目录，其他用户可见并可纳管。"""
+    """把本机 skill / prompt / assistant 推荐到社区目录，其他用户可见并可纳管。"""
     import community_catalog as cc
     user = await db.get_user_by_id(uid)
     email = (user or {}).get("email") or ""
     try:
-        result = await cc.upsert_user_skill_recommendation(
+        result = await cc.upsert_user_recommendation(
             user_id=uid,
             name=req.name,
             content=req.content,
+            type=req.type or "skill",
             display_name=req.display_name,
             description=req.description,
             metadata=req.metadata or {},

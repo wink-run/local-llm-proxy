@@ -6,7 +6,7 @@
   - 其余三段:  static/defaults/community-resources.yaml
 DB config.community_catalog 可整体覆盖默认。
 
-用户推荐的 skill 写入 skills[]，带 metadata.user_recommended；
+用户推荐的资源写入对应段（skills / prompts / assistants），带 metadata.user_recommended；
 公开下发时跳过 metadata.enabled === false。
 积分额度由 system_config 控制（可后台修改）:
   community_skill_install_cost / community_skill_recommend_reward
@@ -220,6 +220,62 @@ def _slug_name(name: str) -> str:
     return (s or "skill")[:64]
 
 
+def _clip_desc(text: str, max_len: int = 180) -> str:
+    s = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(s) > max_len:
+        return s[: max_len - 1] + "…"
+    return s
+
+
+def _extract_description_from_content(rtype: str, content: str, name: str = "") -> str:
+    """推荐时若无说明，从正文提炼短简介（提示词/智能体/技能通用）。"""
+    raw = str(content or "").strip()
+    if not raw:
+        return _clip_desc(name)
+
+    # assistant：JSON soul 首句
+    if rtype == "assistant":
+        soul = ""
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                soul = str(obj.get("soul") or obj.get("system_prompt") or obj.get("systemPrompt") or "").strip()
+        except Exception:
+            soul = ""
+        if not soul:
+            soul = raw
+        m = re.match(r"^[\s\S]+?[。.!！]", soul)
+        one = (m.group(0) if m else soul).strip()
+        return _clip_desc(one or name)
+
+    # 去掉 YAML frontmatter
+    body = re.sub(r"^---\r?\n[\s\S]*?\r?\n---\s*", "", raw, count=1).strip()
+    # 跳过标题行，取首段散文
+    lines: list[str] = []
+    for line in body.splitlines():
+        t = line.strip()
+        if not t:
+            if lines:
+                break
+            continue
+        if re.match(r"^#+\s", t):
+            if lines:
+                break
+            continue
+        if t.startswith("```"):
+            break
+        if re.match(r"^[-*]\s", t) and not lines:
+            continue
+        lines.append(t)
+        if len(" ".join(lines)) >= 48:
+            break
+    desc = " ".join(lines).strip()
+    if not desc:
+        # 退回整段压缩
+        desc = re.sub(r"\s+", " ", body)[:180]
+    return _clip_desc(desc or name)
+
+
 async def get_pricing() -> dict:
     """纳管扣减 / 推荐奖励积分（后台可改）。"""
     install = float(await db.get_config(INSTALL_COST_KEY, str(DEFAULT_INSTALL_COST)))
@@ -251,25 +307,48 @@ def find_item(doc: dict, catalog_id: str) -> tuple[str | None, dict | None]:
     return None, None
 
 
-async def upsert_user_skill_recommendation(
+_SECTION_BY_TYPE = {
+    "skill": "skills",
+    "prompt": "prompts",
+    "assistant": "assistants",
+}
+
+
+def _normalize_resource_type(raw: str) -> str:
+    t = str(raw or "skill").strip().lower()
+    if t == "agent":
+        t = "assistant"
+    if t not in _SECTION_BY_TYPE:
+        raise ValueError("type 须为 skill / prompt / assistant")
+    return t
+
+
+async def upsert_user_recommendation(
     *,
     user_id: int,
     name: str,
     content: str,
+    type: str = "skill",
     display_name: str = "",
     description: str = "",
     metadata: dict | None = None,
     recommender_email: str = "",
 ) -> dict:
-    """用户推荐 skill 到社区目录（立即对他人可见，除非管理员下架）。"""
+    """用户推荐 skill / prompt / assistant 到社区目录（立即对他人可见，除非管理员下架）。"""
+    rtype = _normalize_resource_type(type)
+    section = _SECTION_BY_TYPE[rtype]
     name = str(name or "").strip()
     content = str(content or "").strip()
     if not name:
-        raise ValueError("skill name 不能为空")
+        raise ValueError(f"{rtype} name 不能为空")
     if not content:
-        raise ValueError("skill 正文不能为空")
+        raise ValueError(f"{rtype} 正文不能为空")
 
-    catalog_id = f"user-skill-{int(user_id)}-{_slug_name(name)}"
+    description = str(description or "").strip()
+    if not description:
+        description = _extract_description_from_content(rtype, content, name)
+
+    catalog_id = f"user-{rtype}-{int(user_id)}-{_slug_name(name)}"
     doc = await load_community_catalog_doc()
     meta_in = metadata if isinstance(metadata, dict) else {}
     now_ms = int(time.time() * 1000)
@@ -287,7 +366,7 @@ async def upsert_user_skill_recommendation(
 
     item = {
         "catalog_id": catalog_id,
-        "type": "skill",
+        "type": rtype,
         "name": name,
         "display_name": (display_name or name).strip() or name,
         "description": str(description or "").strip(),
@@ -295,40 +374,64 @@ async def upsert_user_skill_recommendation(
         "metadata": meta,
     }
 
-    skills = list(doc.get("skills") or [])
+    bucket = list(doc.get(section) or [])
     replaced = False
-    for i, old in enumerate(skills):
+    for i, old in enumerate(bucket):
         if _item_catalog_id(old) == catalog_id:
             # 保留管理员下架状态
             old_meta = old.get("metadata") if isinstance(old.get("metadata"), dict) else {}
             if old_meta.get("enabled") is False:
                 meta["enabled"] = False
-            skills[i] = item
+            bucket[i] = item
             replaced = True
             break
     if not replaced:
-        skills.append(item)
-    doc["skills"] = skills
+        bucket.append(item)
+    doc[section] = bucket
     await save_catalog_doc(doc)
     return {"ok": True, "item": item, "updated": replaced}
 
 
+async def upsert_user_skill_recommendation(
+    *,
+    user_id: int,
+    name: str,
+    content: str,
+    display_name: str = "",
+    description: str = "",
+    metadata: dict | None = None,
+    recommender_email: str = "",
+) -> dict:
+    """兼容旧调用：等同 type=skill 的 upsert_user_recommendation。"""
+    return await upsert_user_recommendation(
+        user_id=user_id,
+        name=name,
+        content=content,
+        type="skill",
+        display_name=display_name,
+        description=description,
+        metadata=metadata,
+        recommender_email=recommender_email,
+    )
+
+
 async def list_user_recommendations() -> list[dict]:
-    """管理员：用户推荐的 skill 列表。"""
+    """管理员：用户推荐的 skill / prompt / assistant 列表。"""
     doc = await load_community_catalog_doc()
     out = []
-    for item in doc.get("skills") or []:
-        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-        if not meta.get("user_recommended"):
-            continue
-        out.append({
-            **item,
-            "catalog_id": _item_catalog_id(item),
-            "enabled": meta.get("enabled") is not False,
-            "recommender_user_id": meta.get("recommender_user_id"),
-            "recommender_email": meta.get("recommender_email") or "",
-            "recommended_at": meta.get("recommended_at"),
-        })
+    for section in ("skills", "prompts", "assistants"):
+        for item in doc.get(section) or []:
+            meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            if not meta.get("user_recommended"):
+                continue
+            out.append({
+                **item,
+                "catalog_id": _item_catalog_id(item),
+                "enabled": meta.get("enabled") is not False,
+                "recommender_user_id": meta.get("recommender_user_id"),
+                "recommender_email": meta.get("recommender_email") or "",
+                "recommended_at": meta.get("recommended_at"),
+            })
     out.sort(key=lambda x: int(x.get("recommended_at") or 0), reverse=True)
     return out
 

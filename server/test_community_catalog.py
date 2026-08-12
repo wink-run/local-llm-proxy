@@ -63,6 +63,19 @@ class TestDefaultDoc(unittest.TestCase):
         self.assertTrue(cc.is_paid_community_item(paid))
         self.assertFalse(cc.is_paid_community_item(free))
 
+    def test_extract_description_from_prompt_content(self):
+        # 推荐无说明时，从提示词正文提炼首句
+        content = "你是小黑，一只聪明的黑猫助手。请用简洁口吻回答用户问题。"
+        desc = cc._extract_description_from_content("prompt", content, "小黑")
+        self.assertTrue(desc)
+        self.assertIn("小黑", desc)
+        self.assertNotEqual(desc, "—")
+
+    def test_extract_description_from_skill_frontmatter_body(self):
+        content = "---\nname: html2app\n---\n\n# html2app\n\nPackage a local site into an Electron app.\n\n## Steps\n- clone\n"
+        desc = cc._extract_description_from_content("skill", content, "html2app")
+        self.assertIn("Electron", desc)
+
 
 if __name__ == "__main__":
     unittest.main()

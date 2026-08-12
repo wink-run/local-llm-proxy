@@ -195,12 +195,17 @@ async function syncCommunityCatalog(opts = {}) {
   return { ok: !!payload, wrote };
 }
 
-/** 将单条 skill（如刚推荐/结算返回）立即写入本机社区缓存，便于纳管 */
+/** 将单条社区项（推荐/结算返回）立即写入本机社区缓存，便于纳管 */
 function upsertCommunitySkillItem(rawItem) {
   if (!rawItem || typeof rawItem !== 'object') return false;
   const catalogId = String(rawItem.catalog_id || rawItem.catalogId || '').trim();
   const name = String(rawItem.name || '').trim();
   if (!catalogId || !name) return false;
+  let rtype = String(rawItem.type || 'skill').trim().toLowerCase();
+  if (rtype === 'agent') rtype = 'assistant';
+  const section = rtype === 'prompt' ? 'prompts'
+    : rtype === 'assistant' ? 'assistants'
+      : 'skills';
   let doc = { version: 1, mcp: [], prompts: [], skills: [], assistants: [] };
   try {
     if (fs.existsSync(USER_COMMUNITY_CATALOG)) {
@@ -216,18 +221,18 @@ function upsertCommunitySkillItem(rawItem) {
   } catch { /* 用空文档 */ }
   const item = {
     catalog_id: catalogId,
-    type: 'skill',
+    type: section === 'prompts' ? 'prompt' : (section === 'assistants' ? 'assistant' : 'skill'),
     name,
     display_name: rawItem.display_name || rawItem.displayName || name,
     description: rawItem.description || '',
     content: rawItem.content || '',
     metadata: rawItem.metadata && typeof rawItem.metadata === 'object' ? rawItem.metadata : {},
   };
-  const skills = doc.skills.slice();
-  const idx = skills.findIndex(s => String(s?.catalog_id || s?.catalogId || '') === catalogId);
-  if (idx >= 0) skills[idx] = item;
-  else skills.push(item);
-  doc.skills = skills;
+  const bucket = (doc[section] || []).slice();
+  const idx = bucket.findIndex(s => String(s?.catalog_id || s?.catalogId || '') === catalogId);
+  if (idx >= 0) bucket[idx] = item;
+  else bucket.push(item);
+  doc[section] = bucket;
   return writeCommunityCatalogCache(doc);
 }
 

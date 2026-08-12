@@ -990,48 +990,141 @@ export default function Resources() {
     }
   }
 
-  /** 推荐本机 Skill 到社区：他人可见并可纳管（纳管扣积分、推荐人获奖） */
-  async function handleRecommendToCommunity(skillLike) {
+  /** 从权威路径读 Skill 正文（目录则读 SKILL.md；列表行本身不带 content） */
+  async function readSkillBodyFromPath(targetPath) {
+    const api = window.electronAPI?.resource?.previewFile;
+    const raw = String(targetPath || '').trim();
+    if (!api || !raw) return '';
+    const tryFile = async (p) => {
+      try {
+        const prev = await api({ targetPath: p });
+        if (prev?.success && prev.kind !== 'directory' && prev.content) {
+          return String(prev.content).trim();
+        }
+      } catch { /* ignore */ }
+      return '';
+    };
+    let text = await tryFile(raw);
+    if (text) return text;
+    // previewFile 对目录只返回 entries、无 content，需拼 SKILL.md
+    const base = raw.replace(/[/\\]+$/, '');
+    const sep = /\\/.test(base) && !/\//.test(base) ? '\\' : '/';
+    for (const name of ['SKILL.md', 'skill.md']) {
+      text = await tryFile(`${base}${sep}${name}`);
+      if (text) return text;
+    }
+    return '';
+  }
+
+  /** 推荐本机 Skill / Prompt / Assistant 到社区：他人可见并可纳管（纳管扣积分、推荐人获奖） */
+  async function handleRecommendToCommunity(resourceLike) {
     if (!localStorage.getItem('token')) {
       setError(t('resources.recommendNeedLogin'));
       return;
     }
-    const managed = skillLike?.resourceId
-      ? resourcesById.get(skillLike.resourceId)
-      : (skillLike?.id ? resourcesById.get(skillLike.id) : null);
-    const name = String(managed?.name || skillLike?.name || '').trim();
+    let managed = resourceLike?.resourceId
+      ? resourcesById.get(resourceLike.resourceId)
+      : (resourceLike?.id ? resourcesById.get(resourceLike.id) : null);
+    let rtype = String(managed?.type || resourceLike?.type || 'skill').trim().toLowerCase();
+    if (rtype === 'agent') rtype = 'assistant';
+    if (!['skill', 'prompt', 'assistant'].includes(rtype)) rtype = 'skill';
+    // 内置资产不推荐
+    if (managed?.source === 'builtin' || managed?.metadata?.builtin || isBuiltinResource(managed || resourceLike)) {
+      setError(t('resources.recommendBuiltinBlocked'));
+      return;
+    }
+    const name = String(managed?.name || resourceLike?.name || '').trim();
     if (!name) {
       setError(t('resources.recommendNeedContent'));
       return;
     }
-    let content = String(managed?.content || skillLike?.content || '').trim();
-    // 列表行常无正文：从权威路径读文件
-    if (!content && skillLike?.authorityPath && window.electronAPI?.resource?.previewFile) {
+    let content = String(managed?.content || resourceLike?.content || '').trim();
+    // 扫描后本机列表可能尚未带上正文：再拉一次库
+    if (!content && window.electronAPI?.resource?.listResources) {
       try {
-        const prev = await window.electronAPI.resource.previewFile({
-          targetPath: skillLike.authorityPath,
-        });
-        if (prev?.success && prev.content) content = String(prev.content).trim();
+        const resRes = await window.electronAPI.resource.listResources({ type: rtype });
+        const hit = ((resRes && resRes.resources) || []).find(
+          (r) => r.id === (managed?.id || resourceLike?.resourceId || resourceLike?.id)
+            || r.name === name,
+        );
+        if (hit) {
+          managed = hit;
+          if (hit.content) content = String(hit.content).trim();
+          upsertResourceLocally(hit);
+        }
       } catch { /* ignore */ }
+    }
+    // Skill 仍无正文：从权威目录读 SKILL.md（勿直接 preview 目录）
+    if (!content && rtype === 'skill') {
+      const authPath = resourceLike?.authorityPath
+        || managed?.authorityPath
+        || managed?.metadata?.authorityPath
+        || managed?.metadata?.scannedFrom
+        || '';
+      content = await readSkillBodyFromPath(authPath);
     }
     if (!content) {
       setError(t('resources.recommendNeedContent'));
       return;
     }
-    const busyKey = `rec-${managed?.id || skillLike?.resourceId || name}`;
+    // 无说明时从正文提炼，写入社区条目；本机若也缺说明则一并补上
+    let description = String(managed?.description || resourceLike?.description || '').trim();
+    if (!description) {
+      try {
+        const api = window.electronAPI?.resource;
+        if (api?.extractDescription) {
+          const ex = await api.extractDescription({ type: rtype, content, name });
+          if (ex?.success && ex.description) description = String(ex.description).trim();
+        }
+      } catch { /* ignore */ }
+      if (!description) {
+        // 渲染进程兜底：取正文首段
+        const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, '').trim();
+        let soul = body;
+        if (rtype === 'assistant') {
+          try {
+            const obj = JSON.parse(body);
+            soul = String(obj?.soul || obj?.system_prompt || obj?.systemPrompt || body).trim();
+          } catch { /* ignore */ }
+        }
+        const m = soul.match(/^[\s\S]+?[。.!！]/);
+        description = String(m ? m[0] : soul).replace(/\s+/g, ' ').trim().slice(0, 180);
+      }
+    }
+    const busyKey = `rec-${managed?.id || resourceLike?.resourceId || name}`;
     if (!window.confirm(t('resources.recommendConfirm', { name }))) return;
     setBusy(busyKey);
     setError('');
     setMsg('');
     try {
+      // 本机缺说明时先落库，卡片也能立刻显示
+      if (description && managed?.id && !(managed.description || '').trim()
+        && window.electronAPI?.resource?.saveResource) {
+        try {
+          const saved = await window.electronAPI.resource.saveResource({
+            id: managed.id,
+            type: rtype,
+            name: managed.name || name,
+            display_name: managed.display_name || name,
+            description,
+            content: managed.content || content,
+            metadata: managed.metadata || {},
+          });
+          if (saved?.success && saved.resource) {
+            managed = saved.resource;
+            upsertResourceLocally(saved.resource);
+          }
+        } catch { /* 补说明失败不阻断推荐 */ }
+      }
       const { data } = await recommendCommunitySkill({
         name,
         content,
-        display_name: managed?.display_name || skillLike?.display_name || name,
-        description: managed?.description || skillLike?.description || '',
+        type: rtype,
+        display_name: managed?.display_name || resourceLike?.display_name || name,
+        description,
         metadata: {
-          ...(managed?.metadata || skillLike?.metadata || {}),
-          tags: managed?.metadata?.tags || skillLike?.metadata?.tags,
+          ...(managed?.metadata || resourceLike?.metadata || {}),
+          tags: managed?.metadata?.tags || resourceLike?.metadata?.tags,
         },
       });
       if (data?.item) {
@@ -2514,7 +2607,10 @@ export default function Resources() {
           </button>
         ) : (
           <>
-            {resource.type === 'skill' && (
+            {(resource.type === 'skill' || resource.type === 'prompt' || resource.type === 'assistant')
+              && resource.source !== 'builtin'
+              && !resource.metadata?.builtin
+              && !isBuiltinResource(resource) && (
               <button
                 type="button"
                 className={ASSET_BTN_GHOST}
@@ -2861,17 +2957,28 @@ export default function Resources() {
             </div>
             <div className="relative flex-1 min-w-[160px] max-w-xs">
               <input
-                type="search"
+                type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder={t('resources.searchPlaceholder')}
-                className="tb-soft-field w-full text-xs px-3 py-1.5 pr-14 rounded-lg text-zinc-900 dark:text-zinc-100"
+                className={`tb-soft-field w-full text-xs px-3 py-1.5 rounded-lg text-zinc-900 dark:text-zinc-100 ${
+                  query || searching ? 'pr-8' : ''
+                }`}
               />
-              {searching && (
+              {searching ? (
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 pointer-events-none">
                   {t('resources.searching')}
                 </span>
-              )}
+              ) : query ? (
+                <button
+                  type="button"
+                  aria-label={t('resources.clearSearch')}
+                  onClick={() => setQuery('')}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                >
+                  <span className="text-sm leading-none" aria-hidden>×</span>
+                </button>
+              ) : null}
             </div>
             <button
               type="button"
@@ -3096,6 +3203,7 @@ export default function Resources() {
             <PersonalizedRecommend
               typeFilter={typeFilter}
               purposeFilter={tagFilter}
+              searchQuery={debouncedQuery}
               LogoComp={AssetLogo}
               onNeedProject={() => changeViewTab('managed')}
               onNeedAgent={() => navigate('/gateway')}

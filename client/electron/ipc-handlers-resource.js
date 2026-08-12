@@ -599,6 +599,23 @@ function registerResourceHandlers() {
     }
   });
 
+  // 从正文提炼卡片说明（推荐到社区等场景）
+  ipcMain.handle('resource:extractDescription', async (_event, params = {}) => {
+    try {
+      const { extractResourceDescription } = require('./resource-description');
+      const type = params.type || 'skill';
+      const content = String(params.content || '');
+      const description = extractResourceDescription(type, content, {
+        description: params.description || '',
+        name: params.name || '',
+      });
+      return { success: true, description: description || '' };
+    } catch (error) {
+      console.error('[IPC] resource:extractDescription error:', error);
+      return { success: false, error: error.message, description: '' };
+    }
+  });
+
   // 息票兜底：读最近一次命中（MCP 写盘后渲染进程轮询）
   ipcMain.handle('resource:pollHit', async () => {
     try {
