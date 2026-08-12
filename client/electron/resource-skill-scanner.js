@@ -126,33 +126,9 @@ function parseSkillFrontmatter(content) {
 
 /**
  * 技能说明:优先 frontmatter.description;否则取正文首段非标题散文(很多 SkillHub 包没有 YAML 说明)。
+ * 实现见 resource-description（会改写 You are… 角色指令为短简介）。
  */
-function extractSkillDescription(content, fm = null) {
-  const meta = fm || parseSkillFrontmatter(content);
-  const fromFm = String(meta.description || '').trim();
-  if (fromFm) return fromFm;
-
-  const body = String(content || '').replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, '');
-  const buf = [];
-  for (const line of body.split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t) {
-      if (buf.length) break;
-      continue;
-    }
-    if (/^#+\s/.test(t)) {
-      if (buf.length) break;
-      continue;
-    }
-    if (/^```/.test(t)) break;
-    if (/^[-*]\s/.test(t) && !buf.length) continue;
-    buf.push(t);
-    if (buf.join(' ').length >= 48) break;
-  }
-  let desc = buf.join(' ').replace(/\s+/g, ' ').trim();
-  if (desc.length > 180) desc = `${desc.slice(0, 177)}…`;
-  return desc;
-}
+const { extractSkillDescription } = require('./resource-description');
 
 function readSkillFile(skillPath) {
   try {

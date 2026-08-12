@@ -31,6 +31,15 @@ const {
 
 /** Token Bank 落盘 skill 的默认权威根（agents-hub，已被 Skill 扫描器覆盖） */
 const SKILL_HUB_ROOT = path.join(os.homedir(), '.agents', 'skills');
+const {
+  TOKENBANK_SKILL_ROOT,
+  parseGithubSkillRef,
+  materializeGithubSkill,
+} = require('./skill-github-install');
+const {
+  extractResourceDescription,
+  shouldReplaceDescription,
+} = require('./resource-description');
 /** 缺失依赖（数据异常）每种只报一次，避免刷屏 */
 const _missingCatalogDepLogged = new Set();
 const {
@@ -398,6 +407,8 @@ class ResourceManager {
 
   listCatalog(filters = {}) {
     this.init();
+    // 打开目录时同样确保内置智能体已默认纳管
+    try { this.ensureBuiltinAssistants(); } catch { /* ignore */ }
     const sets = {
       managedSet: this._getManagedDepKeySet(),
       catalogSet: this._getCatalogDepKeySet(),
@@ -949,6 +960,10 @@ class ResourceManager {
     if (builtin) meta.builtin = true;
     const source = builtin ? 'builtin' : 'catalog';
     const sourceUrl = builtin ? `builtin:${catalogId}` : `catalog:${catalogId}`;
+    const description = extractResourceDescription(item.type, content, {
+      description: item.description || '',
+      name: item.name,
+    });
     const db = this._getDb();
     db.prepare(`
       INSERT INTO resources
@@ -959,7 +974,7 @@ class ResourceManager {
       item.type,
       item.name,
       displayName,
-      item.description || '',
+      description,
       content,
       JSON.stringify(meta),
       source,
@@ -1082,6 +1097,11 @@ class ResourceManager {
     const metadata = { ...(data.metadata || {}) };
     // Skill 入库展示名固定为 name，不改写正文
     const displayName = type === 'skill' ? name : (data.display_name || name);
+    // 无说明或仍是 You are… 时，从正文自动提炼卡片简介
+    const description = extractResourceDescription(type, content, {
+      description: data.description || '',
+      name,
+    });
 
     const existing = db.prepare('SELECT id, source FROM resources WHERE id = ?').get(id);
     if (!existing) {
@@ -1097,7 +1117,7 @@ class ResourceManager {
         WHERE id = ?
       `).run(
         displayName,
-        data.description || '',
+        description,
         content,
         JSON.stringify(metadata),
         this._hashContent(content),
@@ -1114,7 +1134,7 @@ class ResourceManager {
         type,
         name,
         displayName,
-        data.description || '',
+        description,
         content,
         JSON.stringify(metadata),
         data.source || 'local',
@@ -1919,10 +1939,16 @@ class ResourceManager {
     const source = `agent:${entry.agentId}`;
     // 不改写原始 Skill；展示名与入库名一律用 skill name
     const nextDisplayName = group.name;
-    // 已有说明优先保留(推荐安装的中文说明不被扫描正文覆盖)
-    const nextDescription = String(existing?.description || '').trim()
-      || String(group.description || '').trim()
-      || '';
+    // 已有像样说明优先保留；空或 You are… 角色句则从扫描正文提炼
+    const scannedDesc = String(group.description || '').trim();
+    const existingDesc = String(existing?.description || '').trim();
+    const refinedDesc = extractResourceDescription('skill', entry.content || '', {
+      description: scannedDesc || existingDesc,
+      name: group.name,
+    });
+    const nextDescription = shouldReplaceDescription(existingDesc, refinedDesc)
+      ? refinedDesc
+      : (existingDesc || refinedDesc || scannedDesc);
     const nextContent = entry.content || '';
 
     if (existing) {
@@ -2173,6 +2199,56 @@ class ResourceManager {
     };
   }
 
+  /**
+   * 从 GitHub URL / owner/repo 安装 Skill（skillhub 无法把 GitHub URL 当 slug）。
+   * 默认落到 ~/.tokenbank/skills，再扫描纳管。
+   * @param {string} source 用户输入或 GitHub URL
+   * @param {{ force?: boolean, description?: string, installRoot?: string }} [opts]
+   */
+  async installGithubSkill(source, { force = false, description = '', installRoot } = {}) {
+    this.init();
+    const ref = parseGithubSkillRef(source);
+    if (!ref) {
+      throw new Error('无法识别 GitHub Skill 地址（需要 https://github.com/owner/repo）');
+    }
+
+    const landed = await materializeGithubSkill(ref, {
+      force,
+      installRoot: installRoot || TOKENBANK_SKILL_ROOT,
+    });
+
+    this.syncDiscoveredSkills({ includeManaged: true });
+
+    let resource = this._findByTypeName('skill', landed.skillName);
+    if (!resource) {
+      const imported = this.importFromPath({ sourcePath: landed.skillDir, type: 'skill' });
+      resource = imported && imported.resource;
+    }
+    if (!resource) {
+      // frontmatter name 可能与目录名不同，按路径再扫一次
+      this.syncDiscoveredSkills({ includeManaged: true });
+      resource = this._findByTypeName('skill', landed.skillName);
+    }
+    if (!resource) throw new Error(`技能 ${landed.skillName} 已落盘但纳管失败`);
+
+    const hint = String(description || '').trim();
+    if (hint && !(resource.description || '').trim()) {
+      const db = this._getDb();
+      db.prepare('UPDATE resources SET description = ?, updated_at = ? WHERE id = ?')
+        .run(hint, Date.now(), resource.id);
+      resource = this.getResource(resource.id);
+    }
+
+    return {
+      success: true,
+      resource: this.getResource(resource.id),
+      skillDir: landed.skillDir,
+      skillName: landed.skillName,
+      sourceUrl: ref.sourceUrl,
+      alreadyInstalled: !!landed.alreadyInstalled,
+    };
+  }
+
   getPostProjectHint(resourceType, agentIds = []) {
     if (resourceType === 'skill') {
       return 'Skill 已软链指向用户安装目录；修改该目录内容后各 Agent 自动同步。';
@@ -2404,22 +2480,22 @@ class ResourceManager {
   }
 
   _importTextFile(filePath, forcedType) {
-    const { parseSkillFrontmatter, extractSkillDescription } = require('./resource-skill-scanner');
+    const { parseSkillFrontmatter } = require('./resource-skill-scanner');
     const content = fs.readFileSync(filePath, 'utf8');
     const fm = parseSkillFrontmatter(content);
     const baseName = path.basename(filePath, path.extname(filePath));
     const isSkillMd = /^skill\.md$/i.test(path.basename(filePath));
 
     let type = forcedType || 'prompt';
-    if (!forcedType && text.startsWith('{')) {
+    if (!forcedType && content.trimStart().startsWith('{')) {
       try {
-        const obj = JSON.parse(text);
+        const obj = JSON.parse(content);
         if (obj.soul || obj.system_prompt || obj.systemPrompt) type = 'assistant';
         else if (isSkillMd || obj.name) type = 'skill';
       } catch {
         // ignore
       }
-    } else if (!forcedType && (isSkillMd || (fm.name && text.trimStart().startsWith('---')))) {
+    } else if (!forcedType && (isSkillMd || (fm.name && content.trimStart().startsWith('---')))) {
       type = 'skill';
     }
 
@@ -2446,9 +2522,11 @@ class ResourceManager {
       type,
       name,
       display_name: type === 'skill' ? name : (fm.name || baseName || name),
-      description: type === 'skill'
-        ? extractSkillDescription(content, fm)
-        : (fm.description || ''),
+      description: extractResourceDescription(type, content, {
+        description: fm.description || '',
+        name,
+        fm,
+      }),
       content,
       source: 'imported',
       metadata,

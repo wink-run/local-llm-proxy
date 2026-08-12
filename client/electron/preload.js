@@ -136,6 +136,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cleanupSkills: (params) => ipcRenderer.invoke('resource:cleanupSkills', params || {}),
     mineDemand: (options) => ipcRenderer.invoke('resource:mineDemand', options || {}),
     installSkillhub: (params) => ipcRenderer.invoke('resource:installSkillhub', params || {}),
+    installGithubSkill: (params) => ipcRenderer.invoke('resource:installGithubSkill', params || {}),
     // 点将/取用命中息票
     onHit: (cb) => {
       const h = (_e, data) => cb(data);

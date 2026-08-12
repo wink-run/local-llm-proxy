@@ -16,7 +16,7 @@ export function isLifecycleExempt(resource) {
   const url = String(resource.source_url || '');
   if (url.startsWith('builtin:')) return true;
   const name = String(resource.name || '');
-  if (name === 'resource-installer' || name === 'resource-finder') return true;
+  if (name === 'resource-installer' || name === 'resource-finder' || name === 'resource-portrait') return true;
   return false;
 }
 

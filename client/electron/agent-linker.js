@@ -236,10 +236,17 @@ function buildGatewayEnv(toolId) {
   const tool = configLoader.tools().find(t => t.id === toolId);
   if (!tool || tool.unsupported || tool.route_bindable === false) return {};
   const env = resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
-  // Claude OAuth：注入 AUTH_TOKEN 会禁用 claude.ai connectors 并干扰 CLI 行为
+  // Claude：与 shim apply 对齐——已绑路由则注 AUTH_TOKEN 走网关 keyScene；
+  // 未绑则不注，靠本机 OAuth（保留 connectors）。否则 OAuth 过期时画像挖掘/Agent 任务会裸失败。
   if (tool.protocol === 'anthropic') {
-    delete env.ANTHROPIC_AUTH_TOKEN;
-    delete env.ANTHROPIC_API_KEY;
+    const key = _keyResolver ? (_keyResolver(tool.id) || '') : '';
+    if (key) {
+      env.ANTHROPIC_AUTH_TOKEN = key;
+      delete env.ANTHROPIC_API_KEY;
+    } else {
+      delete env.ANTHROPIC_AUTH_TOKEN;
+      delete env.ANTHROPIC_API_KEY;
+    }
   }
   return env;
 }

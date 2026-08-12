@@ -2919,6 +2919,14 @@ function stratStepOf(scene) {
   const rScope = scene.scope || null, rTier = scene.tier || null;   // 路由级统一过滤（顶层，和 flow 并列）
   if (scene.strategy) return { strategy: scene.strategy, scope: rScope, tier: rTier, provider: null, sharer: null };
   const steps = scene.steps || [];
+  // 多步都未选模型（也无显式 strategy）= UI 添加了但没配完 → 不当开放扫描，回退路由级 flow/tier
+  const hasModel = steps.some(s => s && s.model);
+  const hasExplicitStrategy = steps.some(s => s && s.strategy);
+  if (steps.length > 1 && !hasModel && !hasExplicitStrategy) {
+    const strat = scene.flow || ((rScope || rTier) ? 'fallback' : null);
+    if (strat) return { strategy: strat, scope: rScope, tier: rTier, provider: null, sharer: null };
+    return null;
+  }
   const s = steps[0] || {};
   // 单步(或无步)且无 model = 开放式选择：策略取 step.strategy || 路由级 flow || (有 scope/tier/provider 时)fallback。
   // 默认策略路由(综合最优/实惠优先…)用路由级 flow 表达，flow 即其选优策略；纯来源/价格路由(仅个人/仅免费…)靠 scope/tier 过滤。

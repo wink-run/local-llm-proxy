@@ -397,6 +397,18 @@ assert.strictEqual(
   'resume failed',
 );
 
+// result 无 errors 字段时，从 stdout 抽取 Claude OAuth 过期文案（画像挖掘失败现场）
+const oauthStdout = [
+  'Failed to authenticate: OAuth session expired and could not be refreshed',
+  JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true }),
+].join('\n');
+const oauthFail = detectAgentExecutionFailure(oauthStdout);
+assert.ok(oauthFail.includes('登录已过期'), oauthFail);
+assert.ok(oauthFail.includes('claude /login') || oauthFail.includes('绑路由'), oauthFail);
+
+const oauthExit = formatAgentExitError('', oauthStdout, 1, 'claude-code');
+assert.ok(oauthExit.includes('登录已过期'), oauthExit);
+
 const nullExitMsg = formatAgentExitError('', '', null, 'claude-code', 'SIGTERM');
 assert.ok(nullExitMsg.includes('SIGTERM'));
 

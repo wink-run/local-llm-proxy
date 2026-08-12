@@ -149,15 +149,21 @@ function resolveAssistantContext(config, resourceManager) {
 
 /**
  * 生成底层 CLI Agent 的启动参数
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeDelivery=true] 是否附带产物落盘规则（画像分析等纯 JSON 任务可关）
  * @returns {{ runtimeAgentId: string, claudeExtraArgs?: string[], promptPrefix?: string }}
  */
-function buildAssistantLaunch(runtimeAgentId, systemText, model) {
+function buildAssistantLaunch(runtimeAgentId, systemText, model, opts = {}) {
   const { DELIVERY_POLICY, withClaudeDeliverySystemArgs } = require('./agent-delivery-policy');
+  const includeDelivery = opts.includeDelivery !== false;
   const soul = String(systemText || '').trim();
-  // soul + 产物落盘规则（Claude/Codex 智能体直调共用）
-  const system = soul
-    ? (soul.includes('【Token Bank 产物交付】') ? soul : `${soul}\n\n${DELIVERY_POLICY}`)
-    : DELIVERY_POLICY;
+  // soul +（可选）产物落盘规则
+  let system = soul;
+  if (includeDelivery) {
+    system = soul
+      ? (soul.includes('【Token Bank 产物交付】') ? soul : `${soul}\n\n${DELIVERY_POLICY}`)
+      : DELIVERY_POLICY;
+  }
   const mdl = String(model || '').trim();
 
   if (runtimeAgentId === 'claude-code') {
@@ -168,16 +174,15 @@ function buildAssistantLaunch(runtimeAgentId, systemText, model) {
     ];
     if (mdl) extra.push('--model', mdl); // 用纳管智能体绑定的模型,而非运行时环境默认
     if (system) extra.push('--append-system-prompt', system);
-    else extra = withClaudeDeliverySystemArgs(extra);
+    else if (includeDelivery) extra = withClaudeDeliverySystemArgs(extra);
     return { runtimeAgentId, claudeExtraArgs: extra };
   }
 
   if (runtimeAgentId === 'codex') {
     // codex 模型经其自身 config.toml,暂不从此处注入 -m(参数位置因版本而异,避免拼错)
-    // system 已含落盘规则，直接作前缀即可
     return {
       runtimeAgentId,
-      promptPrefix: system ? `${system}\n\n` : `${DELIVERY_POLICY}\n\n`,
+      promptPrefix: system ? `${system}\n\n` : '',
     };
   }
 
@@ -185,7 +190,7 @@ function buildAssistantLaunch(runtimeAgentId, systemText, model) {
     // Cursor CLI 无 --append-system-prompt：soul 作 prompt 前缀；模型经 buildArgs --model
     return {
       runtimeAgentId,
-      promptPrefix: system ? `${system}\n\n` : `${DELIVERY_POLICY}\n\n`,
+      promptPrefix: system ? `${system}\n\n` : '',
       model: mdl || undefined,
     };
   }
@@ -194,7 +199,7 @@ function buildAssistantLaunch(runtimeAgentId, systemText, model) {
     // Kimi 无 append-system-prompt：soul 作前缀；模型经 -m
     return {
       runtimeAgentId,
-      promptPrefix: system ? `${system}\n\n` : `${DELIVERY_POLICY}\n\n`,
+      promptPrefix: system ? `${system}\n\n` : '',
       model: mdl || undefined,
     };
   }

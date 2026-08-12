@@ -32,7 +32,7 @@ function isLifecycleExempt(resource) {
   if (url.startsWith('builtin:')) return true;
   // 内置安装/发现智能体 name 兜底（旧数据可能未标 builtin）
   const name = String(resource.name || '');
-  if (name === 'resource-installer' || name === 'resource-finder') return true;
+  if (name === 'resource-installer' || name === 'resource-finder' || name === 'resource-portrait') return true;
   return false;
 }
 

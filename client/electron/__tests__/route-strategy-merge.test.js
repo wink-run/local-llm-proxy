@@ -60,6 +60,15 @@ test('stratStepOf: 多步 → 不是（单步策略）路由，走场景链', ()
   assert.strictEqual(stratStepOf({ steps: [{ strategy: 'auto' }, { model: 'deepseek' }] }), null);
 });
 
+test('stratStepOf: 多步都未选模型 → 配置不完整，回退路由级 flow/tier', () => {
+  assert.deepStrictEqual(
+    stratStepOf({ flow: 'round-robin', tier: 'free', steps: [{ tier: 'paid' }, { tier: 'paid' }] }),
+    { strategy: 'round-robin', scope: null, tier: 'free', provider: null, sharer: null });
+  assert.deepStrictEqual(
+    stratStepOf({ flow: 'auto', scope: 'personal', steps: [{}, {}] }),
+    { strategy: 'auto', scope: 'personal', tier: null, provider: null, sharer: null });
+});
+
 test('stratStepOf: 带 rules 的路由 → null（走规则分支，不被单步策略短路）', () => {
   assert.strictEqual(
     stratStepOf({ steps: [{ strategy: 'auto' }], rules: [{ when: { type: 'input_tokens', op: 'gt', value: 50000 }, steps: [] }] }),

@@ -2,7 +2,7 @@
 // 多账号兜底实例选择：优先「留空 dir_glob」，否则回落 is_default，最后取第一个。
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { pickFallbackInstance } = require('../agent-linker');
+const { pickFallbackInstance, buildGatewayEnv, setKeyResolver } = require('../agent-linker');
 
 test('留空 dir_glob 的实例优先当兜底（即便它不是默认目录）', () => {
   const insts = [
@@ -41,4 +41,27 @@ test('默认实例留空（经典布局）→ 默认即兜底', () => {
 test('空列表 → null，不抛', () => {
   assert.equal(pickFallbackInstance([]), null);
   assert.equal(pickFallbackInstance(null), null);
+});
+
+// 画像挖掘 / Debug spawn：Claude 已绑路由时应注 AUTH_TOKEN，避免依赖过期 OAuth
+test('buildGatewayEnv: Claude 已绑路由 → 注入 ANTHROPIC_AUTH_TOKEN', () => {
+  setKeyResolver(() => 'sk-local-test-key');
+  try {
+    const env = buildGatewayEnv('claude-code');
+    assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-local-test-key');
+    assert.ok(env.ANTHROPIC_BASE_URL, '应保留网关 BASE_URL');
+    assert.equal(env.ANTHROPIC_API_KEY, undefined);
+  } finally {
+    setKeyResolver(null);
+  }
+});
+
+test('buildGatewayEnv: Claude 未绑路由 → 不注入 AUTH_TOKEN（走 OAuth）', () => {
+  setKeyResolver(() => null);
+  try {
+    const env = buildGatewayEnv('claude-code');
+    assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined);
+  } finally {
+    setKeyResolver(null);
+  }
 });

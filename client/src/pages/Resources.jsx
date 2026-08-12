@@ -147,6 +147,30 @@ function typeBadge(type, t) {
   return map[type] || type;
 }
 
+/** 内置资产：source / metadata / 固定 catalogId / name */
+function isBuiltinResource(item) {
+  if (!item) return false;
+  if (item.source === 'builtin') return true;
+  if (item.metadata?.builtin) return true;
+  const url = String(item.source_url || '');
+  if (url.startsWith('builtin:')) return true;
+  const tags = item.metadata?.tags;
+  if (Array.isArray(tags) && tags.includes('builtin')) return true;
+  const catalogId = String(item.catalogId || item.catalog_id || '');
+  if (
+    catalogId === 'resource-finder-assistant'
+    || catalogId === 'resource-installer-assistant'
+    || catalogId === 'resource-portrait-assistant'
+  ) {
+    return true;
+  }
+  // 内置智能体固定名（目录卡可能尚未带 source）
+  const name = String(item.name || '');
+  return name === 'resource-finder'
+    || name === 'resource-installer'
+    || name === 'resource-portrait';
+}
+
 function sourceLabel(source, t) {
   if (!source || source === 'local') return t('resources.source.local');
   if (source === 'catalog' || String(source).startsWith('catalog')) return t('resources.source.catalog');
@@ -437,6 +461,8 @@ export default function Resources() {
     if (!silent) setLoading(true);
     setError('');
     try {
+      // 内置智能体默认纳管（幂等）
+      try { await window.electronAPI.resource.ensureBuiltinAssistants?.(); } catch { /* ignore */ }
       // 全量拉取，搜索/类型在前端筛，避免每次筛选触发 IPC
       const [catRes, resRes, agentRes, asstBindRes] = await Promise.all([
         window.electronAPI.resource.listCatalog({}),
@@ -546,11 +572,7 @@ export default function Resources() {
       const managedList = resRes.success ? (resRes.resources || []) : [];
       if (!managedList.length) return false;
       const byId = new Map(managedList.map((r) => [r.id, r]));
-      setResources((prev) => {
-        const nonSkill = prev.filter((r) => r.type !== 'skill');
-        return [...managedList, ...nonSkill];
-      });
-      // 仅未归入任何用途的技能；已打标的一律跳过
+      // 仅未归入任何用途的技能；已打标的一律跳过（不先整表 setResources，避免列表闪空）
       const targets = (discoveredItems || []).filter((item) => {
         if (!item.resourceId) return false;
         const managed = byId.get(item.resourceId);
@@ -572,6 +594,14 @@ export default function Resources() {
         };
       }), { signal });
       if (aborted()) return false;
+
+      // AI 返回后再拉一次，跳过本轮已被其它路径打上用途的项
+      try {
+        const again = await window.electronAPI.resource.listResources({ type: 'skill' });
+        if (again?.success) {
+          for (const r of again.resources || []) byId.set(r.id, r);
+        }
+      } catch { /* ignore */ }
 
       const taggedIds = new Set();
       for (const item of targets) {
@@ -616,10 +646,8 @@ export default function Resources() {
           description: r.description || item.description,
         };
       }));
-      setResources((prev) => {
-        const nonSkill = prev.filter((r) => r.type !== 'skill');
-        return [...byId.values(), ...nonSkill];
-      });
+      // 只局部合并已打标项，避免整表替换导致短暂空白
+      setResources((prev) => prev.map((r) => (taggedIds.has(r.id) ? (byId.get(r.id) || r) : r)));
       return true;
     } catch (e) {
       if (e?.name === 'AbortError') return false;
@@ -630,9 +658,9 @@ export default function Resources() {
     }
   }, []);
 
-  const runScan = useCallback(async ({ silent = false } = {}) => {
+  const runScan = useCallback(async ({ silent = false, autoTag = !silent } = {}) => {
     if (!window.electronAPI?.resource) return;
-    // 自动打标未结束时禁止再次扫描（读 ref，勿依赖 scanning state 以免重建 loadAll）
+    // 自动打标未结束时禁止再次手动扫描（读 ref，勿依赖 scanning state 以免重建 loadAll）
     if (!silent && (scanningRef.current || autoTaggingRef.current || aiTagInflightRef.current)) return;
     if (!silent) {
       scanningRef.current = true;
@@ -654,7 +682,6 @@ export default function Resources() {
         setScanStats(scanRes.scanStats || null);
         // 默认目录与扫描结果一并刷新
         await refreshDefaultScanRoots(filters, scanRes.scanStats);
-        // 手动扫描：先出扫描摘要，有未打标则 await 自动打标并禁用按钮
         if (!silent) {
           scanHint = t('resources.scanDoneHint', {
             total: scanRes.scanStats?.totalOnDisk ?? nextDiscovered.length,
@@ -662,6 +689,12 @@ export default function Resources() {
             updated: scanRes.updated || 0,
           });
           setMsg(scanHint);
+        }
+        // 仅手动扫描才自动打标；首屏/静默刷新绝不进入，避免 loading 卡死空白与重复打标
+        if (autoTag && !silent) {
+          // 扫描 UI 先结束，列表可交互；打标单独占 autoTagging
+          scanningRef.current = false;
+          setScanning(false);
           const ac = new AbortController();
           aiTagCancelledRef.current = false;
           aiTagAbortRef.current = ac;
@@ -702,8 +735,8 @@ export default function Resources() {
   }, [scanFilters, refreshDefaultScanRoots, silentAiTagAfterScan, t]);
 
   const loadAll = useCallback(async ({ silent = false } = {}) => {
-    // 先扫描即纳管（入库），再读取 resources，确保投射菜单能查到刚纳管的 skill
-    await runScan({ silent });
+    // 先扫描即纳管（入库），再读取 resources；打标不跟首屏走，避免整页空白
+    await runScan({ silent, autoTag: false });
     await loadBase({ silent });
   }, [loadBase, runScan]);
 
@@ -1732,32 +1765,45 @@ export default function Resources() {
     return hay.includes(q);
   }, [debouncedQuery]);
 
-  const filteredCatalog = catalog.filter(r => matchPromptKind(r) && matchTag(r) && matchQuery(r));
-  const managedCount = resources.length;
+  // 类型切换：目录项必须与 typeFilter 一致（空=全部）
+  const filteredCatalog = catalog.filter(r =>
+    (!typeFilter || r.type === typeFilter)
+    && matchPromptKind(r) && matchTag(r) && matchQuery(r),
+  );
+  // 已纳管计数：跟随当前类型筛选，避免「智能体」Tab 显示全库数量
+  const managedCount = typeFilter
+    ? resources.filter(r => r.type === typeFilter).length
+    : resources.length;
   const discoveredCount = scanStats?.totalOnDisk ?? discovered.length;
   const showSkillTabs = !typeFilter || typeFilter === 'skill';
+
+  // 当前类型下的已纳管资源（分层/轻推与列表共用，避免串类型）
+  const resourcesInType = useMemo(
+    () => (typeFilter ? resources.filter(r => r.type === typeFilter) : resources),
+    [resources, typeFilter],
+  );
 
   // Hit-or-Exit：轻推条 + 分层计数
   const lifecycleNudges = useMemo(() => {
     const now = Date.now();
-    return resources
+    return resourcesInType
       .filter((r) => !isLifecycleExempt(r))
       .map((r) => ({ r, life: classifyLifecycle(r, now) }))
       .filter(({ life }) => life.nudge)
       .sort((a, b) => b.life.ageMs - a.life.ageMs)
       .slice(0, 5);
-  }, [resources]);
+  }, [resourcesInType]);
 
   // 分层计数：空层不占筛选位（Simplicity）
   const layerCounts = useMemo(() => {
     const counts = { active: 0, pending: 0, dormant: 0, cold: 0, shelf: 0 };
-    for (const r of resources) {
+    for (const r of resourcesInType) {
       if (isLifecycleExempt(r)) continue;
       const layer = classifyLifecycle(r).layer;
       if (counts[layer] != null) counts[layer] += 1;
     }
     return counts;
-  }, [resources]);
+  }, [resourcesInType]);
 
   const changeLayerFilter = useCallback((next) => {
     setLayerFilter(next);
@@ -2317,6 +2363,7 @@ export default function Resources() {
     const expanded = expandedId === id;
     const toggle = () => setExpandedId(expanded ? null : id);
     const loc = resource.type === 'skill' ? getSkillLocation(resource) : null;
+    const builtin = isBuiltinResource(resource);
     return (
       <ResourceAssetCard
         key={id}
@@ -2337,7 +2384,16 @@ export default function Resources() {
         className={catalogMode && expanded ? 'sm:col-span-2' : ''}
         badges={(
           <>
-            {catalogMode && (
+            {/* 内置：目录/本机统一「内置」徽标，目录卡不再伪装成社区分享人 */}
+            {builtin && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 whitespace-nowrap"
+                title={t('resources.builtinHint')}
+              >
+                {t('resources.source.builtin')}
+              </span>
+            )}
+            {catalogMode && !builtin && (
               <span
                 className="text-[10px] px-1.5 py-0.5 rounded-md bg-zinc-100/90 dark:bg-zinc-800/80 text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
                 title={t('resources.sharedByHint')}
@@ -2345,7 +2401,7 @@ export default function Resources() {
                 {t('resources.sharedBy', { handle: catalogSharerHandle(resource) })}
               </span>
             )}
-            {!catalogMode && (
+            {!catalogMode && !builtin && (
               <span className="text-[10px] text-zinc-400 tracking-wide">{sourceLabel(resource.source, t)}</span>
             )}
             {/* 用量次数：与排序一致，有命中才标 */}
@@ -2446,11 +2502,15 @@ export default function Resources() {
         actions={catalogMode ? (
           <button
             type="button"
-            disabled={(!!busy && busy !== resource.catalogId) || resource.installed}
+            disabled={(!!busy && busy !== resource.catalogId) || resource.installed || builtin}
             onClick={() => handleInstall(resource.catalogId)}
-            className={resource.installed ? ASSET_BTN_MANAGED : ASSET_BTN_PRIMARY}
+            className={(resource.installed || builtin) ? ASSET_BTN_MANAGED : ASSET_BTN_PRIMARY}
           >
-            {busy === resource.catalogId ? t('resources.busy') : resource.installed ? t('resources.managed') : t('resources.addManage')}
+            {busy === resource.catalogId
+              ? t('resources.busy')
+              : (resource.installed || builtin)
+                ? t('resources.managed')
+                : t('resources.addManage')}
           </button>
         ) : (
           <>
@@ -2542,9 +2602,10 @@ export default function Resources() {
       if (life.layer === 'exempt') return false;
       return life.layer === layerFilter;
     };
+    // 提示词/智能体：按 typeFilter 收窄；全部时排除 skill（技能走扫描行）
     const managedRows = (typeFilter === 'skill'
       ? []
-      : (typeFilter ? resources : resources.filter(r => r.type !== 'skill')))
+      : (typeFilter ? resourcesInType : resources.filter(r => r.type !== 'skill')))
       .filter(r => {
         if (r.type === 'prompt' && !matchPromptKind(r)) return false;
         if (!matchTag(r)) return false;
@@ -2598,7 +2659,7 @@ export default function Resources() {
         );
       }
       // 分层筛空：提示切回「全部」，避免误显示「暂无已纳管」
-      if (layerFilter && resources.length > 0) {
+      if (layerFilter && resourcesInType.length > 0) {
         return (
           <div className="space-y-3">
             {showAppFilterBar && renderAppFilter()}
@@ -3373,8 +3434,7 @@ export default function Resources() {
           navigate('/gateway');
         }}
         onInstalled={async () => {
-          // 安装完成后静默扫描，把新 skill 纳入列表
-          await runScan({ silent: true });
+          // 安装完成后静默刷新一次（不自动打标，避免空白/重复）
           await loadAll({ silent: true });
           setScanExpanded(true);
         }}

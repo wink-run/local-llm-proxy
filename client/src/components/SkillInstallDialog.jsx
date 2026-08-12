@@ -5,6 +5,20 @@ import { useLang } from '../store/lang';
 const INSTALLER_NAME = 'resource-installer';
 const PREFERRED_AGENTS = ['codex', 'claude-code', 'cursor', 'workbuddy'];
 
+/** 识别用户输入中的 GitHub Skill 来源（与主进程 parseGithubSkillRef 对齐的轻量检测） */
+function extractGithubSkillSource(input) {
+  const text = String(input || '').trim();
+  if (!text) return null;
+  const m = text.match(
+    /(?:https?:\/\/)?(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?(?:\/(?:tree|blob)\/[^\s#]+)?/i,
+  );
+  if (m) return m[0].replace(/[.,;]+$/, '');
+  // owner/repo（整段输入或夹在「安装skill」类说明里）
+  const short = text.match(/(?:^|[\s`'"(【])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:[\s`'"),。；;】]|$)/);
+  if (short && !/\s/.test(short[1])) return short[1];
+  return null;
+}
+
 /** 组装交给安装智能体的任务提示 */
 function buildInstallPrompt(userInput) {
   const text = String(userInput || '').trim();
@@ -17,7 +31,10 @@ function buildInstallPrompt(userInput) {
     '## 安装要求',
     '1. 解析要安装的 skill slug、包名、GitHub 地址，或直接执行用户给出的安装命令。',
     '2. 默认安装目录：`~/.tokenbank/skills`（Windows：`%USERPROFILE%\\.tokenbank\\skills`）。',
-    '3. 优先使用：`skillhub install <slug> --dir <上述目录> --json`；也可用用户给出的安全命令（如 `npx skills add …`）。',
+    '3. 来源分流：',
+    '   - **GitHub URL / owner/repo**：不要调用 skillhub；用 `git clone --depth 1 <url> ~/.tokenbank/skills/<repo名>`（或下载 zip 解压），确认存在 SKILL.md。',
+    '   - **SkillHub slug**：`skillhub install <slug> --dir <上述目录> --json`。',
+    '   - 其它：可用用户给出的安全命令（如 `npx skills add <url> -g -y`）。',
     '4. 安装完成后检查目录下存在 `SKILL.md`（或 `skill.md`），再汇报结果。',
     '5. 禁止编造「已安装成功」；失败时用中文说明可操作的原因。',
     '6. 最终用简短中文总结：成功/失败、技能名、安装路径。',
@@ -208,6 +225,43 @@ export default function SkillInstallDialog({
       setErr(t('resources.skillInstall.needInput'));
       return;
     }
+
+    // GitHub URL：主进程确定性安装，不依赖安装智能体 / skillhub slug
+    const githubSrc = extractGithubSkillSource(text);
+    if (githubSrc) {
+      setErr('');
+      setMsg('');
+      setSummary('');
+      setActivity([]);
+      setSteps(0);
+      setStatus(t('resources.skillInstall.githubInstalling'));
+      setPhase('running');
+      try {
+        const api = window.electronAPI.resource;
+        if (!api || !api.installGithubSkill) {
+          throw new Error(t('resources.skillInstall.githubUnsupported'));
+        }
+        const res = await api.installGithubSkill({ source: text, force: false });
+        if (!res || !res.success) {
+          throw new Error((res && res.error) || t('resources.skillInstall.failed'));
+        }
+        const name = (res.resource && (res.resource.name || res.resource.display_name))
+          || res.skillName
+          || githubSrc;
+        const lines = [
+          res.alreadyInstalled ? `技能已存在：${name}` : `安装成功：${name}`,
+          res.skillDir ? `安装路径：${res.skillDir}` : '',
+          res.sourceUrl ? `来源：${res.sourceUrl}` : '',
+        ].filter(Boolean);
+        await finishOk(lines.join('\n'));
+      } catch (e) {
+        setErr(e.message || String(e));
+        setPhase('idle');
+        setTaskId(null);
+      }
+      return;
+    }
+
     if (ready.step !== 'ready') {
       await ensureInstallerReady();
     }
@@ -255,6 +309,9 @@ export default function SkillInstallDialog({
 
   const running = phase === 'running';
   const preparing = phase === 'enabling' || ready.loading;
+  const githubReady = !!extractGithubSkillSource(input);
+  // GitHub 直装不依赖安装智能体；其它路径仍需 ready
+  const canStart = !!input.trim() && (githubReady || ready.step === 'ready');
   const runtimeAgent = ((ready.installer && ready.installer.projections) || [])
     .map((p) => p.agentId)
     .find((id) => PREFERRED_AGENTS.includes(id))
@@ -337,13 +394,19 @@ export default function SkillInstallDialog({
             <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40 p-3 text-xs space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-zinc-600 dark:text-zinc-300">
-                  {t('resources.reco.runningOn', { agent: runtimeAgent || INSTALLER_NAME })}
+                  {githubReady
+                    ? t('resources.skillInstall.githubInstalling')
+                    : t('resources.reco.runningOn', { agent: runtimeAgent || INSTALLER_NAME })}
                 </span>
                 <span className="text-[10px] text-zinc-400">
-                  {steps ? t('resources.reco.stepsN', { n: steps }) : t('resources.reco.starting')}
+                  {githubReady
+                    ? ''
+                    : (steps ? t('resources.reco.stepsN', { n: steps }) : t('resources.reco.starting'))}
                 </span>
               </div>
-              <p className="text-zinc-500">{status || t('resources.reco.bootingRuntime')}</p>
+              {!githubReady && (
+                <p className="text-zinc-500">{status || t('resources.reco.bootingRuntime')}</p>
+              )}
               {activity.length > 0 && (
                 <ul className="text-[11px] text-zinc-400 space-y-0.5 list-disc pl-4">
                   {activity.map((line, i) => (
@@ -375,7 +438,7 @@ export default function SkillInstallDialog({
             >
               {t('resources.reco.stop')}
             </button>
-          ) : (
+          ) : phase !== 'done' ? (
             <button
               type="button"
               disabled={preparing}
@@ -384,15 +447,25 @@ export default function SkillInstallDialog({
             >
               {t('resources.cancel')}
             </button>
+          ) : null}
+          {phase === 'done' ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="tb-press text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500"
+            >
+              {t('resources.skillInstall.close')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={running || preparing || !canStart}
+              onClick={startInstall}
+              className="tb-press text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              {running ? t('resources.reco.working') : t('resources.skillInstall.start')}
+            </button>
           )}
-          <button
-            type="button"
-            disabled={running || preparing || ready.step !== 'ready' || !input.trim()}
-            onClick={startInstall}
-            className="tb-press text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
-          >
-            {running ? t('resources.reco.working') : t('resources.skillInstall.start')}
-          </button>
         </div>
       </div>
     </div>,

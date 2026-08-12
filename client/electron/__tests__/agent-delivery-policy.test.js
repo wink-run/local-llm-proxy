@@ -49,6 +49,17 @@ test('buildAssistantLaunch injects policy for claude and codex', () => {
   assert.ok(cx.promptPrefix.includes('产物交付'));
 });
 
+test('buildAssistantLaunch: 画像分析可关闭产物落盘规则', () => {
+  const cc = buildAssistantLaunch('claude-code', '画像 soul', '', { includeDelivery: false });
+  const idx = cc.claudeExtraArgs.indexOf('--append-system-prompt');
+  assert.ok(String(cc.claudeExtraArgs[idx + 1]).includes('画像 soul'));
+  assert.ok(!String(cc.claudeExtraArgs[idx + 1]).includes('产物交付'));
+
+  const cx = buildAssistantLaunch('codex', '画像 soul', '', { includeDelivery: false });
+  assert.ok(cx.promptPrefix.includes('画像 soul'));
+  assert.ok(!cx.promptPrefix.includes('产物交付'));
+});
+
 test('orchestrator system includes delivery policy', () => {
   const { DELIVERY_POLICY: pol } = require('../agent-delivery-policy');
   assert.ok(pol.includes('直接写入'));

@@ -3993,7 +3993,7 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
 
 // 路由链编辑器（默认链 + 每条规则各一个）。每步是一个 Selector：model + 可选 strategy/sharer。
 // 分享者(sharer)化名句柄来自 /public/network（服务端带盐哈希；不含用户名）。
-function ChainEditor({ steps, setSteps, availableModels, network, sources, fScope = '', fTier = '', categories = [] }) {
+function ChainEditor({ steps, setSteps, availableModels, network, sources, fScope = '', fTier = '', categories = [], softIncomplete = false }) {
   const { t } = useLang();
   const list = steps || [];
   // 路由级过滤：顶层选了 仅免费/仅付费/仅个人/仅社区 → 顺带过滤模型菜单（个人≈非社区的本地模型）
@@ -4026,6 +4026,14 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources, fScop
   const remove = (i) => setSteps(list.filter((_, idx) => idx !== i));
   const patch  = (i, p) => setSteps(list.map((s, idx) => idx === i ? { ...s, ...p } : s));
   const updateModel = (i, val) => {
+    // 清空「选择模型」= 未配置完整：一并清掉残留 tier，避免保存成开放扫描步
+    if (!val) {
+      patch(i, {
+        label: '', model: '', tier: '', scope: '', strategy: '',
+        provider: undefined, sharer: undefined, vision_assist: undefined,
+      });
+      return;
+    }
     const m = availableModels.find(x => modelTierKey(x) === val)
            || availableModels.find(x => x.id === val);
     const modelId = m?.id ?? val;
@@ -4051,7 +4059,15 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources, fScop
               ? modelTierKey({ id: step.model, tier: step.tier })
               : (availableModels.find(m => m.id === step.model) ? modelTierKey(availableModels.find(m => m.id === step.model)) : step.model));
         return (
-        <div key={i} className={`group border rounded-lg px-2 py-1.5 ${step.when ? 'border-blue-300/70 dark:border-blue-700/50 bg-blue-50/30 dark:bg-blue-900/10' : 'border-zinc-200/70 dark:border-zinc-700/70'}`}>
+        <div key={i} className={`group border rounded-lg px-2 py-1.5 ${
+          !step.model && !step.strategy
+            ? (softIncomplete
+              ? 'border-dashed border-zinc-300 dark:border-zinc-600 bg-transparent'
+              : 'border-amber-300/80 dark:border-amber-700/50 bg-amber-50/40 dark:bg-amber-900/10')
+            : step.when
+              ? 'border-blue-300/70 dark:border-blue-700/50 bg-blue-50/30 dark:bg-blue-900/10'
+              : 'border-zinc-200/70 dark:border-zinc-700/70'
+        }`}>
           {/* 该步的条件（可选）：带条件=命中才用，无条件=兜底 */}
           {step.when && (
             <div className="flex items-start gap-2 mb-1.5 pb-1.5 border-b border-blue-200/50 dark:border-blue-800/40">
@@ -4171,20 +4187,25 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
   // ── codec 预览（默认折叠，点路由名后的按钮展开）：flow · filter 头 + 每步「[条件⇒] 模型@源」。
   // 全部用英文 codec token(personal/community/free/paid、input_tokens 等)，不本地化——codec 是技术串。
   const [showCodec, setShowCodec] = useState(false);
+  const [saveErr, setSaveErr] = useState('');
   const _condLabel = (w) => (!w || !w.type) ? '' : `${w.type} ${w.op || 'is'} ${w.value ?? ''}`.trim();
   const codecHead = [flow, rScope || rTier].filter(Boolean).join(' · ');
+  // 仅「已选模型 / 显式 strategy」算已配置；裸 tier 残留不进 codec
   const codecSteps = (steps || [])
-    .filter(s => s.model || s.scope || s.tier || s.strategy || s.sharer || s.provider)
+    .filter(s => s.model || s.strategy)
     .map(s => {
       const cond = s.when && s.when.type ? `${_condLabel(s.when)} ⇒ ` : '';
       const src = (s.provider || s.sharer) ? `@${s.provider || s.sharer}` : '';
-      const body = s.model ? `${s.model}${src}` : (s.scope || s.tier || s.strategy || '任意');
+      const body = s.model ? `${s.model}${src}` : (s.strategy || '任意');
       return cond + body;
     });
+  // 未选模型的步骤：有「限定/流转」时不算错误（策略路由会忽略它们）；否则须选模型或删掉
+  const incompleteSteps = (steps || []).filter(s => !s.model && !s.strategy);
+  const strategyMode = !!(flow || rScope || rTier);
 
   function save() {
-    // 每步保留 model/scope/tier/strategy/source/sharer + 可选条件 when；纯过滤步(无 model)也保留
-    const clean = (arr) => (arr || []).filter(s => s.model || s.scope || s.tier || s.strategy || s.sharer || s.provider).map(s => ({
+    // 只持久化已选模型（或显式 strategy）的步骤；未选模型的空步丢弃，避免与流转策略抢语义
+    const clean = (arr) => (arr || []).filter(s => s.model || s.strategy).map(s => ({
       ...(s.model ? { model: s.model } : {}),
       ...(s.scope ? { scope: s.scope } : {}),
       ...(s.tier ? { tier: s.tier } : {}),
@@ -4201,9 +4222,16 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
         },
       } : {}),
     }));
+    const cleaned = clean(steps);
+    // 既无步骤模型，又无限定/流转 → 无法路由
+    if (!cleaned.length && !strategyMode) {
+      setSaveErr(t('gateway.route.needStepsOrStrategy'));
+      return;
+    }
+    setSaveErr('');
     const classifier = (usesClassifier && clsModel && categories.length)
       ? { model: clsModel, categories } : undefined;
-    onSave({ ...route, scene_name: name, icon, rules: undefined, steps: clean(steps), classifier, caveman_level: cavemanLevel || null, flow: flow || undefined, scope: rScope || undefined, tier: rTier || undefined });
+    onSave({ ...route, scene_name: name, icon, rules: undefined, steps: cleaned, classifier, caveman_level: cavemanLevel || null, flow: flow || undefined, scope: rScope || undefined, tier: rTier || undefined });
   }
 
   return (
@@ -4263,8 +4291,13 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
       </div>
 
       {/* 步骤（整合了原「条件规则」+「默认链」）：每步可选带一个条件；候选怎么选由「流转策略」决定 */}
-      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} network={network} sources={sources} fScope={rScope} fTier={rTier} categories={categories} />
+      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} network={network} sources={sources} fScope={rScope} fTier={rTier} categories={categories} softIncomplete={strategyMode} />
       {steps.length === 0 && !flow && <p className="text-xs text-zinc-500">{t('gateway.route.noSteps')}</p>}
+      {incompleteSteps.length > 0 && (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          {strategyMode ? t('gateway.route.incompleteStepsIgnored') : t('gateway.route.incompleteSteps')}
+        </p>
+      )}
 
       {/* 分类器配置（某步用「智能分类」条件时显示）：先用便宜模型把输入归类，再按类别路由 */}
       {usesClassifier && (
@@ -4286,6 +4319,7 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
         </div>
       )}
 
+      {saveErr && <p className="text-xs text-red-500">{saveErr}</p>}
       <div className="flex gap-2 pt-1">
         <button onClick={save}
           className="text-xs bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white px-4 py-1.5 rounded-lg font-medium transition-colors">

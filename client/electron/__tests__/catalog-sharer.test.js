@@ -29,6 +29,14 @@ function handleFromEmail(email) {
 
 function catalogSharerHandle(item) {
   const meta = item?.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+  // 内置：不展示伪随机「分享人」
+  if (meta.builtin || item?.source === 'builtin') return null;
+  const tags = meta.tags;
+  if (Array.isArray(tags) && tags.includes('builtin')) return null;
+  const name = String(item?.name || '');
+  if (name === 'resource-finder' || name === 'resource-installer' || name === 'resource-portrait') {
+    return null;
+  }
   if (meta.recommender_handle) return String(meta.recommender_handle).replace(/^@+/, '');
   if (meta.user_recommended || meta.recommender_user_id) {
     const fromEmail = handleFromEmail(meta.recommender_email || '');
@@ -54,4 +62,16 @@ test('system seed → stable random handle', () => {
     catalogSharerHandle({ catalogId: 'code-review-prompt' }),
     catalogSharerHandle({ catalogId: 'api-design-prompt' }),
   );
+});
+
+test('builtin → no sharer handle', () => {
+  assert.equal(catalogSharerHandle({
+    catalogId: 'resource-finder-assistant',
+    name: 'resource-finder',
+    metadata: { builtin: true },
+  }), null);
+  assert.equal(catalogSharerHandle({
+    name: 'resource-portrait',
+    source: 'builtin',
+  }), null);
 });

@@ -48,9 +48,19 @@ export function systemSharerHandle(seed) {
 /**
  * 社区卡片分享人（不含 @ 前缀）
  * @param {object} item catalog / resource
+ * @returns {string|null} 内置条目返回 null（由 UI 显示「内置」）
  */
 export function catalogSharerHandle(item) {
   const meta = item?.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+  // 内置：不展示伪随机「分享人」
+  if (meta.builtin || item?.source === 'builtin') return null;
+  const tags = meta.tags;
+  if (Array.isArray(tags) && tags.includes('builtin')) return null;
+  const name = String(item?.name || '');
+  if (name === 'resource-finder' || name === 'resource-installer' || name === 'resource-portrait') {
+    return null;
+  }
+
   const explicit = stripAt(
     meta.recommender_handle
     || meta.recommender_nickname

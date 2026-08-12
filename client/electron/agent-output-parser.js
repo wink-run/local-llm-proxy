@@ -1387,7 +1387,9 @@ function parseClaudeSyncStdout(rawStdout) {
   if (obj.is_error || obj.subtype === 'error_during_execution') {
     const err = Array.isArray(obj.errors) && obj.errors.length
       ? obj.errors.join('\n')
-      : (typeof obj.error === 'string' ? obj.error.trim() : 'Agent 执行失败');
+      : (typeof obj.error === 'string' && obj.error.trim()
+        ? obj.error.trim()
+        : (extractAuthFailureFromStdout(rawStdout) || 'Agent 执行失败'));
     return {
       steps: [{ stepType: 'terminal', content: err, is_snapshot: true }],
       sessionId,
@@ -1454,8 +1456,23 @@ function extractCliSessionId(rawStdout, agentId = 'claude-code') {
   return null;
 }
 
+/** 从 stdout 文本提炼 Claude/Codex OAuth 失效类错误（result 常无 errors 字段） */
+function extractAuthFailureFromStdout(rawStdout) {
+  const text = stripAnsi(rawStdout || '');
+  if (/Failed to authenticate:\s*OAuth session expired/i.test(text)
+    || /OAuth session expired and could not be refreshed/i.test(text)) {
+    return 'Claude 登录已过期，无法刷新。请在终端执行 `claude /login` 重新登录，或确认 Claude Code 已绑路由走网关。';
+  }
+  if (/Failed to authenticate:/i.test(text)) {
+    const m = text.match(/Failed to authenticate:\s*([^\n]+)/i);
+    return m ? `Claude 认证失败：${m[1].trim()}` : 'Claude 认证失败，请重新登录。';
+  }
+  return null;
+}
+
 /** stream-json 中 result 标记失败（exit 0 但执行出错，如 --resume 无效） */
 function detectAgentExecutionFailure(rawStdout) {
+  let sawErrorResult = false;
   for (const line of String(rawStdout || '').split('\n')) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('{')) continue;
@@ -1465,8 +1482,12 @@ function detectAgentExecutionFailure(rawStdout) {
       if (!obj.is_error && obj.subtype !== 'error_during_execution') continue;
       if (Array.isArray(obj.errors) && obj.errors.length) return obj.errors.join('\n');
       if (typeof obj.error === 'string' && obj.error.trim()) return obj.error.trim();
-      return 'Agent 执行失败';
+      // result 仅标失败、无文案：先记下来，再从 stdout 抽认证错误
+      sawErrorResult = true;
     } catch { /* ignore */ }
+  }
+  if (sawErrorResult) {
+    return extractAuthFailureFromStdout(rawStdout) || 'Agent 执行失败';
   }
   return null;
 }
@@ -1548,6 +1569,10 @@ function formatAgentExitError(rawStderr, rawStdout, exitCode, agentId = 'claude-
     return `Agent 异常退出 (code ${exitCode})`;
   }
 
+  // Claude OAuth 会话过期（常见于画像挖掘 / Debug 派发）
+  const claudeAuth = extractAuthFailureFromStdout(combined);
+  if (claudeAuth) return claudeAuth;
+
   // Codex / OpenAI OAuth：refresh token 已被轮换
   if (/refresh_token_reused|refresh token.*already been used|refresh token was already used/i.test(combined)) {
     const hint = agentId === 'codex'
@@ -1625,6 +1650,7 @@ module.exports = {
   extractCliSessionId,
   normalizeCliSessionId,
   detectAgentExecutionFailure,
+  extractAuthFailureFromStdout,
   formatAgentExitError,
   extractClaudeResultObject,
   parseClaudeSyncStdout,

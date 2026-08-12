@@ -145,7 +145,7 @@ function htmlForSrcdoc(html) {
 }
 
 function registerResourceHandlers() {
-  // 启动时幂等：内置资产发现/安装智能体自动纳管并尽量投射
+  // 启动时幂等：内置画像/发现/安装智能体自动纳管并尽量投射
   try {
     resourceManager.init();
     resourceManager.ensureBuiltinAssistants();
@@ -580,6 +580,21 @@ function registerResourceHandlers() {
       });
     } catch (error) {
       console.error('[IPC] resource:installSkillhub error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // GitHub URL / owner/repo → ~/.tokenbank/skills（不走 skillhub slug）
+  ipcMain.handle('resource:installGithubSkill', async (_event, params = {}) => {
+    try {
+      resourceManager.init();
+      return await resourceManager.installGithubSkill(params.source || params.url || params.input, {
+        force: !!params.force,
+        description: params.description || '',
+        installRoot: params.installRoot || undefined,
+      });
+    } catch (error) {
+      console.error('[IPC] resource:installGithubSkill error:', error);
       return { success: false, error: error.message };
     }
   });

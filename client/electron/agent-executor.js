@@ -580,7 +580,9 @@ class AgentExecutor extends EventEmitter {
     }
 
     const systemText = resolveAssistantContext(config, resourceManager);
-    const launch = buildAssistantLaunch(runtimeAgentId, systemText, config.model);
+    // 画像分析只出 JSON，不附产物落盘规则，避免与分析提示词抢上下文
+    const includeDelivery = resource.name !== 'resource-portrait';
+    const launch = buildAssistantLaunch(runtimeAgentId, systemText, config.model, { includeDelivery });
 
     return {
       agentId: runtimeAgentId,
