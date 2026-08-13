@@ -117,6 +117,32 @@ function mapKimiCodeUsage(data, provider) {
   };
 }
 
+/** 从 usages / models 错误体提炼文案 */
+async function readKimiErrorText(resp) {
+  try {
+    const raw = await resp.text();
+    if (!raw) return '';
+    try {
+      const j = JSON.parse(raw);
+      return String(j?.error?.message || j?.message || raw).trim();
+    } catch {
+      return raw.trim().slice(0, 300);
+    }
+  } catch {
+    return '';
+  }
+}
+
+/** 403：会员校验失败 → 订阅失效（非「连不上」） */
+function kimiMembershipForbiddenError(detail = '') {
+  const d = String(detail || '').trim();
+  // 官方文案含 membership benefits；统一成可读提示
+  if (/membership|会员|订阅/i.test(d)) {
+    return '订阅已失效或未开通，请续费或确认会员状态后重试';
+  }
+  return '订阅已失效或无权访问（HTTP 403），请确认 Kimi Code 会员有效';
+}
+
 async function fetchKimiCodeUsage(provider) {
   const key = providerApiKey(provider);
   if (!key) throw new Error('缺少 Kimi Code API key');
@@ -125,6 +151,10 @@ async function fetchKimiCodeUsage(provider) {
     headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
   });
   if (resp.status === 401) throw new Error('401：API key 无效或已过期');
+  if (resp.status === 403) {
+    const detail = await readKimiErrorText(resp);
+    throw new Error(kimiMembershipForbiddenError(detail));
+  }
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return mapKimiCodeUsage(await resp.json(), provider);
 }
@@ -134,4 +164,5 @@ module.exports = {
   mapKimiCodeUsage,
   resolveUsagesUrl,
   usedPercentFromDetail,
+  kimiMembershipForbiddenError,
 };

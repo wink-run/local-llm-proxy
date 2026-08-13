@@ -36,6 +36,12 @@ import {
   recommendCommunitySkill,
   settleCommunityCatalogInstall,
 } from '../api/client';
+import {
+  buildAssistantContent,
+  generateAssistantFromNl,
+  parseAssistantEditorContent,
+  slugifyAssistantId,
+} from '../lib/assistant-nl-create';
 
 const VIEW_TAB_KEY = 'tokenbank.resources.viewTab';
 const TYPE_FILTER_KEY = 'tokenbank.resources.typeFilter';
@@ -210,6 +216,15 @@ const EMPTY_EDITOR = {
   promptKind: 'text',
   tagsText: '',
   metadata: {},
+  // 智能体：自然语言草稿 + 结构化人设/技能（保存时拼成 content JSON）
+  nlBrief: '',
+  soul: '',
+  skills: [],
+  prompts: [],
+  runtime_agent: '',
+  parameters: null,
+  assistantExtra: {},
+  skillQuery: '',
 };
 
 /** 是否 Windows 前端环境（路径用反斜杠） */
@@ -1733,7 +1748,7 @@ export default function Resources() {
   }
 
   function openEditEditor(resource) {
-    setEditorForm({
+    const base = {
       id: resource.id,
       type: resource.type || 'prompt',
       name: resource.name || '',
@@ -1744,8 +1759,78 @@ export default function Resources() {
       tagsText: resourceTags(resource).join(', '),
       // 保留原 metadata，避免编辑时冲掉其它字段
       metadata: { ...(resource.metadata || {}) },
-    });
+      nlBrief: '',
+      soul: '',
+      skills: [],
+      prompts: [],
+      runtime_agent: '',
+      parameters: null,
+      assistantExtra: {},
+      skillQuery: '',
+    };
+    if ((resource.type || '') === 'assistant') {
+      const parsed = parseAssistantEditorContent(resource.content || '');
+      Object.assign(base, {
+        soul: parsed.soul,
+        skills: parsed.skills,
+        prompts: parsed.prompts,
+        runtime_agent: parsed.runtime_agent,
+        parameters: parsed.parameters,
+        assistantExtra: parsed.extra || {},
+      });
+    }
+    setEditorForm(base);
     setEditorOpen(true);
+  }
+
+  /** 自然语言 → 填充智能体表单（名称/人设/建议绑定的 skill） */
+  async function generateAssistantNl() {
+    const brief = String(editorForm.nlBrief || '').trim();
+    if (brief.length < 4) {
+      setError(t('resources.assistantNlTooShort'));
+      return;
+    }
+    setBusy('assistant-nl');
+    setError('');
+    try {
+      const skillCandidates = (resources || [])
+        .filter((r) => r.type === 'skill')
+        .map((r) => ({
+          name: r.name,
+          display_name: r.display_name || r.name,
+          description: r.description || '',
+        }));
+      const gen = await generateAssistantFromNl(brief, skillCandidates);
+      setEditorForm((prev) => ({
+        ...prev,
+        // 已有 id 时不改英文标识，避免冲突
+        name: prev.id ? prev.name : (prev.name || gen.name || slugifyAssistantId(gen.display_name)),
+        display_name: gen.display_name || prev.display_name,
+        description: gen.description || prev.description,
+        soul: gen.soul,
+        skills: gen.skills || [],
+        tagsText: (gen.tags || []).join(', ') || prev.tagsText,
+      }));
+      setMsg(t('resources.assistantNlOk'));
+    } catch (e) {
+      const code = e?.message || '';
+      if (code === 'brief_too_short') setError(t('resources.assistantNlTooShort'));
+      else if (code === 'llm_unavailable') setError(t('resources.assistantNlNoLlm'));
+      else if (code === 'soul_too_short' || code === 'bad_llm_json') setError(t('resources.assistantNlBad'));
+      else setError(t('resources.assistantNlFailed', { detail: String(code).slice(0, 120) }));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function toggleEditorSkill(skillName) {
+    const name = String(skillName || '').trim();
+    if (!name) return;
+    setEditorForm((prev) => {
+      const cur = Array.isArray(prev.skills) ? prev.skills : [];
+      const next = cur.includes(name) ? cur.filter((s) => s !== name) : [...cur, name];
+      return { ...prev, skills: next };
+    });
   }
 
   async function saveEditor() {
@@ -1761,13 +1846,33 @@ export default function Resources() {
         metadata.promptKind = editorForm.promptKind === 'image' ? 'image' : 'text';
       }
       metadata.tags = parseTagsInput(editorForm.tagsText);
+      let content = editorForm.content || '';
+      // 智能体：用人设 + 勾选 skill 拼 JSON（保留 runtime_agent / prompts 等）
+      if (editorForm.type === 'assistant') {
+        const soul = String(editorForm.soul || '').trim();
+        if (!soul) {
+          setError(t('resources.assistantSoulRequired'));
+          setBusy('');
+          return;
+        }
+        content = buildAssistantContent({
+          soul,
+          skills: editorForm.skills || [],
+          prompts: editorForm.prompts || [],
+          runtime_agent: editorForm.runtime_agent || '',
+          parameters: editorForm.parameters,
+          extra: editorForm.assistantExtra || {},
+        });
+        metadata.source = metadata.source || (editorForm.id ? metadata.source : 'composed');
+        if (!editorForm.id) metadata.composed = true;
+      }
       const res = await window.electronAPI.resource.saveResource({
         id: editorForm.id || undefined,
         type: editorForm.type,
         name,
         display_name: editorForm.display_name || name,
         description: editorForm.description || '',
-        content: editorForm.content || '',
+        content,
         metadata,
       });
       if (!res.success) {
@@ -3551,7 +3656,7 @@ export default function Resources() {
       {editorOpen && createPortal(
         <div
           className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
-          onClick={() => { if (busy !== 'editor') setEditorOpen(false); }}
+          onClick={() => { if (busy !== 'editor' && busy !== 'assistant-nl') setEditorOpen(false); }}
         >
           <div
             className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl"
@@ -3569,7 +3674,25 @@ export default function Resources() {
                 <select
                   value={editorForm.type}
                   disabled={!!editorForm.id}
-                  onChange={e => setEditorForm(prev => ({ ...prev, type: e.target.value }))}
+                  onChange={e => {
+                    const type = e.target.value;
+                    setEditorForm((prev) => {
+                      if (type === 'assistant' && prev.type !== 'assistant') {
+                        const parsed = parseAssistantEditorContent(prev.content);
+                        return {
+                          ...prev,
+                          type,
+                          soul: parsed.soul || prev.soul || '',
+                          skills: parsed.skills?.length ? parsed.skills : (prev.skills || []),
+                          prompts: parsed.prompts || prev.prompts || [],
+                          runtime_agent: parsed.runtime_agent || prev.runtime_agent || '',
+                          parameters: parsed.parameters || prev.parameters,
+                          assistantExtra: parsed.extra || prev.assistantExtra || {},
+                        };
+                      }
+                      return { ...prev, type };
+                    });
+                  }}
                   className="mt-1 w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950"
                 >
                   {TYPE_OPTIONS.filter(o => o.id).map(opt => (
@@ -3627,32 +3750,123 @@ export default function Resources() {
                 />
                 <span className="block mt-1 text-[10px] text-zinc-400">{t('resources.editorTagsHint')}</span>
               </label>
-              {editorForm.type === 'assistant' && (
-                <p className="text-[11px] text-zinc-400">{t('resources.assistantRuntimeHint')}</p>
-              )}
-              <label className="block text-xs text-zinc-500">
-                {t('resources.editorContent')}
-                <textarea
-                  value={editorForm.content}
-                  onChange={e => setEditorForm(prev => ({ ...prev, content: e.target.value }))}
-                  rows={12}
-                  spellCheck={false}
-                  placeholder={
-                    editorForm.type === 'skill'
-                      ? '---\nname: my-skill\ndescription: ...\n---\n\n# Skill'
-                      : editorForm.type === 'assistant'
-                        ? '{\n  "soul": "你是…",\n  "runtime_agent": "claude-code",\n  "prompts": ["code-review"],\n  "skills": ["git-commit"]\n}'
+              {editorForm.type === 'assistant' ? (
+                <>
+                  <div className="rounded-xl border border-violet-200/80 dark:border-violet-800/50 bg-violet-50/50 dark:bg-violet-950/20 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-violet-700 dark:text-violet-300">
+                        {t('resources.assistantNlTitle')}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={!!busy}
+                        onClick={generateAssistantNl}
+                        className="tb-press text-xs px-2.5 py-1 rounded-lg bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50"
+                      >
+                        {busy === 'assistant-nl' ? t('resources.busy') : t('resources.assistantNlGenerate')}
+                      </button>
+                    </div>
+                    <textarea
+                      value={editorForm.nlBrief || ''}
+                      onChange={e => setEditorForm(prev => ({ ...prev, nlBrief: e.target.value }))}
+                      rows={3}
+                      placeholder={t('resources.assistantNlPh')}
+                      className="w-full text-xs px-2 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800/60 bg-white dark:bg-zinc-950 leading-relaxed"
+                    />
+                    <p className="text-[10px] text-violet-500/90 dark:text-violet-400/80">{t('resources.assistantNlHint')}</p>
+                  </div>
+                  <label className="block text-xs text-zinc-500">
+                    {t('resources.assistantSoul')}
+                    <textarea
+                      value={editorForm.soul || ''}
+                      onChange={e => setEditorForm(prev => ({ ...prev, soul: e.target.value }))}
+                      rows={8}
+                      spellCheck={false}
+                      placeholder={t('resources.assistantSoulPh')}
+                      className="mt-1 w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950 leading-relaxed"
+                    />
+                  </label>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-zinc-500">{t('resources.assistantSkills')}</span>
+                      <span className="text-[10px] text-zinc-400">
+                        {t('resources.assistantSkillsPicked', { n: (editorForm.skills || []).length })}
+                      </span>
+                    </div>
+                    <input
+                      value={editorForm.skillQuery || ''}
+                      onChange={e => setEditorForm(prev => ({ ...prev, skillQuery: e.target.value }))}
+                      placeholder={t('resources.assistantSkillsSearch')}
+                      className="w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950"
+                    />
+                    <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 divide-y divide-zinc-100 dark:divide-zinc-800">
+                      {(() => {
+                        const q = String(editorForm.skillQuery || '').trim().toLowerCase();
+                        const list = (resources || [])
+                          .filter((r) => r.type === 'skill')
+                          .filter((r) => {
+                            if (!q) return true;
+                            const hay = `${r.name} ${r.display_name || ''} ${r.description || ''}`.toLowerCase();
+                            return hay.includes(q);
+                          })
+                          .slice(0, 120);
+                        if (!list.length) {
+                          return (
+                            <p className="px-2.5 py-3 text-[11px] text-zinc-400">{t('resources.assistantSkillsEmpty')}</p>
+                          );
+                        }
+                        const picked = new Set(editorForm.skills || []);
+                        return list.map((sk) => (
+                          <label
+                            key={sk.id || sk.name}
+                            className="flex items-start gap-2 px-2.5 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={picked.has(sk.name)}
+                              onChange={() => toggleEditorSkill(sk.name)}
+                              className="mt-0.5 shrink-0"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
+                                {sk.display_name || sk.name}
+                              </span>
+                              <span className="block text-[10px] font-mono text-zinc-400 truncate">{sk.name}</span>
+                              {sk.description ? (
+                                <span className="block text-[10px] text-zinc-400 line-clamp-1">{sk.description}</span>
+                              ) : null}
+                            </span>
+                          </label>
+                        ));
+                      })()}
+                    </div>
+                    <p className="text-[10px] text-zinc-400">{t('resources.assistantSkillsHint')}</p>
+                  </div>
+                </>
+              ) : (
+                <label className="block text-xs text-zinc-500">
+                  {t('resources.editorContent')}
+                  <textarea
+                    value={editorForm.content}
+                    onChange={e => setEditorForm(prev => ({ ...prev, content: e.target.value }))}
+                    rows={12}
+                    spellCheck={false}
+                    placeholder={
+                      editorForm.type === 'skill'
+                        ? '---\nname: my-skill\ndescription: ...\n---\n\n# Skill'
                         : ''
-                  }
-                  className="mt-1 w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950 font-mono leading-relaxed"
-                />
-              </label>
+                    }
+                    className="mt-1 w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950 font-mono leading-relaxed"
+                  />
+                </label>
+              )}
             </div>
             <div className="px-4 py-3 border-t border-zinc-100 dark:border-zinc-800 flex gap-2 justify-end">
               <button
                 type="button"
                 onClick={() => setEditorOpen(false)}
-                className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-600"
+                disabled={busy === 'editor' || busy === 'assistant-nl'}
+                className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-600 disabled:opacity-50"
               >
                 {t('resources.cancel')}
               </button>

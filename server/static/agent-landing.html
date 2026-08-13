@@ -142,13 +142,13 @@ textarea:focus,input:focus{border-color:var(--text)}
 
       <div class="chat" ref="chatEl">
         <div v-if="!messages.length" class="chat-empty">{{ T.chatEmpty }}</div>
-        <div v-for="(m, i) in messages" :key="i" class="bubble" :class="[m.role, { pending: m.pending }]">{{ m.content }}</div>
+        <div v-for="(m, i) in messages" :key="i" class="bubble" :class="[m.role, { pending: m.pending }]">{{ m.content || (m.pending ? T.thinking : '') }}</div>
       </div>
 
       <div class="composer">
         <textarea v-model="prompt" rows="2" :placeholder="T.promptPh" :disabled="running || guestLocked" @keydown.enter.exact.prevent="sendMessage"></textarea>
         <button class="btn" type="button" :disabled="running || guestLocked || !prompt.trim()" @click="sendMessage">
-          {{ running ? T.running : T.send }}
+          {{ running ? ((messages.length && messages[messages.length - 1].pending && messages[messages.length - 1].content) ? T.streaming : T.running) : T.send }}
         </button>
       </div>
       <p v-if="err" class="err">{{ err }}</p>
@@ -211,7 +211,7 @@ createApp({
         needAuthCircle: '这是圈子分享的智能体，请先登录后再查看。',
         emptyPrompt: '请先输入内容',
         chatHint: '未登录可试一轮', chatEmpty: '发送一条消息试用；登录后可多轮追问。',
-        clear: '清空对话', thinking: '…',
+        clear: '清空对话', thinking: '…', streaming: '生成中…', toolRunning: '调用工具：{name}',
       },
       en: {
         loading: 'Loading…', unavailable: 'Agent unavailable', backHome: 'Home',
@@ -226,7 +226,7 @@ createApp({
         needAuthCircle: 'Circle-shared agent — sign in to view.',
         emptyPrompt: 'Enter a message first',
         chatHint: 'One free guest turn', chatEmpty: 'Try one message; sign in for multi-turn chat.',
-        clear: 'Clear', thinking: '…',
+        clear: 'Clear', thinking: '…', streaming: 'Generating…', toolRunning: 'Tool: {name}',
       },
     }
     const T = computed(() => i18n[lang.value] || i18n.zh)
@@ -448,66 +448,136 @@ createApp({
       // 访客单轮不带历史；登录后压缩多轮上下文
       const apiPrompt = isGuest ? text : buildPromptWithHistory(history, text)
       messages.value.push({ role: 'user', content: text })
-      messages.value.push({ role: 'assistant', content: T.value.thinking, pending: true })
+      messages.value.push({ role: 'assistant', content: '', pending: true })
+      const asstIdx = messages.value.length - 1
       prompt.value = ''
       running.value = true
       await scrollChat()
+
+      const setAssistant = (content, { pending = true } = {}) => {
+        const row = messages.value[asstIdx]
+        if (!row || row.role !== 'assistant') return
+        row.content = content
+        row.pending = pending
+      }
+      const dropTurn = () => {
+        // 去掉本轮 assistant + user
+        if (messages.value[asstIdx]?.role === 'assistant') messages.value.splice(asstIdx, 1)
+        const last = messages.value[messages.value.length - 1]
+        if (last?.role === 'user' && last.content === text) messages.value.pop()
+      }
+
       try {
-        const { r, data } = await fetchJson('/api/agent-tasks', {
+        const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream' }
+        if (!isGuest) {
+          const tok = getToken()
+          if (tok) headers.Authorization = `Bearer ${tok}`
+        }
+        const r = await fetch('/api/agent-tasks', {
           method: 'POST',
-          auth: !isGuest,
+          headers,
           body: JSON.stringify({
             assistant_id: agent.value.id,
             prompt: apiPrompt,
             worker_id: agent.value.worker_id || undefined,
+            stream: true,
           }),
         })
-        if (messages.value.length && messages.value[messages.value.length - 1].pending) {
-          messages.value.pop()
-        }
-        if (r.status === 401) {
-          if (!isGuest) logout()
-          err.value = (typeof data?.detail === 'string' ? data.detail : '') || (isGuest ? T.value.loginToContinue : T.value.needLogin)
-          if (isGuest) guestUsed.value = true
-          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') {
-            messages.value.pop()
+
+        // 非 SSE（鉴权失败等）：按 JSON 错误处理
+        const ctype = (r.headers.get('content-type') || '').toLowerCase()
+        if (!r.ok || !ctype.includes('text/event-stream')) {
+          let data = null
+          try { data = await r.json() } catch { data = null }
+          if (r.status === 401) {
+            if (!isGuest) logout()
+            err.value = (typeof data?.detail === 'string' ? data.detail : '') || (isGuest ? T.value.loginToContinue : T.value.needLogin)
+            if (isGuest) guestUsed.value = true
+            dropTurn()
+            return
           }
-          return
-        }
-        if (r.status === 429) {
-          guestUsed.value = true
-          err.value = (typeof data?.detail === 'string' ? data.detail : '') || T.value.loginToContinue
-          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') {
-            messages.value.pop()
+          if (r.status === 429) {
+            guestUsed.value = true
+            err.value = (typeof data?.detail === 'string' ? data.detail : '') || T.value.loginToContinue
+            dropTurn()
+            return
           }
-          return
-        }
-        if (!r.ok) {
           const detail = data?.detail
           const msg = typeof detail === 'string'
             ? detail
             : (detail?.error || detail?.message || data?.error || `HTTP ${r.status}`)
           err.value = String(msg)
-          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') {
-            messages.value.pop()
-          }
+          dropTurn()
           return
         }
-        const out = data?.output || data?.result || data?.text || data?.message
-          || (typeof data === 'string' ? data : '')
-        messages.value.push({ role: 'assistant', content: String(out || '(empty)') })
-        if (data?.guest || data?.need_login_to_continue || isGuest) {
-          guestUsed.value = true
+
+        const reader = r.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        let finalOk = false
+        let finalGuest = isGuest
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() || ''
+          for (const block of parts) {
+            const line = block.split('\n').find((l) => l.startsWith('data: '))
+            if (!line) continue
+            let ev = null
+            try { ev = JSON.parse(line.slice(6)) } catch { continue }
+            if (!ev || typeof ev !== 'object') continue
+            if (ev.event === 'progress') {
+              const body = String(ev.text || '')
+              if (body) setAssistant(body, { pending: true })
+              else if (ev.tool) {
+                setAssistant(
+                  (messages.value[asstIdx]?.content || '') ||
+                    T.value.toolRunning.replace('{name}', String(ev.tool)),
+                  { pending: true },
+                )
+              }
+              await scrollChat()
+              continue
+            }
+            if (ev.event === 'done') {
+              finalOk = !!ev.ok
+              finalGuest = !!(ev.guest || ev.need_login_to_continue || isGuest)
+              const out = ev.output || ev.result || ev.text || ev.message || ''
+              setAssistant(String(out || messages.value[asstIdx]?.content || '(empty)'), { pending: false })
+              continue
+            }
+            if (ev.event === 'error') {
+              finalGuest = !!(ev.guest || ev.need_login_to_continue || isGuest)
+              const msg = ev.error || ev.detail || ev.status || 'failed'
+              // 已有流式正文时保留并标注失败；否则回退整轮
+              const cur = String(messages.value[asstIdx]?.content || '').trim()
+              if (cur && cur !== '…') {
+                setAssistant(`${cur}\n\n[${msg}]`, { pending: false })
+                err.value = String(msg)
+              } else {
+                err.value = String(msg)
+                dropTurn()
+              }
+              if (finalGuest) guestUsed.value = true
+              return
+            }
+          }
         }
+
+        if (!finalOk && !(messages.value[asstIdx]?.content || '').trim()) {
+          err.value = 'empty response'
+          dropTurn()
+          return
+        }
+        if (messages.value[asstIdx]) messages.value[asstIdx].pending = false
+        if (finalGuest) guestUsed.value = true
         if (!isGuest) await fetchProfile()
         await scrollChat()
       } catch (e) {
-        if (messages.value.length && messages.value[messages.value.length - 1].pending) {
-          messages.value.pop()
-        }
-        if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') {
-          messages.value.pop()
-        }
+        dropTurn()
         err.value = e?.message || 'Network error'
       } finally {
         running.value = false

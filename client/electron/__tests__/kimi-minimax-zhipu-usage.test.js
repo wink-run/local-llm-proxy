@@ -1,7 +1,8 @@
 'use strict';
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { mapKimiCodeUsage, usedPercentFromDetail } = require('../usage/kimi-code');
+const { mapKimiCodeUsage, usedPercentFromDetail, kimiMembershipForbiddenError } = require('../usage/kimi-code');
+const { parseProviderProbeError } = require('../../shared/provider-test');
 const { mapMiniMaxUsage, mapBalanceCredits, mapModelRemain } = require('../usage/minimax');
 const { mapZhipuUsage, mapQuotaLimits } = require('../usage/zhipu');
 const { normalizeUsageKey } = require('../usage');
@@ -25,6 +26,24 @@ describe('kimi-code mapKimiCodeUsage', () => {
 
   it('仅 remaining 时推算已用百分比', () => {
     assert.equal(usedPercentFromDetail({ limit: '100', remaining: '40' }), 60);
+  });
+
+  it('403 membership 文案映射为订阅失效', () => {
+    const msg = kimiMembershipForbiddenError(
+      "We're unable to verify your membership benefits at this time. Please ensure your membership is active.",
+    );
+    assert.match(msg, /订阅已失效/);
+  });
+});
+
+describe('provider-test membership 403', () => {
+  it('探测错误体含 membership 时提示订阅失效', () => {
+    const body = JSON.stringify({
+      error: {
+        message: "We're unable to verify your membership benefits at this time. Please ensure your membership is active.",
+      },
+    });
+    assert.match(parseProviderProbeError(body, 403), /订阅已失效/);
   });
 });
 

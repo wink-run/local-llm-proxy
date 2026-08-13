@@ -572,7 +572,7 @@ export function DirectSourceCard({
     return parts.join(' · ') || null;
   })();
 
-  // Cursor / Codex 等直连 App：读官方订阅与 session 额度
+  // Cursor / Codex 等直连 App：读订阅与 session 额度（Codex 走非官方订阅登录凭证）
   const usageProvider = usageProviderForDirect(instance);
 
   return (

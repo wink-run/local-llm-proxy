@@ -792,6 +792,7 @@ class AgentTaskBody(BaseModel):
     prompt: str
     worker_id: Optional[str] = None
     timeout_ms: Optional[int] = None
+    stream: Optional[bool] = False
 
 
 @app.post("/api/agent-tasks")
@@ -803,6 +804,7 @@ async def create_agent_task(
     """发起远程武将任务。
     - 已登录：JWT/API Key，按固定积分扣费
     - 未登录：公开智能体单轮试用，按 IP 限流
+    - stream=true：SSE（progress / done / error）
     """
     guest = uid is None
     if guest:
@@ -814,6 +816,26 @@ async def create_agent_task(
             raise HTTPException(401, "guest trial: one turn only — sign in to continue")
         if not guest_trial_allowed(_client_ip(request)):
             raise HTTPException(429, "guest trial limit reached — sign in to continue")
+
+    if body.stream:
+        from dispatch_agent import iter_agent_task_sse
+        gen = iter_agent_task_sse(
+            assistant_id=body.assistant_id,
+            prompt=body.prompt,
+            consumer_user_id=uid,
+            worker_id=body.worker_id,
+            timeout_ms=body.timeout_ms,
+            guest=guest,
+        )
+        return StreamingResponse(
+            gen,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     result = await handle_agent_task(
         assistant_id=body.assistant_id,
@@ -1026,6 +1048,14 @@ async def worker_ws(ws: WebSocket):
             raw = await ws.receive_text()
             msg = json.loads(raw)
             kind = msg.get("type")
+
+            # 武将任务进度：不摘 pending，供 HTTP SSE 转发
+            if kind == "agent_task_progress":
+                task_id = msg.get("task_id")
+                entry = worker.pending_agents.get(task_id) if task_id else None
+                if entry and entry.get("queue") is not None:
+                    await entry["queue"].put(msg)
+                continue
 
             # 武将任务结果：用 task_id，与模型 req_id 分流
             if kind == "agent_task_result":

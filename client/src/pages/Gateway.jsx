@@ -2116,9 +2116,10 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
 
   const ready = job.status === 'ready' || job.status === 'error';
 
-  return (
-    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
+  // 挂到 body，避免被会话卡片 overflow / transform 裁切
+  return createPortal(
+    <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl max-h-[88vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1 flex items-center gap-2">
@@ -2205,7 +2206,8 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2486,9 +2488,9 @@ function ContinueModal({ source, target, handoffTargets = [], onClose }) {
     else setNotice(t('gateway.sessions.continueFailed'));
   };
 
-  return (
-    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
+  return createPortal(
+    <div className="electron-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl max-h-[88vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.sessions.continueTitle')}</h3>
@@ -2529,7 +2531,8 @@ function ContinueModal({ source, target, handoffTargets = [], onClose }) {
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

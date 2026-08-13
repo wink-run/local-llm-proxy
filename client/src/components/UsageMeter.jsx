@@ -62,6 +62,14 @@ function usageBarColor(p) {
   return 'bg-blue-500';
 }
 
+/** 已用百分比文案：满额标「已用尽」 */
+function fmtUsedPercent(pct, { exhaustedLabel = false } = {}) {
+  if (pct == null || !Number.isFinite(Number(pct))) return '—';
+  const n = Math.round(Number(pct));
+  if (exhaustedLabel && n >= 100) return '已用尽';
+  return `已用${n}%`;
+}
+
 function fmtBalance(c) {
   if (!c) return null;
   // 无限额度：展示已用花费（Agnes hard_limit 哨兵等）
@@ -224,13 +232,18 @@ export default function UsageMeter({
     if (state.error && !d) return state.error;
     const bal = d?.credits && fmtBalance(d.credits);
     // 有现金余额时优先展示（控制台「余额」口径），配额百分比并列
-    if (bal && primary && primary.usageKnown) return `${bal} · ${Math.round(primary.usedPercent)}%`;
+    if (bal && primary && primary.usageKnown) {
+      return `${bal} · ${fmtUsedPercent(primary.usedPercent, { exhaustedLabel: true })}`;
+    }
     if (bal) return bal;
-    if (primary && primary.usageKnown) return `${Math.round(primary.usedPercent)}%`;
+    if (primary && primary.usageKnown) {
+      return fmtUsedPercent(primary.usedPercent, { exhaustedLabel: true });
+    }
     if (d?.warning && !(d.windows || []).length) return '暂不可用';
     if (!d) return '—';
     return null;
   })();
+  const summaryWarn = !!(primary?.usageKnown && Number(primary.usedPercent) >= 90);
 
   return (
     <div className="mt-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-800/40 p-2.5 space-y-2">
@@ -251,7 +264,13 @@ export default function UsageMeter({
             </span>
           )}
           {!open && summary && (
-            <span className="text-[11px] text-zinc-400 dark:text-zinc-500 tabular-nums truncate">{summary}</span>
+            <span className={`text-[11px] tabular-nums truncate ${
+              summaryWarn
+                ? 'text-red-500 dark:text-red-400'
+                : 'text-zinc-400 dark:text-zinc-500'
+            }`}>
+              {summary}
+            </span>
           )}
         </button>
         <div className="flex items-center gap-2 shrink-0">
@@ -286,8 +305,12 @@ export default function UsageMeter({
               <div key={w.id}>
                 <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
                   <span>{w.title}</span>
-                  <span className="tabular-nums">
-                    {w.usageKnown ? `${Math.round(w.usedPercent)}%` : '—'}
+                  <span className={`tabular-nums ${
+                    w.usageKnown && Number(w.usedPercent) >= 90
+                      ? 'text-red-500 dark:text-red-400'
+                      : ''
+                  }`}>
+                    {w.usageKnown ? fmtUsedPercent(w.usedPercent, { exhaustedLabel: true }) : '—'}
                     {w.resetsAt ? <span className="ml-2 text-zinc-400 dark:text-zinc-600">{fmtReset(w.resetsAt)}</span> : null}
                   </span>
                 </div>
@@ -327,7 +350,7 @@ export default function UsageMeter({
             )}
             {d.extra && d.extra.enabled && (
               <p className="text-xs text-zinc-400 dark:text-zinc-500 pt-0.5">
-                额外用量 {d.extra.usedPercent != null ? Math.round(d.extra.usedPercent) + '%' : ''}
+                额外用量 {d.extra.usedPercent != null ? fmtUsedPercent(d.extra.usedPercent, { exhaustedLabel: true }) : ''}
                 {d.extra.monthlyLimit != null ? ` · 上限 $${d.extra.monthlyLimit}` : ''}
               </p>
             )}

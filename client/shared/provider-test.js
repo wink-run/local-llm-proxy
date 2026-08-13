@@ -115,13 +115,22 @@ function logProviderTestProbe(ctx = {}, target = {}, phase, result) {
 /** 解析探测响应错误详情 */
 function parseProviderProbeError(body, status) {
   const raw = String(body || '').trim();
-  if (!raw) return status ? `HTTP ${status}` : 'Connection failed';
-  try {
-    const j = JSON.parse(raw);
-    return j.error?.message || j.message || raw.slice(0, 400);
-  } catch {
-    return raw.slice(0, 400);
+  let msg = '';
+  if (!raw) {
+    msg = status ? `HTTP ${status}` : 'Connection failed';
+  } else {
+    try {
+      const j = JSON.parse(raw);
+      msg = String(j.error?.message || j.message || raw).slice(0, 400);
+    } catch {
+      msg = raw.slice(0, 400);
+    }
   }
+  // Kimi Code 等：403 + membership → 订阅失效，勿当普通「连接失败」
+  if (Number(status) === 403 && /membership|会员|订阅|benefits/i.test(`${msg}\n${raw}`)) {
+    return '订阅已失效或未开通，请续费或确认会员状态后重试';
+  }
+  return msg;
 }
 
 module.exports = {

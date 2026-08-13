@@ -596,7 +596,7 @@ async function collectAgentCardsForRegister(cfg) {
   }
 }
 
-/** 处理社区派发的武将任务 */
+/** 处理社区派发的武将任务（支持过程中推送 agent_task_progress） */
 async function handleAgentTask(msg, cfg) {
   const taskId = String(msg.task_id || msg.req_id || '').trim();
   const assistantId = String(msg.assistant_id || '').trim();
@@ -619,21 +619,99 @@ async function handleAgentTask(msg, cfg) {
   }
   const started = Date.now();
   log(`[agent] agent_task → ${taskId} assistant=${assistantId}`);
+
+  const executor = require('./agent-executor');
+  let trackedTaskId = null;
+  let textAcc = '';
+  let lastProgressAt = 0;
+
+  /** 合并 output 步骤正文（snapshot / delta） */
+  function mergeOutput(acc, content, isDelta, isSnapshot) {
+    const c = String(content || '');
+    if (!c) return acc;
+    if (isDelta) return acc + c;
+    if (isSnapshot) {
+      if (!acc) return c;
+      if (c.startsWith(acc)) return c;
+      if (acc.startsWith(c)) return acc;
+      return c;
+    }
+    if (acc.includes(c)) return acc;
+    return acc ? `${acc}\n${c}` : c;
+  }
+
+  function pushProgress(extra = {}) {
+    const now = Date.now();
+    // 节流：至少 80ms 或强制（工具事件 / 收尾）
+    if (!extra.force && now - lastProgressAt < 80) return;
+    lastProgressAt = now;
+    send({
+      type: 'agent_task_progress',
+      task_id: taskId,
+      text: String(textAcc || '').slice(0, 200_000),
+      ...extra,
+    });
+  }
+
+  const onStep = (step) => {
+    if (!trackedTaskId || !step || step.taskId !== trackedTaskId) return;
+    const st = String(step.stepType || '');
+    if (st === 'output') {
+      textAcc = mergeOutput(textAcc, step.content, !!step.is_delta, !!step.is_snapshot);
+      pushProgress({ delta: String(step.content || '').slice(0, 4000) });
+      return;
+    }
+    if (st === 'tool_call') {
+      pushProgress({
+        force: true,
+        event: 'tool',
+        tool: step.tool_name || 'tool',
+      });
+    }
+  };
+
+  executor.on('task:step', onStep);
   try {
-    const executor = require('./agent-executor');
-    const status = await executor.dispatchAndWait(`assistant:${assistantId}`, prompt, {
+    const { taskId: localId } = await executor.execute(`assistant:${assistantId}`, prompt, {
       mode: 'worker',
       clientId: 'contribute',
     });
+    trackedTaskId = localId;
+
+    const timeoutMs = Math.max(30_000, Number(msg.timeout_ms) || 10 * 60 * 1000);
+    const deadline = Date.now() + timeoutMs;
+    let status = null;
+    while (Date.now() < deadline) {
+      status = await executor.getTaskStatus(localId);
+      if (['completed', 'failed', 'cancelled'].includes(status?.status)) break;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    if (!status || !['completed', 'failed', 'cancelled'].includes(status.status)) {
+      try { await executor.cancel(localId); } catch { /* ignore */ }
+      send({
+        type: 'agent_task_result',
+        task_id: taskId,
+        status: 'timeout',
+        error: `Agent task timeout (${Math.round(timeoutMs / 1000)}s)`,
+        usage: { duration_ms: Date.now() - started },
+      });
+      return;
+    }
+
     const output = status?.result?.summary
       || status?.result?.output
+      || textAcc
       || '';
+    if (output && !textAcc) textAcc = String(output);
+    else if (output && String(output).length > textAcc.length) textAcc = String(output);
+    pushProgress({ force: true });
+
     const ok = status?.status === 'completed';
     send({
       type: 'agent_task_result',
       task_id: taskId,
       status: ok ? 'completed' : (status?.status || 'failed'),
-      output: String(output || '').slice(0, 200_000),
+      output: String(textAcc || output || '').slice(0, 200_000),
       error: ok ? null : (status?.error || status?.result?.output || 'failed'),
       usage: { duration_ms: Date.now() - started },
     });
@@ -643,8 +721,11 @@ async function handleAgentTask(msg, cfg) {
       task_id: taskId,
       status: 'failed',
       error: e.message,
+      output: String(textAcc || '').slice(0, 200_000),
       usage: { duration_ms: Date.now() - started },
     });
+  } finally {
+    executor.off('task:step', onStep);
   }
 }
 

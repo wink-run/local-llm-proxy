@@ -182,12 +182,13 @@ async function fetchCodexUsageHttp(provider, { getCfg, saveCfg } = {}) {
   }
   if (!creds || !creds.access_token) creds = readCliCreds('codex') || creds;
   const token = creds && creds.access_token;
-  if (!token) throw new Error('缺少 access_token，请重新登录 ChatGPT/Codex');
+  if (!token) throw new Error('缺少登录凭证，请先完成非官方订阅登录（ChatGPT/Codex）');
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
   const accId = creds.account_id;
   if (accId) headers['ChatGPT-Account-Id'] = accId;
   const resp = await fetch(USAGE_URL, { headers });
-  if (resp.status === 401) throw new Error('401 未授权，请重新登录');
+  if (resp.status === 401) throw new Error('401 未授权，请重新进行非官方订阅登录');
+  if (resp.status === 403) throw new Error('403：订阅已失效或无权访问，请确认 ChatGPT/Codex 会员有效');
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return mapCodexUsage(await resp.json(), prepared);
 }

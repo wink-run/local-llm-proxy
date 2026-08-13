@@ -1,5 +1,5 @@
 // client/src/pages/Contribute.jsx
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getStats, getSettlements, getContributeSummary, listJoinedCircles, listMyCircles, listCommunityAgents, listPublicCommunityAgents } from '../api/client';
 import { getConfig, getGateway, getLocalConfig } from '../api/adapter';
@@ -116,6 +116,8 @@ function collectContributeAvailableModels(saved, accounts, localCfg) {
 
 function ContributionConfigCard({ onStart, onStop, running, stats, agentError, onAgentsRefresh }) {
   const { t } = useLang();
+  const location = useLocation();
+  const pageActive = location.pathname === '/contribute';
   const [selectedNames,   setSelectedNames]   = useState(new Set()); // Set<string>
   const [availableModels, setAvailableModels] = useState([]);        // {name, type}[]
   const [availableAssistants, setAvailableAssistants] = useState([]); // resource rows
@@ -131,6 +133,42 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [showAssistantPicker, setShowAssistantPicker] = useState(false);
   const [copiedAssistantId, setCopiedAssistantId] = useState('');
+  const [assistantPickerBusy, setAssistantPickerBusy] = useState(false);
+  // 首次加载时同步贡献配置里的已选智能体；之后刷新列表不覆盖用户勾选
+  const assistantsHydratedRef = useRef(false);
+
+  /** 可上架的非内置智能体（含投射状态，供选择器过滤） */
+  const refreshAssistants = useCallback(async () => {
+    if (typeof window === 'undefined' || !window.electronAPI?.resource?.listResources) {
+      return [];
+    }
+    try {
+      const asstRes = await window.electronAPI.resource.listResources({ type: 'assistant' });
+      const assistants = asstRes?.success ? (asstRes.resources || []) : (asstRes?.resources || []);
+      const contributable = (Array.isArray(assistants) ? assistants : []).filter((a) => {
+        if (!a) return false;
+        if (a.source === 'builtin' || a.metadata?.builtin) return false;
+        if (String(a.source_url || '').startsWith('builtin:')) return false;
+        return true;
+      });
+      setAvailableAssistants(contributable);
+      // 已选里去掉库中已删除的项；不重置用户刚勾选的
+      const allowedIds = new Set(contributable.map((a) => a.id));
+      setSelectedAssistantIds((prev) => {
+        if (!assistantsHydratedRef.current) return prev;
+        let changed = false;
+        const next = new Set();
+        for (const id of prev) {
+          if (allowedIds.has(id)) next.add(id);
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+      return contributable;
+    } catch {
+      return [];
+    }
+  }, []);
 
   useEffect(() => {
     Promise.all([listMyCircles(), listJoinedCircles()])
@@ -189,8 +227,27 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
           .filter((id) => id && allowedIds.has(id)),
       );
       setSelectedAssistantIds(prevAsst);
+      assistantsHydratedRef.current = true;
     });
   }, []);
+
+  // 打开「上架智能体」选择器时重新拉取，避免资源页刚投射后此处仍是旧列表
+  useEffect(() => {
+    if (!showAssistantPicker) return undefined;
+    let cancelled = false;
+    setAssistantPickerBusy(true);
+    refreshAssistants()
+      .finally(() => {
+        if (!cancelled) setAssistantPickerBusy(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssistantPicker, refreshAssistants]);
+
+  // KeepAlive：从资源页切回交易页时刷新投射状态
+  useEffect(() => {
+    if (!pageActive) return;
+    refreshAssistants();
+  }, [pageActive, refreshAssistants]);
 
   function toggleModel(name) {
     setSelectedNames(prev => {
@@ -473,33 +530,66 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
               <p className="text-[11px] text-zinc-400">{t('contribute.addAssistantHint')}</p>
             )}
             {showAssistantPicker && (
-              <div className="tb-soft-card rounded-xl p-3 space-y-2 max-h-48 overflow-y-auto">
+              <div className="tb-soft-card rounded-xl p-3 space-y-2 max-h-56 overflow-y-auto">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[11px] text-zinc-500">{t('contribute.pickAssistantHint')}</p>
-                  <button
-                    type="button"
-                    onClick={() => setShowAssistantPicker(false)}
-                    className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-                  >
-                    {t('contribute.closePicker')}
-                  </button>
+                  <p className="text-[11px] text-zinc-500">
+                    {assistantPickerBusy
+                      ? t('contribute.pickAssistantRefreshing')
+                      : t('contribute.pickAssistantHint')}
+                  </p>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={assistantPickerBusy}
+                      onClick={() => {
+                        setAssistantPickerBusy(true);
+                        refreshAssistants().finally(() => setAssistantPickerBusy(false));
+                      }}
+                      className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 disabled:opacity-40"
+                    >
+                      {t('contribute.refreshAssistants')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAssistantPicker(false)}
+                      className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                    >
+                      {t('contribute.closePicker')}
+                    </button>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {availableAssistants
-                    .filter((a) => !selectedAssistantIds.has(a.id) && !assistantDisabledReason(a))
-                    .map((a) => (
-                      <button
-                        key={a.id}
-                        type="button"
-                        title={a.description || a.name}
-                        onClick={() => toggleAssistant(a.id)}
-                        className="tb-tag tb-tag-muted px-2.5 py-1 text-xs cursor-pointer"
-                      >
-                        {a.display_name || a.name}
-                      </button>
-                    ))}
+                    .filter((a) => !selectedAssistantIds.has(a.id))
+                    .map((a) => {
+                      const reason = assistantDisabledReason(a);
+                      const label = a.display_name || a.name;
+                      if (reason) {
+                        return (
+                          <span
+                            key={a.id}
+                            title={reason}
+                            className="tb-tag tb-tag-muted px-2.5 py-1 text-xs opacity-55 cursor-not-allowed"
+                          >
+                            {label}
+                            <span className="ml-1 text-[10px] opacity-80">· {reason}</span>
+                          </span>
+                        );
+                      }
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          title={a.description || a.name}
+                          onClick={() => toggleAssistant(a.id)}
+                          className="tb-tag tb-tag-muted px-2.5 py-1 text-xs cursor-pointer"
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
                   {availableAssistants.filter((a) => !selectedAssistantIds.has(a.id) && !assistantDisabledReason(a)).length === 0 && (
-                    <p className="text-[11px] text-zinc-400">{t('contribute.noAddableAssistants')}</p>
+                    <p className="text-[11px] text-zinc-400 w-full">{t('contribute.noAddableAssistants')}</p>
                   )}
                 </div>
               </div>
