@@ -10,14 +10,20 @@
 // 供给源排序类（全局策略，不涉及具体模型）：cost / speed / fallback / round-robin / weighted / direct。
 // 模型链类（用户选模型）：scene_steps —— 由 route() 先解析 steps 产出多模型链，每步的候选源再套本表排序。
 
-// 「实惠度」档位（越小越先）：免费 < 订阅 < 预付 < 按量 < 未知
+/**
+ * 计费档位（越小越先）：订阅 → 免费 → 预付 → 未知 → 按量。
+ * 同模型多源默认按此序，再比速度。
+ */
 function costRank(p) {
-  if (p.type === 'free') return 0;
   const src = String(p.source || p.billing_type || '').toLowerCase();
-  if (src === 'subscription' || src === 'sub') return 1;
+  // 订阅（OAuth / API 订阅账户）优先于一切免费与按量
+  if (src === 'subscription' || src === 'sub') return 0;
+  if (p.type === 'free') return 1;
   if (src === 'prepaid') return 2;
-  if (src === 'payg' || src === 'api') return 4;
-  return 3;   // 未知居中，仍排在按量前
+  if (src === 'payg' || src === 'api' || src === 'api-key' || src === 'api_key') return 4;
+  // paid/p2p 未标注 source 时按按量处理，避免误插到订阅档
+  if (p.type === 'paid' || p.type === 'p2p') return 4;
+  return 3;
 }
 
 // 稳定排序辅助：sort 不保证稳定的 tie 处理 —— 用原索引兜底保持相对顺序
@@ -25,14 +31,27 @@ function stableSort(arr, cmp) {
   return arr.map((v, i) => [v, i]).sort((a, b) => cmp(a[0], b[0]) || (a[1] - b[1])).map(x => x[0]);
 }
 
+function _speedScore(p, ctx) {
+  const lat = ctx.latencyMap || {};
+  // 优先 ctx.speedByProvider[providerId]（同模型分源 TTFT），再 latencyMap
+  const byProv = ctx.speedByProvider || {};
+  const v = byProv[p.id] != null ? byProv[p.id] : lat[p.id];
+  return (v == null || !Number.isFinite(Number(v)) ? Infinity : Number(v));
+}
+
 function orderCost(cands) {
   return stableSort(cands, (a, b) => costRank(a) - costRank(b));
 }
 
 function orderSpeed(cands, ctx) {
-  const lat = ctx.latencyMap || {};
-  const score = (p) => { const v = lat[p.id]; return (v == null ? Infinity : v); };
-  return stableSort(cands, (a, b) => score(a) - score(b));
+  return stableSort(cands, (a, b) => _speedScore(a, ctx) - _speedScore(b, ctx));
+}
+
+/** 默认同模型多源：先计费档，再同档比速度（学习到的 TTFT） */
+function orderBillingThenSpeed(cands, ctx = {}) {
+  return stableSort(cands, (a, b) => (
+    (costRank(a) - costRank(b)) || (_speedScore(a, ctx) - _speedScore(b, ctx))
+  ));
 }
 
 // round-robin 轮转起点（按 key 记忆，其余作 failover 备用）
@@ -56,7 +75,7 @@ function orderWeighted(cands) {
 
 const ROUTING_STRATEGIES = {
   fallback:      (cands) => [...cands],                    // 按候选原顺序依次 failover
-  cost:          (cands) => orderCost(cands),              // 实惠优先：订阅/免费 → 按量
+  cost:          (cands, ctx) => orderBillingThenSpeed(cands, ctx), // 订阅→免费→按量，同类再比速度
   speed:         (cands, ctx) => orderSpeed(cands, ctx),   // 速度优先：低延迟先，不通再慢的
   latency:       (cands, ctx) => orderSpeed(cands, ctx),   // 别名（兼容旧 policy 的 latency）
   'round-robin': (cands, ctx) => orderRoundRobin(cands, ctx),
@@ -76,11 +95,12 @@ function orderCandidates(strategyName, candidates, ctx = {}) {
 //   providerTier: 供给源层 'free'|'paid'|'p2p'；source: 计费来源 'subscription'|'payg'|…
 //   price: 模型刊例价（可空，cost 的次级排序）；speedMs: 实测延迟（可空，speed 用）
 function _costRankCand(c) {
-  if (c.providerTier === 'free') return 0;
   const s = String(c.source || '').toLowerCase();
-  if (s === 'subscription' || s === 'sub') return 1;
+  if (s === 'subscription' || s === 'sub') return 0;
+  if (c.providerTier === 'free') return 1;
   if (s === 'prepaid') return 2;
-  if (s === 'payg' || s === 'api') return 4;
+  if (s === 'payg' || s === 'api' || s === 'api-key' || s === 'api_key') return 4;
+  if (c.providerTier === 'paid' || c.providerTier === 'p2p') return 4;
   return 3;
 }
 function orderModelCandidates(strategyName, cands, ctx = {}) {
@@ -88,11 +108,17 @@ function orderModelCandidates(strategyName, cands, ctx = {}) {
   const n = (v, d) => (v == null || !Number.isFinite(Number(v)) ? d : Number(v));
   try {
     switch (strategyName) {
-      case 'auto':          // 综合最优：客户端按实测延迟排（star 的可得代理），
-                            // p2p 候选的真实 star 排序在服务端（reward_multiplier）完成
-        return stableSort(arr, (a, b) => n(a.speedMs, Infinity) - n(b.speedMs, Infinity));
-      case 'cost':          // 源计费分类优先（订阅/免费在前），同类再按模型价便宜先
-        return stableSort(arr, (a, b) => (_costRankCand(a) - _costRankCand(b)) || (n(a.price, Infinity) - n(b.price, Infinity)));
+      case 'auto':          // 综合最优：计费档优先，再比实测延迟（避免同模型反复走慢源）
+        return stableSort(arr, (a, b) => (
+          (_costRankCand(a) - _costRankCand(b))
+          || (n(a.speedMs, Infinity) - n(b.speedMs, Infinity))
+        ));
+      case 'cost':          // 订阅→免费→按量；同类先比速度，再比刊例价
+        return stableSort(arr, (a, b) => (
+          (_costRankCand(a) - _costRankCand(b))
+          || (n(a.speedMs, Infinity) - n(b.speedMs, Infinity))
+          || (n(a.price, Infinity) - n(b.price, Infinity))
+        ));
       case 'speed':         // 实测延迟低的先，无数据最后
         return stableSort(arr, (a, b) => n(a.speedMs, Infinity) - n(b.speedMs, Infinity));
       case 'round-robin':   return orderRoundRobin(arr, ctx);
@@ -106,4 +132,7 @@ function orderModelCandidates(strategyName, cands, ctx = {}) {
 /** 已注册的全局供给源排序策略名（供 UI 下拉/校验）。scene_steps 不在此列（属模型链类）。 */
 const GLOBAL_STRATEGY_NAMES = ['auto', 'cost', 'speed', 'fallback', 'round-robin', 'weighted'];
 
-module.exports = { ROUTING_STRATEGIES, orderCandidates, orderModelCandidates, costRank, GLOBAL_STRATEGY_NAMES };
+module.exports = {
+  ROUTING_STRATEGIES, orderCandidates, orderModelCandidates, costRank,
+  orderBillingThenSpeed, orderCost, orderSpeed, GLOBAL_STRATEGY_NAMES,
+};

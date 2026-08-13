@@ -292,10 +292,16 @@ function anthropicMessagesToOai(messages, opts = {}) {
 
     if (role === 'assistant') {
       const textParts = [];
+      const thinkParts = [];
       const toolCalls = [];
       for (const block of content) {
         if (block?.type === 'text' && block.text) textParts.push(block.text);
-        else if (block?.type === 'tool_use') {
+        // DeepSeek/Kimi thinking 模式：多轮必须把上一轮推理以 reasoning_content 回传
+        else if (block?.type === 'thinking' && block.thinking) thinkParts.push(String(block.thinking));
+        else if (block?.type === 'redacted_thinking') {
+          // 无明文时仍占位，避免上游报「must be passed back」
+          thinkParts.push(block.data ? String(block.data) : '(redacted)');
+        } else if (block?.type === 'tool_use') {
           toolCalls.push({
             id: block.id,
             type: 'function',
@@ -309,7 +315,9 @@ function anthropicMessagesToOai(messages, opts = {}) {
       const oaiMsg = { role: 'assistant' };
       if (textParts.length) oaiMsg.content = textParts.join('');
       else if (!toolCalls.length) oaiMsg.content = '';
+      else oaiMsg.content = null; // 纯工具调用：与 OpenAI 惯例一致
       if (toolCalls.length) oaiMsg.tool_calls = toolCalls;
+      if (thinkParts.length) oaiMsg.reasoning_content = thinkParts.join('\n');
       out.push(oaiMsg);
       continue;
     }
@@ -469,6 +477,9 @@ function oaiMessagesToAnthropic(messages) {
     }
     if (m.role === 'assistant') {
       const blocks = [];
+      // OpenAI 客户端多轮：保留 reasoning_content → Anthropic thinking
+      const reasoning = typeof m.reasoning_content === 'string' ? m.reasoning_content.trim() : '';
+      if (reasoning) blocks.push({ type: 'thinking', thinking: reasoning });
       const text = typeof m.content === 'string' ? m.content : '';
       if (text) blocks.push({ type: 'text', text });
       blocks.push(...oaiToolCallsToAnthBlocks(m));
@@ -499,7 +510,10 @@ function openaiToAnthropic(oai, model) {
   const finish = choice.finish_reason || 'stop';
   const usage  = oai.usage || {};
   const content = [];
-  const text = (typeof msg.content === 'string' ? msg.content : '') || msg.reasoning_content || '';
+  // 推理单独成 thinking 块，便于 Claude Code 多轮原样回传 → 再转成 reasoning_content
+  const reasoning = typeof msg.reasoning_content === 'string' ? msg.reasoning_content.trim() : '';
+  if (reasoning) content.push({ type: 'thinking', thinking: reasoning });
+  const text = typeof msg.content === 'string' ? msg.content : '';
   if (text) content.push({ type: 'text', text });
   const toolBlocks = oaiToolCallsToAnthBlocks(msg);
   content.push(...toolBlocks);
@@ -794,6 +808,92 @@ function noteCooldown(provider, model, err, sharer) {
     console.log(`[gateway-cooldown] ${key} 冷却至 ${until}（${e.reason}）→ 后续请求将下沉此候选`);
   }
   return e;
+}
+
+/** 构建同模型各源的速度表（分源 TTFT / 历史延迟 / policy 延迟） */
+function buildSpeedByProvider(model, providers) {
+  const map = {};
+  let ps = null;
+  try { ps = require('./provider-speed'); } catch {}
+  let hist = null;
+  try {
+    if (_localStats?.queryModelProviderLatency) {
+      hist = _localStats.queryModelProviderLatency(_localStats.sinceTsForDays?.(7) || (Math.floor(Date.now() / 1000) - 7 * 86400));
+    }
+  } catch {}
+  const modelHist = hist && (hist[model] || hist[String(model || '').toLowerCase()]);
+  let latMap = {};
+  try { latMap = reqRouter.getLatencyMap?.() || {}; } catch {}
+  for (const p of providers || []) {
+    if (!p?.id) continue;
+    let ms = ps ? ps.getProviderSpeedMs(model, p.id) : null;
+    if (ms == null && modelHist?.[p.id]) {
+      const h = modelHist[p.id];
+      const v = Number(h.avg_ttft_ms ?? h.last_ttft_ms ?? h.last_latency_ms);
+      if (Number.isFinite(v) && v > 0) ms = v;
+    }
+    if (ms == null && latMap[p.id] != null) ms = Number(latMap[p.id]);
+    if (ms != null && Number.isFinite(ms)) map[p.id] = ms;
+  }
+  return map;
+}
+
+/**
+ * 同模型多源默认序：订阅 → 免费 → 按量；同档比速度；再把冷却/慢源下沉。
+ * 用于直连与场景步（非用户指定 provider 时）。
+ */
+function orderSameModelProviders(providers, model, sharer) {
+  const list = Array.isArray(providers) ? providers.slice() : [];
+  if (list.length <= 1) return list;
+  const speedByProvider = buildSpeedByProvider(model, list);
+  const ranked = routingStrategies.orderBillingThenSpeed(list, { speedByProvider });
+  return cooldown.sink(ranked, (p) => coolKey(p, model, sharer));
+}
+
+/**
+ * 成功后学习：相对同模型其它源明显更慢 → 短时下沉，避免下次仍先撞慢源。
+ */
+function learnSlowPeers(model, winner, result, peers, sharer) {
+  if (!winner?.id || !model) return;
+  const winnerMs = Number(result?.first_token_ms || result?.latency);
+  if (!Number.isFinite(winnerMs) || winnerMs <= 0) return;
+  const speedByProvider = buildSpeedByProvider(model, peers);
+  speedByProvider[winner.id] = winnerMs;
+  const known = Object.values(speedByProvider).filter((v) => Number.isFinite(v) && v > 0);
+  const best = known.length ? Math.min(...known) : winnerMs;
+  // 阈值：≥ max(最快×3, 15s) 视为慢源
+  const slowFloor = Math.max(best * 3, 15_000);
+  for (const p of peers || []) {
+    if (!p?.id || p.id === winner.id) continue;
+    const ms = speedByProvider[p.id];
+    if (ms == null || !Number.isFinite(ms)) continue;
+    if (ms < slowFloor) continue;
+    const key = coolKey(p, model, sharer);
+    const e = cooldown.noteSlow(key, undefined, `${Math.round(ms)}ms vs best ${Math.round(best)}ms`);
+    if (e && e._new) {
+      console.log(`[gateway-cooldown] ${key} 慢源学习下沉（${e.note}）→ 优先走更快供给源`);
+    }
+  }
+  // 本次赢家自己若远慢于已知最佳，也下沉（罕见：排序数据陈旧时先撞上慢源）
+  if (winnerMs >= slowFloor && best < winnerMs) {
+    const key = coolKey(winner, model, sharer);
+    const e = cooldown.noteSlow(key, undefined, `self ${Math.round(winnerMs)}ms`);
+    if (e && e._new) {
+      console.log(`[gateway-cooldown] ${key} 本次偏慢，下沉以便下次先试更快源`);
+    }
+  }
+}
+
+function recordProviderSpeed(model, provider, result, streaming) {
+  try {
+    require('./provider-speed').record(model, {
+      firstTokenMs: result?.first_token_ms,
+      outputTokens: result?.output_tokens,
+      totalMs: result?.latency,
+      streaming,
+      providerId: provider?.id,
+    });
+  } catch {}
 }
 
 /** 用户是否在供给源页启用了社区分享网络 */
@@ -1312,7 +1412,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       // text → {type:text}+text_delta；tool_calls → {type:tool_use}+input_json_delta（增量 partial_json）。
       // 文本/工具块按出现顺序分配 index；切换块前先 content_block_stop 上一个。
       let nextBlockIndex = 0;
-      let cur = null; // { kind:'text'|'tool', index, oaiIndex }
+      let cur = null; // { kind:'text'|'tool'|'thinking', index, oaiIndex }
       const closeCur = () => {
         if (!cur) return;
         res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: cur.index })}\n\n`);
@@ -1324,6 +1424,14 @@ function proxyConvertStream(provider, oaiBody, model, res) {
         cur = { kind: 'text', index };
         res.write(`event: content_block_start\ndata: ${JSON.stringify({
           type: 'content_block_start', index, content_block: { type: 'text', text: '' },
+        })}\n\n`);
+      };
+      const openThinking = () => {
+        closeCur();
+        const index = nextBlockIndex++;
+        cur = { kind: 'thinking', index };
+        res.write(`event: content_block_start\ndata: ${JSON.stringify({
+          type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '' },
         })}\n\n`);
       };
       const openTool = (oaiIndex, id, name) => {
@@ -1354,9 +1462,23 @@ function proxyConvertStream(provider, oaiBody, model, res) {
             }
             const choice = (c.choices || [{}])[0];
             const delta  = choice.delta || {};
-            // kimi 等模型经火山 v3 转发时文本可能在 reasoning_content
-            const text   = delta.content || delta.reasoning_content || '';
+            // 推理与正文分流：reasoning → thinking 块，content → text 块（多轮才能回传）
+            const reasoning = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : '';
+            const text = typeof delta.content === 'string' ? delta.content : '';
             const finish = choice.finish_reason;
+            if (reasoning) {
+              ensureStreamStarted();
+              if (firstTokenMs === null) {
+                firstTokenMs = Date.now() - t0;
+                ttftGuard?.onFirstToken();
+              }
+              outputTokens++;
+              if (!cur || cur.kind !== 'thinking') openThinking();
+              res.write(`event: content_block_delta\ndata: ${JSON.stringify({
+                type: 'content_block_delta', index: cur.index,
+                delta: { type: 'thinking_delta', thinking: reasoning },
+              })}\n\n`);
+            }
             if (text) {
               ensureStreamStarted();
               if (firstTokenMs === null) {
@@ -2445,6 +2567,41 @@ function parseFixedTemperatureError(err) {
   return Number.isFinite(v) ? v : null;
 }
 
+// DeepSeek thinking 模式：历史 assistant 缺 reasoning_content 时会 400。
+// 兼容 OpenAI（reasoning_content 字段）与 Anthropic（thinking 块）报文。
+function isMissingReasoningContentError(err) {
+  const text = [err && err.message, err && err.body].filter(Boolean).join('\n');
+  return /reasoning_content[\s\S]{0,80}must be passed back/i.test(text);
+}
+
+function ensureReasoningContentOnAssistants(body, placeholder = ' ') {
+  if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return body;
+  let changed = false;
+  const messages = body.messages.map((m) => {
+    if (!m || m.role !== 'assistant') return m;
+
+    // Anthropic：content 为块数组 → 补 thinking 块（转 OAI 时会变成 reasoning_content）
+    if (Array.isArray(m.content)) {
+      const hasThinking = m.content.some(
+        (b) => b && (b.type === 'thinking' || b.type === 'redacted_thinking'),
+      );
+      if (hasThinking) return m;
+      changed = true;
+      return {
+        ...m,
+        content: [{ type: 'thinking', thinking: placeholder }, ...m.content],
+      };
+    }
+
+    // OpenAI：顶层 reasoning_content
+    const has = typeof m.reasoning_content === 'string' && m.reasoning_content.length > 0;
+    if (has) return m;
+    changed = true;
+    return { ...m, reasoning_content: placeholder };
+  });
+  return changed ? { ...body, messages } : body;
+}
+
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res, routeMeta = null) {
   const providerId = provider && provider.id;
   // 已学习的 set/strip：首包改写，避免每次先 400 再同源重试
@@ -2460,6 +2617,24 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   } catch (err) {
     // 响应已开始写出则无法改参重试；429 等硬错误交给外层 cooldown 降级
     if (res && res.headersSent) throw err;
+
+    // thinking 多轮缺 reasoning_content：补占位后同源再试（修好后再 failover 到第二源才有意义）
+    if (isMissingReasoningContentError(err)) {
+      const fixedReasoning = ensureReasoningContentOnAssistants(reqBody);
+      if (fixedReasoning !== reqBody) {
+        console.log(`[gateway] body-fix 重试 fill:reasoning_content model="${attemptModel}" via "${providerId}"`);
+        try {
+          return await callProviderOnce(
+            provider, isAnthropic, streaming, reqPath,
+            fixedReasoning, attemptModel, res, routeMeta,
+          );
+        } catch (err2) {
+          // 仍失败则继续走通用改参 / 外层 failover
+          err = err2;
+        }
+      }
+    }
+
     const mutations = upstreamHints.parseBodyConstraintError(err);
     if (!mutations) throw err;
     const fixedBody = upstreamHints.applyMutations(reqBody, mutations);
@@ -2944,8 +3119,7 @@ function stratStepOf(scene) {
 // 另有 provider(锁具体源) / model(锁具体模型)。
 function buildStrategyCandidates(strategyName, filters, reqPath, skipP2P, rrKey) {
   const modality = modalityOf(reqPath);
-  let speedMap = {}; try { speedMap = require('./provider-speed').getSpeedMap(); } catch {}
-  const normSp = (id) => { let s = String(id || '').trim().toLowerCase(); const i = s.lastIndexOf('/'); return i >= 0 ? s.slice(i + 1) : s; };
+  let ps = null; try { ps = require('./provider-speed'); } catch {}
   const scope = filters && filters.scope;
   const personalSet = scope === 'personal' ? new Set(collectPersonalModels()) : null;
   const cands = [];
@@ -2961,9 +3135,10 @@ function buildStrategyCandidates(strategyName, filters, reqPath, skipP2P, rrKey)
       if (!name || mtype !== modality) continue;
       if (personalSet && !personalSet.has(name)) continue;           // 来源=个人：模型须在个人源集
       if (filters && filters.model && name !== filters.model) continue;
-      const sp = speedMap[normSp(name)];
+      // 分源测速优先，避免同模型多源共享一个 TTFT
+      const speedMs = ps ? ps.getProviderSpeedMs(name, p.id) : null;
       cands.push({ providerId: p.id, provider: p, providerTier: p.type, source: p.source, model: name,
-                   speedMs: sp ? (sp.ttft_ms ?? sp.lat_ms ?? null) : null });
+                   speedMs });
     }
   }
   if (!cands.length) return [];
@@ -3196,7 +3371,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res,
           (stratMeta.strategy || stratMeta.sharer) ? stratMeta : null);
         if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
-        try { require('./provider-speed').record(c.model, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
+        recordProviderSpeed(c.model, c.provider, result, streaming);
+        learnSlowPeers(c.model, c.provider, result, ordered.map(x => x.provider).filter(Boolean), stratSharer);
         pushLog({ ts: t0, requested_model: origModel, model: c.model, scene_name: _stratScene.scene_name, claude_from: claudeFrom,
                   tier: c.provider.type, via: c.provider.id, via_label: c.provider.label,
                   latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
@@ -3289,6 +3465,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null, reqPath);
             reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
             if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
+            recordProviderSpeed(c.model, c.provider, result, streaming);
+            learnSlowPeers(c.model, c.provider, result, sOrdered.map(x => x.provider).filter(Boolean), stepSharer);
             cooldown.clear(coolKey(c.provider, c.model, stepSharer));   // 成功 → 清除冷却
             return;
           } catch (err) {
@@ -3324,10 +3502,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       const stepMeta = (step.strategy || step.sharer)
         ? { strategy: step.strategy || null, sharer: step.sharer || null } : routeMeta;
       const stepMetaSharer = stepMeta && stepMeta.sharer;   // 有效钉选 worker（与发给服务端的 meta 一致）
-      const stepProviders = cooldown.sink([
-        ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
-        ...stepCandidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
-      ], (p) => coolKey(p, stepModel, stepMetaSharer));   // 冷却中的源下沉到末尾（fresh 先试，省对必失败源的空跑）
+      // 未锁具体源时：订阅→免费→按量，同档比速度，冷却/慢源下沉
+      const stepProviders = step.provider
+        ? stepCandidates
+        : orderSameModelProviders(stepCandidates, stepModel, stepMetaSharer);
       let   stepSucceeded = false;
 
       // 识图增强：本步只预处理一次；failover 共用替换后的 body
@@ -3370,7 +3548,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           recordStats(provider.id, stepModel, fillMissingInputTokens(result, stepBody), stepTier, callerKey, streaming, provider.billing_type || null, reqPath);
           reportUsage(provider.id, stepModel, stepTok);
           if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
-          try { require('./provider-speed').record(stepModel, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
+          recordProviderSpeed(stepModel, provider, result, streaming);
+          learnSlowPeers(stepModel, provider, result, stepProviders, stepMetaSharer);
           cooldown.clear(coolKey(provider, stepModel, stepMetaSharer));   // 成功 → 清除冷却
           stepSucceeded = true;
           return;
@@ -3445,20 +3624,13 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
                 features: { task_type: features.task_type, has_tools: features.has_tools,
                             context_length: features.context_length }, status: 'routing' });
     } else {
-      // fallthrough：策略组为空或未匹配，用原有 model 匹配逻辑（具体源在前）。
-      // 注：全局排序策略已改为「策略路由」(llm-router-cost 等)，直连请求不再全局重排。
+      // fallthrough：策略组为空或未匹配 → 同模型多源默认序（订阅→免费→按量 + 速度）
       const candidates = allEnabled.filter(p => providerHasModel(p, model, modelMatch));
-      sorted = [
-        ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
-        ...candidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
-      ];
+      sorted = orderSameModelProviders(candidates, model, routeMeta && routeMeta.sharer);
     }
   } catch {
     const candidates = allEnabled.filter(p => providerHasModel(p, model, modelMatch));
-    sorted = [
-      ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
-      ...candidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
-    ];
+    sorted = orderSameModelProviders(candidates, model, routeMeta && routeMeta.sharer);
   }
 
   // 请求体指定 tier 时只走对应供给层（同模型跨 P2P/付费/免费）
@@ -3506,7 +3678,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res, routeMeta);
       // 记录延迟（供 latency 策略下次参考）
       if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
-      try { require('./provider-speed').record(model, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
+      recordProviderSpeed(model, provider, result, streaming);
+      learnSlowPeers(model, provider, result, sorted, routeMeta && routeMeta.sharer);
+      cooldown.clear(coolKey(provider, model, routeMeta && routeMeta.sharer));
       pushLog({
         ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
         tier: provider.type, via: provider.id, via_label: provider.label,
@@ -3540,6 +3714,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       });
       routeErrors.push({ id: provider.id, err });
       lastErr = err;
+      noteCooldown(provider, model, err, routeMeta && routeMeta.sharer);
       if (res.headersSent) return;
       await pauseBeforeNextProvider(err);
     }
@@ -4097,6 +4272,8 @@ module.exports = {
   providerSupportsResponses, resolveUpstreamUrl, providerApiFormat,
   // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
+  // thinking / reasoning_content 多轮回传（DeepSeek 等）
+  isMissingReasoningContentError, ensureReasoningContentOnAssistants,
   // Gemini 转换（供单测/复用，含 tool-calling）
   oaiToGeminiBody, geminiExtractParts, sanitizeGeminiSchema,
   // 上游 400 报文约束解析（供单测；完整 API 见 gateway-upstream-hints）

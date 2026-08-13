@@ -16,8 +16,78 @@
  *   isOauthProvider(provider) / prepare(provider, getConfig, saveConfig)   // 网关代理前用
  */
 const crypto = require('crypto');
+const http = require('http');
+const https = require('https');
+const { resolveOutboundProxyAgent } = require('../../shared/outbound-proxy');
 
 const REFRESH_SKEW_SEC = 180;
+const OAUTH_HTTP_TIMEOUT_MS = 60_000;
+
+/** 可选：由 main 注入，读取设置里的 network_proxy（与网关探测一致） */
+let _getNetworkProxy = null;
+function setNetworkProxyGetter(fn) {
+  _getNetworkProxy = typeof fn === 'function' ? fn : null;
+}
+function currentNetworkProxy() {
+  try { return _getNetworkProxy ? _getNetworkProxy() : null; } catch { return null; }
+}
+
+/** 将 DNS/代理/TLS 等底层错误转成可读提示（避免只剩 TypeError: fetch failed） */
+function formatOauthNetworkError(err) {
+  const msg = (err && err.message) || String(err || 'unknown');
+  const hint = '请检查网络代理（设置中的网络代理，或 HTTPS_PROXY/HTTP_PROXY）后重试';
+  if (/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|socket hang up|certificate|UNABLE_TO|Request timeout|network/i.test(msg)) {
+    return `连接 OAuth 失败：${msg}。${hint}`;
+  }
+  return msg;
+}
+
+/**
+ * OAuth 出站请求：走 provider/network_proxy/环境变量代理（Node 原生 fetch 不读 HTTPS_PROXY）。
+ * 返回 { status, text, ok }。
+ */
+function oauthHttp(url, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  const headers = { ...(opts.headers || {}) };
+  const body = opts.body != null ? String(opts.body) : null;
+  if (body && headers['Content-Length'] == null && headers['content-length'] == null) {
+    headers['Content-Length'] = Buffer.byteLength(body);
+  }
+  const agent = resolveOutboundProxyAgent({
+    urlStr: url,
+    networkProxy: currentNetworkProxy(),
+  });
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(url); } catch (e) { reject(e); return; }
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''),
+      method,
+      headers,
+      timeout: OAUTH_HTTP_TIMEOUT_MS,
+      ...(agent ? { agent } : {}),
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (d) => chunks.push(d));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        const status = res.statusCode || 0;
+        resolve({ status, text, ok: status >= 200 && status < 300 });
+      });
+      res.on('error', (e) => reject(new Error(formatOauthNetworkError(e))));
+    });
+    req.on('error', (e) => reject(new Error(formatOauthNetworkError(e))));
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(formatOauthNetworkError(new Error('Request timeout'))));
+    });
+    if (body) req.write(body);
+    req.end();
+  });
+}
 const CLAUDE_CODE_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude.";
 const CLAUDE_CLI_VERSION = '2.1.161';
 const CLAUDE_DEFAULT_HEADERS = {
@@ -121,18 +191,18 @@ async function postToken(cfg, params) {
   let body;
   if (isJson) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(params); }
   else { headers['Content-Type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams(params).toString(); }
-  const resp = await fetch(cfg.tokenUrl, { method: 'POST', headers, body });
-  if (!resp.ok) throw new Error(`token endpoint HTTP ${resp.status}: ${await resp.text()}`);
-  return resp.json();
+  const resp = await oauthHttp(cfg.tokenUrl, { method: 'POST', headers, body });
+  if (!resp.ok) throw new Error(`token endpoint HTTP ${resp.status}: ${resp.text}`);
+  try { return JSON.parse(resp.text || '{}'); }
+  catch (e) { throw new Error(`token endpoint 返回非 JSON：${(resp.text || '').slice(0, 200)}`); }
 }
 
 /** 通用请求，返回 { status, json, text }（设备码流要看状态码/error 字段判断 pending）。 */
-async function fetchStatus(url, opts) {
-  const resp = await fetch(url, opts);
-  const text = await resp.text();
+async function fetchStatus(url, opts = {}) {
+  const resp = await oauthHttp(url, opts);
   let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch {}
-  return { status: resp.status, json, text };
+  try { json = resp.text ? JSON.parse(resp.text) : null; } catch {}
+  return { status: resp.status, json, text: resp.text };
 }
 
 /** 解码 JWT payload（不验签，仅取声明，如 Codex 的 chatgpt_account_id）。 */
@@ -400,4 +470,5 @@ async function prepare(provider, getConfig, saveConfig, opts = {}) {
 module.exports = {
   PROVIDERS, getModule, isOauthProvider, prepare,
   startLogin, completeLogin, poll, refresh, needsRefresh, applyAuth,
+  setNetworkProxyGetter,
 };

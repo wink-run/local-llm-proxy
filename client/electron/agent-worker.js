@@ -18,6 +18,11 @@ const {
   assertAssistantContributed,
   validateAssistantEligible,
 } = require('./contribute-assistants');
+const {
+  resolveConsumerKey,
+  contributeSessionKey,
+  ensureContributeWorkspace,
+} = require('./contribute-session');
 
 // 贡献者 worker 回传上游错误时，把上游的限流/配额重置时刻从响应头(Retry-After / *-ratelimit-*-reset)
 // 解析出来、规范成 " (reset at <ISO+00:00>)" 追加到错误文本——这些头在 p2p 多跳中会丢，但错误文本
@@ -71,6 +76,68 @@ function loadConfig() {
 function saveConfig(cfg) {
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+}
+
+/** 类型优先级：生图/嵌入 > 图文 > 文本（避免先写入的 chat 盖住 vision） */
+function modelTypeRank(t) {
+  const x = String(t || 'chat').trim();
+  if (x === 'image' || x === 'embedding') return 3;
+  if (x === 'vision' || x === 'vl' || x === 'vlm') return 2;
+  return 1;
+}
+
+function normalizeRegModelType(t) {
+  const x = String(t || 'chat').trim().toLowerCase();
+  if (x === 'vision' || x === 'vl' || x === 'vlm' || x === 'multimodal') return 'vision';
+  if (x === 'image' || x === 'img' || x === 'imggen') return 'image';
+  if (x === 'embedding' || x === 'embed' || x === 'embeddings') return 'embedding';
+  return 'chat';
+}
+
+/** 从 providers[].models 收集 name→type（供给源页改图文后以此为准） */
+function providerModelTypeMap(cfg) {
+  const map = {};
+  for (const p of cfg?.providers || []) {
+    if (!p || p.type === 'p2p') continue;
+    for (const m of p.models || []) {
+      if (typeof m === 'string') continue;
+      const name = String(m?.name || m?.id || '').trim();
+      if (!name) continue;
+      const t = normalizeRegModelType(m.type || 'chat');
+      const cur = map[name];
+      if (!cur || modelTypeRank(t) >= modelTypeRank(cur)) map[name] = t;
+    }
+  }
+  return map;
+}
+
+/**
+ * 注册用模型列表：带上 type。
+ * 贡献配置里常残留 type=chat；用 providers 上的图文/生图覆盖。
+ */
+function modelsForRegister(cfg) {
+  const typeMap = providerModelTypeMap(cfg);
+  const raw = cfg?.model_groups?.length
+    ? cfg.model_groups.flatMap(g => g.models || [])
+    : (cfg?.models || []);
+  const out = [];
+  const seen = new Set();
+  for (const m of raw) {
+    let name;
+    let type = 'chat';
+    if (typeof m === 'string') {
+      name = m.trim();
+    } else if (m && typeof m === 'object') {
+      name = String(m.name || m.id || '').trim();
+      type = normalizeRegModelType(m.type || 'chat');
+    } else continue;
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const fromProv = typeMap[name];
+    if (fromProv && modelTypeRank(fromProv) >= modelTypeRank(type)) type = fromProv;
+    out.push({ name, type });
+  }
+  return out;
 }
 
 /** 从贡献配置中移除指定模型（服务端下线通知后持久化） */
@@ -618,7 +685,11 @@ async function handleAgentTask(msg, cfg) {
     return;
   }
   const started = Date.now();
-  log(`[agent] agent_task → ${taskId} assistant=${assistantId}`);
+  // 按调用方隔离：不同用户不共用 CLI sessionKey / 工作目录，也不污染本机游乐场标签
+  const consumerKey = resolveConsumerKey(msg);
+  const sessionKey = contributeSessionKey(assistantId, consumerKey);
+  const workingDir = ensureContributeWorkspace(assistantId, consumerKey);
+  log(`[agent] agent_task → ${taskId} assistant=${assistantId} consumer=${consumerKey} cwd=${workingDir}`);
 
   const executor = require('./agent-executor');
   let trackedTaskId = null;
@@ -672,9 +743,16 @@ async function handleAgentTask(msg, cfg) {
 
   executor.on('task:step', onStep);
   try {
+    // 社区任务本轮附图（data URL）→ executor 落盘 / Claude 多模态
+    const attachImages = Array.isArray(msg.images) ? msg.images : [];
     const { taskId: localId } = await executor.execute(`assistant:${assistantId}`, prompt, {
       mode: 'worker',
       clientId: 'contribute',
+      sessionKey,
+      workingDir,
+      // 接单一律新开 CLI 会话；多轮上下文由调用方在 prompt 中携带
+      continueSession: false,
+      images: attachImages.length ? attachImages : undefined,
     });
     trackedTaskId = localId;
 
@@ -739,9 +817,7 @@ function connect(cfg) {
   const thisSocket = ws;
 
   ws.on('open', () => {
-    const models = liveCfg.model_groups?.length
-      ? liveCfg.model_groups.flatMap(g => g.models || [])
-      : (liveCfg.models || []);
+    const models = modelsForRegister(liveCfg);
     const regMsg = {
       type: 'register',
       worker_key: liveCfg.worker_key,
@@ -793,11 +869,9 @@ function connect(cfg) {
 
     if (msg.type === 'registered') {
       log(`[agent] connected worker_id=${msg.worker_id}`);
-      const allModels = liveCfg.model_groups?.length
-        ? liveCfg.model_groups.flatMap(g => g.models || [])
-        : (liveCfg.models || []);
+      const allModels = modelsForRegister(liveCfg);
       const modelsSummary = allModels
-        .map(m => typeof m === 'string' ? m : `${m.name}(${m.type || 'chat'})`)
+        .map(m => `${m.name}${m.type && m.type !== 'chat' ? `(${m.type})` : ''}`)
         .join(', ');
       log(`[agent] models: ${modelsSummary}`);
       return;

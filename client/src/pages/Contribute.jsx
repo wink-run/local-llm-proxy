@@ -72,21 +72,30 @@ function uniqueCircleIds(ids) {
   return [...new Set((ids || []).map(id => Number(id)).filter(Boolean))];
 }
 
-/** 贡献可选模型：个人源 + agent providers + 已保存配置 */
+/** 贡献可选模型：个人源 + agent providers + 已保存配置；类型取最高优先级（图文可覆盖 chat） */
 function collectContributeAvailableModels(saved, accounts, localCfg) {
   const merged = mergeAccountsForGateway(localCfg || {}, accounts || {});
-  const avail = [];
-  const seen  = new Set();
-  const add = (name, type = 'chat') => {
+  const typeByName = {};
+  const rank = (t) => {
+    if (t === 'image' || t === 'embedding') return 3;
+    if (t === 'vision') return 2;
+    return 1;
+  };
+  const bump = (name, type = 'chat') => {
     const n = String(name || '').trim();
-    if (!n || seen.has(n)) return;
-    seen.add(n);
-    avail.push({ name: n, type });
+    if (!n) return;
+    let t = String(type || 'chat').trim().toLowerCase();
+    if (t === 'vl' || t === 'vlm' || t === 'multimodal') t = 'vision';
+    else if (t === 'img' || t === 'imggen') t = 'image';
+    else if (t === 'embed' || t === 'embeddings') t = 'embedding';
+    else if (!['chat', 'vision', 'image', 'embedding'].includes(t)) t = 'chat';
+    const cur = typeByName[n];
+    // 非 chat 优先，避免个人源先写入 chat 盖住供给源上的图文
+    if (!cur || rank(t) >= rank(cur)) typeByName[n] = t;
   };
 
-  // 个人源（与「个人源」页模型视图同源）
   for (const { id } of collectPersonalAvailableModels(saved || {}, merged)) {
-    add(id, 'chat');
+    bump(id, 'chat');
   }
 
   for (const p of (saved?.providers || [])) {
@@ -94,24 +103,26 @@ function collectContributeAvailableModels(saved, accounts, localCfg) {
     for (const m of (p.models || [])) {
       const name = typeof m === 'string' ? m : m.name;
       const type = typeof m === 'string' ? 'chat' : (m.type || 'chat');
-      add(name, type);
+      bump(name, type);
     }
   }
 
   for (const m of (saved?.models || [])) {
     const name = typeof m === 'string' ? m : m.name;
     const type = typeof m === 'string' ? 'chat' : (m.type || 'chat');
-    add(name, type);
+    bump(name, type);
   }
 
   for (const g of (saved?.model_groups || [])) {
     for (const m of (g.models || [])) {
       const name = typeof m === 'string' ? m : m.name;
-      add(name, typeof m === 'string' ? 'chat' : (m.type || 'chat'));
+      bump(name, typeof m === 'string' ? 'chat' : (m.type || 'chat'));
     }
   }
 
-  return avail;
+  return Object.entries(typeByName)
+    .map(([name, type]) => ({ name, type }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function ContributionConfigCard({ onStart, onStop, running, stats, agentError, onAgentsRefresh }) {
@@ -387,11 +398,16 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError, o
               {[...selectedNames].map((name) => {
                 const m = availableModels.find((x) => x.name === name) || { name, type: 'chat' };
                 const isImage = m.type === 'image';
+                const typeTitle = isImage
+                  ? t('contribute.modelTypeImage')
+                  : m.type === 'vision'
+                    ? t('contribute.modelTypeVision')
+                    : t('contribute.modelTypeText');
                 return (
                   // 仅 × 可移除；类型用 title，避免「对话」角标抢视觉
                   <span
                     key={name}
-                    title={isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
+                    title={typeTitle}
                     className={`tb-tag pl-2.5 pr-0.5 py-1 text-xs font-mono ${
                       isImage ? 'tb-tag-purple' : 'tb-tag-blue'
                     }`}

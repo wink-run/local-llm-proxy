@@ -11,7 +11,12 @@ MODEL_TYPES = ("chat", "vision", "image", "embedding")
 # 网页短试用：限制上下文规模，防滥用
 WEB_CHAT_MAX_MESSAGES = 8
 WEB_CHAT_MAX_CONTENT_CHARS = 4000
+WEB_CHAT_MAX_IMAGES = 3
+WEB_CHAT_MAX_IMAGE_CHARS = 5_500_000  # data URL 约 4MB 图
 WEB_IMAGE_MAX_PROMPT_CHARS = 2000
+WEB_AGENT_MAX_IMAGES = 3
+WEB_AGENT_MAX_IMAGE_CHARS = 5_500_000
+WEB_AGENT_IMAGE_ONLY_PROMPT = "请根据附图完成任务"
 
 # 未登录网页试用：按 IP 限流（默认每小时 3 次成功调用）
 GUEST_TRIAL_MAX_PER_HOUR = 3
@@ -117,6 +122,65 @@ def is_chat_capable(mtype: str) -> bool:
     return normalize_model_type(mtype) in ("chat", "vision")
 
 
+def _normalize_chat_content(content: Any, *, role: str, index: int) -> Any:
+    """允许 string，或 OpenAI 多模态 parts（text + image_url data URL）。"""
+    if content is None:
+        content = ""
+    if isinstance(content, str):
+        text = content.strip()
+        if len(text) > WEB_CHAT_MAX_CONTENT_CHARS:
+            raise ValueError(f"messages[{index}] too long")
+        if role == "user" and not text:
+            raise ValueError("empty user message")
+        return text
+
+    if not isinstance(content, list):
+        raise ValueError(f"messages[{index}].content must be string or array")
+
+    parts: list[dict] = []
+    text_bits: list[str] = []
+    n_img = 0
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        ptype = str(part.get("type") or "").strip()
+        if ptype == "text":
+            t = str(part.get("text") or "")
+            text_bits.append(t)
+            parts.append({"type": "text", "text": t})
+            continue
+        if ptype == "image_url":
+            raw_url = part.get("image_url")
+            if isinstance(raw_url, dict):
+                url = str(raw_url.get("url") or "").strip()
+            else:
+                url = str(raw_url or "").strip()
+            if not url.startswith("data:image/"):
+                raise ValueError(f"messages[{index}] image must be data URL")
+            if len(url) > WEB_CHAT_MAX_IMAGE_CHARS:
+                raise ValueError(f"messages[{index}] image too large")
+            n_img += 1
+            if n_img > WEB_CHAT_MAX_IMAGES:
+                raise ValueError(f"at most {WEB_CHAT_MAX_IMAGES} images per message")
+            parts.append({"type": "image_url", "image_url": {"url": url}})
+            continue
+        raise ValueError(f"messages[{index}] unsupported content part: {ptype or '?'}")
+
+    text_joined = "\n".join(text_bits).strip()
+    if len(text_joined) > WEB_CHAT_MAX_CONTENT_CHARS:
+        raise ValueError(f"messages[{index}] too long")
+    if role == "user" and not text_joined and n_img == 0:
+        raise ValueError("empty user message")
+    if n_img == 0:
+        if role == "user" and not text_joined:
+            raise ValueError("empty user message")
+        return text_joined
+    # 仅图：补一条短文本，兼容部分上游要求至少有 text part
+    if not any(p.get("type") == "text" for p in parts):
+        parts.insert(0, {"type": "text", "text": text_joined or "请根据图片回答"})
+    return parts
+
+
 def validate_web_chat_body(model: str, messages: Any, sharer: Optional[str] = None) -> dict:
     """校验 /api/web-chat 入参；失败抛 ValueError(message)。"""
     m = str(model or "").strip()
@@ -134,17 +198,8 @@ def validate_web_chat_body(model: str, messages: Any, sharer: Optional[str] = No
         role = str(raw.get("role") or "").strip()
         if role not in ("system", "user", "assistant"):
             raise ValueError(f"messages[{i}].role invalid")
-        content = raw.get("content")
-        if content is None:
-            content = ""
-        if not isinstance(content, str):
-            raise ValueError(f"messages[{i}].content must be string")
-        text = content.strip()
-        if len(text) > WEB_CHAT_MAX_CONTENT_CHARS:
-            raise ValueError(f"messages[{i}] too long")
-        if role == "user" and not text:
-            raise ValueError("empty user message")
-        cleaned.append({"role": role, "content": text})
+        content = _normalize_chat_content(raw.get("content"), role=role, index=i)
+        cleaned.append({"role": role, "content": content})
 
     if not any(x["role"] == "user" for x in cleaned):
         raise ValueError("need at least one user message")
@@ -154,6 +209,33 @@ def validate_web_chat_body(model: str, messages: Any, sharer: Optional[str] = No
         raise ValueError("invalid sharer")
 
     return {"model": m, "messages": cleaned, "sharer": sh}
+
+
+def normalize_agent_images(raw: Any) -> list[dict]:
+    """智能体任务附图：[{dataUrl, name?}]，仅 data:image/…。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("images must be array")
+    out: list[dict] = []
+    for i, item in enumerate(raw):
+        if isinstance(item, str):
+            url, name = item.strip(), f"image-{i + 1}"
+        elif isinstance(item, dict):
+            url = str(item.get("dataUrl") or item.get("url") or "").strip()
+            name = str(item.get("name") or f"image-{i + 1}").strip() or f"image-{i + 1}"
+        else:
+            continue
+        if not url:
+            continue
+        if not url.startswith("data:image/"):
+            raise ValueError(f"images[{i}] must be data URL")
+        if len(url) > WEB_AGENT_MAX_IMAGE_CHARS:
+            raise ValueError(f"images[{i}] too large")
+        out.append({"dataUrl": url, "name": name[:120]})
+        if len(out) > WEB_AGENT_MAX_IMAGES:
+            raise ValueError(f"at most {WEB_AGENT_MAX_IMAGES} images")
+    return out
 
 
 def extract_assistant_text(payload: Any) -> str:

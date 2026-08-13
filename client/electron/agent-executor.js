@@ -622,6 +622,8 @@ class AgentExecutor extends EventEmitter {
         parentTaskId: options.parentTaskId || null,
         sessionKey,
         sessionInstanceId: options.sessionInstanceId || null,
+        // 社区接单标记：本机游乐场列表/事件应忽略
+        clientId: options.clientId || null,
       }),
       Date.now(),
     );
@@ -639,6 +641,7 @@ class AgentExecutor extends EventEmitter {
       sessionKey,
       parentTaskId: options.parentTaskId || null,
       sessionInstanceId: options.sessionInstanceId || null,
+      clientId: options.clientId || null,
     });
 
     return { taskId };
@@ -1684,17 +1687,24 @@ class AgentExecutor extends EventEmitter {
   async listRecentTasksForAgent(agentId, limit = 3) {
     const canonicalId = await this.resolveAgentId(agentId);
     const db = this._getDb();
+    // 多取一些再过滤社区接单，避免本机标签被远程任务占满
+    const fetchLimit = Math.max(limit * 8, 24);
     const rows = db.prepare(`
       SELECT id FROM agent_tasks
       WHERE agent_id = ?
       ORDER BY created_at DESC
       LIMIT ?
-    `).all(canonicalId, limit);
+    `).all(canonicalId, fetchLimit);
 
+    const { isContributeSessionKey } = require('./contribute-session');
     const tasks = [];
     for (const row of rows) {
       try {
-        tasks.push(await this.getTaskStatus(row.id));
+        const status = await this.getTaskStatus(row.id);
+        const ctx = status.context || {};
+        if (ctx.clientId === 'contribute' || isContributeSessionKey(ctx.sessionKey)) continue;
+        tasks.push(status);
+        if (tasks.length >= limit) break;
       } catch {
         // 忽略损坏记录
       }
@@ -1711,13 +1721,19 @@ class AgentExecutor extends EventEmitter {
       SELECT id FROM agent_tasks
       WHERE status IN ('pending', 'running')
       ORDER BY created_at DESC
-      LIMIT 20
+      LIMIT 40
     `).all();
 
+    const { isContributeSessionKey } = require('./contribute-session');
     const tasks = [];
     for (const row of rows) {
       try {
-        tasks.push(await this.getTaskStatus(row.id));
+        const status = await this.getTaskStatus(row.id);
+        const ctx = status.context || {};
+        // 社区接单不进入本机游乐场恢复列表
+        if (ctx.clientId === 'contribute' || isContributeSessionKey(ctx.sessionKey)) continue;
+        tasks.push(status);
+        if (tasks.length >= 20) break;
       } catch {
         // 忽略已删除或损坏记录
       }

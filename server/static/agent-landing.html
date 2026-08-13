@@ -9,6 +9,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="/static/vue.global.prod.js"></script>
+<script src="/static/marked.min.js"></script>
+<script src="/static/purifier.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -29,19 +31,20 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .brand-mark{width:28px;height:28px;border-radius:8px;object-fit:contain;display:block;flex-shrink:0}
 .lang-btn,.ghost-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;color:var(--text-muted)}
 .lang-btn:hover,.ghost-btn:hover{color:var(--text);border-color:var(--text-muted)}
+.user-chip{font-size:13px;color:var(--text);font-weight:500;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 24px;box-shadow:0 8px 24px rgba(0,0,0,.03)}
 .h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
 .meta{color:var(--text-muted);font-size:13px;line-height:1.5;margin-bottom:16px;white-space:pre-wrap}
-.badges{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
-.badge{font-size:11px;padding:4px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-muted);background:var(--bg-muted)}
-.badge.ok{color:var(--success);border-color:#bbf7d0;background:#f0fdf4}
-.badge.warn{color:var(--warn);border-color:#fde68a;background:#fffbeb}
-.badge.err{color:var(--danger);border-color:#fecaca;background:#fef2f2}
+.badges{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px}
+.badge{display:inline-flex;align-items:center;justify-content:center;height:24px;line-height:1;font-size:11px;padding:0 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-muted);background:var(--bg-muted);box-sizing:border-box;vertical-align:middle}
+.badge.tone-ok{color:var(--success);border-color:#bbf7d0;background:#f0fdf4}
+.badge.tone-warn{color:var(--warn);border-color:#fde68a;background:#fffbeb}
+.badge.tone-err{color:var(--danger);border-color:#fecaca;background:#fef2f2}
 .field{margin-bottom:12px}
 label{display:block;color:var(--text-muted);font-size:12px;margin-bottom:5px}
 textarea,input[type=email],input[type=password],input[type=text]{
   width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
-  color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:vertical
+  color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:none
 }
 textarea:focus,input:focus{border-color:var(--text)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 18px;background:var(--primary);color:var(--primary-fg);border:none;border-radius:var(--radius);cursor:pointer;font-size:14px;font-family:inherit;font-weight:500}
@@ -52,15 +55,55 @@ textarea:focus,input:focus{border-color:var(--text)}
 .err{color:var(--danger);font-size:13px;margin-top:10px}
 .ok{color:var(--success);font-size:13px;margin-top:10px}
 .hint{color:var(--text-muted);font-size:12px;margin-top:8px;line-height:1.5}
-/* 多轮对话 */
-.chat{display:flex;flex-direction:column;gap:10px;margin:4px 0 14px;min-height:200px;max-height:420px;overflow:auto;padding:12px;background:var(--bg-muted);border:1px solid var(--border-light);border-radius:var(--radius)}
-.chat-empty{color:var(--text-muted);font-size:13px;text-align:center;padding:36px 12px;line-height:1.5}
-.bubble{max-width:88%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
-.bubble.user{align-self:flex-end;background:var(--primary);color:var(--primary-fg);border-bottom-right-radius:4px}
+/* 多轮对话：固定高度，避免消息增减时页面跳动 */
+.chat{
+  display:flex;flex-direction:column;gap:10px;
+  height:360px;
+  overflow:auto;
+  margin:4px 0 14px;padding:12px;
+  background:var(--bg-muted);border:1px solid var(--border-light);border-radius:var(--radius)
+}
+.chat-empty{
+  color:var(--text-muted);font-size:13px;text-align:center;line-height:1.5;
+  margin:auto;padding:24px 12px
+}
+.composer{display:flex;flex-direction:column;gap:8px}
+.composer-row{display:flex;gap:8px;align-items:flex-end}
+.composer-row textarea{flex:1;height:44px;min-height:44px;max-height:44px;resize:none}
+.composer-row .btn{flex-shrink:0;height:44px}
+.bubble{max-width:88%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.55;word-break:break-word}
+.bubble.user{align-self:flex-end;background:var(--primary);color:var(--primary-fg);border-bottom-right-radius:4px;white-space:pre-wrap}
 .bubble.assistant{align-self:flex-start;background:#fff;border:1px solid var(--border);color:var(--text);border-bottom-left-radius:4px}
-.bubble.pending{opacity:.7;font-style:italic}
-.composer{display:flex;gap:8px;align-items:flex-end}
-.composer textarea{flex:1;min-height:44px;max-height:140px;resize:vertical}
+.bubble.pending{opacity:.85}
+.bubble.pending .md-body{font-style:italic}
+.bubble-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bubble-imgs img{max-width:160px;max-height:120px;border-radius:8px;object-fit:cover;display:block;background:rgba(255,255,255,.15)}
+.attach-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.attach-thumb{position:relative;width:56px;height:56px;border-radius:8px;overflow:hidden;border:1px solid var(--border);background:var(--bg-muted)}
+.attach-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.attach-thumb button{position:absolute;top:2px;right:2px;width:18px;height:18px;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:11px;line-height:18px;cursor:pointer;padding:0}
+.attach-hint{font-size:11px;color:var(--text-muted)}
+/* Markdown 正文 */
+.md-body{line-height:1.6}
+.md-body>:first-child{margin-top:0}
+.md-body>:last-child{margin-bottom:0}
+.md-body p{margin:.45em 0}
+.md-body h1,.md-body h2,.md-body h3,.md-body h4{font-weight:700;letter-spacing:-.02em;margin:.7em 0 .35em;line-height:1.3}
+.md-body h1{font-size:1.2em}.md-body h2{font-size:1.1em}.md-body h3{font-size:1.05em}
+.md-body ul,.md-body ol{margin:.4em 0;padding-left:1.35em}
+.md-body li{margin:.15em 0}
+.md-body strong{font-weight:700}
+.md-body em{font-style:italic}
+.md-body a{color:#2563eb;text-decoration:underline}
+.md-body code{font-family:var(--mono);font-size:11.5px;background:var(--bg-muted);border:1px solid var(--border-light);border-radius:5px;padding:.1em .35em}
+.md-body pre{margin:.55em 0;padding:10px 12px;background:#1e1e1e;color:#f3f3f3;border-radius:8px;overflow:auto}
+.md-body pre code{background:transparent;border:none;padding:0;color:inherit;font-size:11.5px}
+.md-body blockquote{margin:.5em 0;padding:.35em .8em;border-left:3px solid var(--border);color:var(--text-muted);background:var(--bg-subtle)}
+.md-body hr{border:none;border-top:1px solid var(--border);margin:.8em 0}
+.md-body table{border-collapse:collapse;width:100%;margin:.55em 0;font-size:12px;display:block;overflow-x:auto;max-width:100%}
+.md-body th,.md-body td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
+.md-body th{background:var(--bg-muted);font-weight:600;white-space:nowrap}
+.md-body tr:nth-child(even) td{background:#fafafa}
 .composer .btn{flex-shrink:0;height:44px}
 .toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap}
 .ghost-link{background:transparent;border:none;color:var(--text-muted);font-size:12px;cursor:pointer;font-family:inherit;padding:0;text-decoration:underline}
@@ -82,6 +125,8 @@ textarea:focus,input:focus{border-color:var(--text)}
       <span>Token Bank</span>
     </a>
     <div class="row">
+      <a class="ghost-btn" href="/network" style="text-decoration:none">{{ T.backNetwork }}</a>
+      <span v-if="loggedIn && currentUserLabel" class="user-chip" :title="currentUserLabel">{{ currentUserLabel }}</span>
       <button class="lang-btn" type="button" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中文' }}</button>
       <button v-if="loggedIn" class="ghost-btn" type="button" @click="logout">{{ T.logout }}</button>
       <a v-else class="ghost-btn" href="/app" style="text-decoration:none">{{ T.openApp }}</a>
@@ -93,7 +138,7 @@ textarea:focus,input:focus{border-color:var(--text)}
   <div v-else-if="fatal && !showAuthGate" class="card">
     <div class="h1">{{ T.unavailable }}</div>
     <p class="meta">{{ fatal }}</p>
-    <a class="btn" href="/" style="margin-top:8px;text-decoration:none">{{ T.backHome }}</a>
+    <a class="btn" href="/network" style="margin-top:8px;text-decoration:none">{{ T.backNetwork }}</a>
   </div>
 
   <div v-else-if="showAuthGate" class="card">
@@ -128,7 +173,7 @@ textarea:focus,input:focus{border-color:var(--text)}
       <div class="h1">{{ agent.display_name || agent.name || agent.id }}</div>
       <p class="meta">{{ agent.description || T.noDesc }}</p>
       <div class="badges">
-        <span class="badge ok">{{ T.online }}</span>
+        <span class="badge tone-ok">{{ T.online }}</span>
         <span class="badge">{{ agent.visibility === 'circle' ? T.circleShare : T.publicShare }}</span>
         <span v-if="agent.runtime" class="badge mono">{{ agent.runtime }}</span>
         <span v-if="agent.owner_nickname" class="badge">{{ agent.owner_nickname }}</span>
@@ -142,14 +187,47 @@ textarea:focus,input:focus{border-color:var(--text)}
 
       <div class="chat" ref="chatEl">
         <div v-if="!messages.length" class="chat-empty">{{ T.chatEmpty }}</div>
-        <div v-for="(m, i) in messages" :key="i" class="bubble" :class="[m.role, { pending: m.pending }]">{{ m.content || (m.pending ? T.thinking : '') }}</div>
+        <div
+          v-for="(m, i) in messages"
+          :key="i"
+          class="bubble"
+          :class="[m.role, { pending: m.pending }]"
+        >
+          <div
+            v-if="m.role === 'assistant'"
+            class="md-body"
+            v-html="renderMarkdown(m.content || (m.pending ? T.thinking : ''))"
+          ></div>
+          <template v-else>
+            <div v-if="m.content">{{ m.content }}</div>
+            <div v-if="m.images && m.images.length" class="bubble-imgs">
+              <img v-for="(src, j) in m.images" :key="j" :src="src" alt="">
+            </div>
+          </template>
+        </div>
       </div>
 
       <div class="composer">
-        <textarea v-model="prompt" rows="2" :placeholder="T.promptPh" :disabled="running || guestLocked" @keydown.enter.exact.prevent="sendMessage"></textarea>
-        <button class="btn" type="button" :disabled="running || guestLocked || !prompt.trim()" @click="sendMessage">
-          {{ running ? ((messages.length && messages[messages.length - 1].pending && messages[messages.length - 1].content) ? T.streaming : T.running) : T.send }}
-        </button>
+        <div v-if="pendingImages.length" class="attach-bar">
+          <div v-for="(p, i) in pendingImages" :key="p.id" class="attach-thumb">
+            <img :src="p.dataUrl" alt="">
+            <button type="button" :disabled="running" @click="removePendingImage(i)" title="×">×</button>
+          </div>
+          <span class="attach-hint">{{ T.attachHint }}</span>
+        </div>
+        <div class="composer-row">
+          <textarea
+            v-model="prompt"
+            rows="2"
+            :placeholder="T.promptPh"
+            :disabled="running || guestLocked"
+            @keydown.enter.exact.prevent="sendMessage"
+            @paste="onComposerPaste"
+          ></textarea>
+          <button class="btn" type="button" :disabled="running || guestLocked || (!prompt.trim() && !pendingImages.length)" @click="sendMessage">
+            {{ running ? ((messages.length && messages[messages.length - 1].pending && messages[messages.length - 1].content) ? T.streaming : T.running) : T.send }}
+          </button>
+        </div>
       </div>
       <p v-if="err" class="err">{{ err }}</p>
 
@@ -184,7 +262,7 @@ textarea:focus,input:focus{border-color:var(--text)}
 
 
 <script>
-const { createApp, ref, computed, onMounted, nextTick } = Vue
+const { createApp, ref, computed, onMounted, nextTick, watch } = Vue
 
 /* localStorage 在受限环境可能不可用 */
 let _storageOk = false
@@ -200,8 +278,9 @@ createApp({
     const i18n = {
       zh: {
         loading: '加载中…', unavailable: '无法访问此智能体', backHome: '返回首页',
+        backNetwork: '← 全球网络',
         noDesc: '暂无简介', online: '在线', publicShare: '全球分享', circleShare: '圈子分享',
-        creditsPerTask: '每次 {n} 积分', promptPh: '输入消息，Enter 发送…',
+        creditsPerTask: '每次 {n} 积分', promptPh: '输入消息或粘贴图片，Enter 发送…',
         send: '发送', running: '思考中…', needLogin: '圈子分享仅成员可见；全球分享未登录可试一轮。',
         loginToContinue: '试用一轮已结束，登录后可继续对话（按正常积分扣费）。',
         login: '登录', register: '注册', loggingIn: '登录中…', registering: '注册中…',
@@ -209,14 +288,18 @@ createApp({
         balance: '余额 {n} 积分', footer: '已分享智能体的网页版',
         notFound: '智能体不存在、离线，或你无权访问（圈子分享需成为成员）。',
         needAuthCircle: '这是圈子分享的智能体，请先登录后再查看。',
-        emptyPrompt: '请先输入内容',
-        chatHint: '未登录可试一轮', chatEmpty: '发送一条消息试用；登录后可多轮追问。',
+        emptyPrompt: '请先输入内容或粘贴图片',
+        attachHint: '最多 3 张，粘贴即可',
+        attachLimit: '最多附 3 张图',
+        attachSize: '单张图片过大',
+        chatHint: '未登录可试一轮', chatEmpty: '发送一条消息试用；可粘贴图片；登录后可多轮追问。',
         clear: '清空对话', thinking: '…', streaming: '生成中…', toolRunning: '调用工具：{name}',
       },
       en: {
         loading: 'Loading…', unavailable: 'Agent unavailable', backHome: 'Home',
+        backNetwork: '← Global Network',
         noDesc: 'No description', online: 'Online', publicShare: 'Global', circleShare: 'Circle',
-        creditsPerTask: '{n} credits / turn', promptPh: 'Message, Enter to send…',
+        creditsPerTask: '{n} credits / turn', promptPh: 'Message or paste image, Enter to send…',
         send: 'Send', running: 'Thinking…', needLogin: 'Circle agents are members-only. Public agents: one free guest turn.',
         loginToContinue: 'Guest trial used. Sign in to continue (normal credits).',
         login: 'Sign in', register: 'Sign up', loggingIn: 'Signing in…', registering: 'Signing up…',
@@ -224,8 +307,11 @@ createApp({
         balance: 'Balance {n} credits', footer: 'Web version of a shared agent',
         notFound: 'Not found, offline, or not visible to you (circle members only).',
         needAuthCircle: 'Circle-shared agent — sign in to view.',
-        emptyPrompt: 'Enter a message first',
-        chatHint: 'One free guest turn', chatEmpty: 'Try one message; sign in for multi-turn chat.',
+        emptyPrompt: 'Enter a message or paste an image',
+        attachHint: 'Up to 3 images — paste to attach',
+        attachLimit: 'At most 3 images',
+        attachSize: 'Image too large',
+        chatHint: 'One free guest turn', chatEmpty: 'Try one message (paste images OK); sign in for multi-turn chat.',
         clear: 'Clear', thinking: '…', streaming: 'Generating…', toolRunning: 'Tool: {name}',
       },
     }
@@ -243,8 +329,23 @@ createApp({
     const creditsPerTask = ref(10)
     const loggedIn = ref(!!storageGet('user_token'))
     const profile = ref(null)
+    // 右上角展示：昵称优先，否则邮箱前缀
+    const currentUserLabel = computed(() => {
+      const p = profile.value
+      if (!p) return ''
+      const nick = String(p.nickname || '').trim()
+      if (nick) return nick
+      const email = String(p.email || '').trim()
+      if (!email) return ''
+      const at = email.indexOf('@')
+      return at > 0 ? email.slice(0, at) : email
+    })
     const prompt = ref('')
     const messages = ref([])
+    // 待发送附图（仅本轮；不写入本地历史以免撑爆 quota）
+    const pendingImages = ref([])
+    const ATTACH_MAX = 3
+    const ATTACH_MAX_BYTES = 4 * 1024 * 1024
     const chatEl = ref(null)
     const running = ref(false)
     const err = ref('')
@@ -257,6 +358,105 @@ createApp({
 
     function getToken() { return storageGet('user_token') || '' }
     const guestLocked = computed(() => guestUsed.value && !loggedIn.value)
+
+    // ── 对话本地持久化（按智能体 id；刷新不丢）──────────────────────────────
+    const CHAT_MAX_MSGS = 80
+    const CHAT_MAX_CHARS = 200_000
+    function chatStorageKey(aid) {
+      return `tb_agent_chat:${String(aid || '').trim()}`
+    }
+    function guestUsedKey(aid) {
+      return `tb_agent_guest_used:${String(aid || '').trim()}`
+    }
+    function serializeChat(msgs) {
+      // 附图不落盘（data URL 过大）；仅图消息用占位文案保留一轮痕迹
+      const cleaned = (msgs || [])
+        .filter(m => {
+          if (!m || (m.role !== 'user' && m.role !== 'assistant')) return false
+          if (String(m.content || '').trim()) return true
+          return m.role === 'user' && Array.isArray(m.images) && m.images.length
+        })
+        .map(m => ({
+          role: m.role,
+          content: String(m.content || '').trim()
+            || (m.role === 'user' && m.images?.length ? '[image]' : ''),
+        }))
+        .filter(m => String(m.content || '').trim())
+        .map(m => ({
+          role: m.role,
+          content: String(m.content || '').slice(0, 80_000),
+        }))
+        .slice(-CHAT_MAX_MSGS)
+      let total = 0
+      const out = []
+      for (let i = cleaned.length - 1; i >= 0; i -= 1) {
+        const c = cleaned[i]
+        total += c.content.length
+        if (total > CHAT_MAX_CHARS && out.length) break
+        out.unshift(c)
+      }
+      return out
+    }
+    function saveChatHistory(aid, msgs) {
+      const id = String(aid || '').trim()
+      if (!id) return
+      try {
+        storageSet(chatStorageKey(id), JSON.stringify({
+          v: 1,
+          updatedAt: Date.now(),
+          messages: serializeChat(msgs),
+        }))
+      } catch { /* quota */ }
+    }
+    function loadChatHistory(aid) {
+      const id = String(aid || '').trim()
+      if (!id) return []
+      try {
+        const raw = storageGet(chatStorageKey(id))
+        if (!raw) return []
+        const data = JSON.parse(raw)
+        const list = Array.isArray(data?.messages) ? data.messages : (Array.isArray(data) ? data : [])
+        return list
+          .filter(m => m && (m.role === 'user' || m.role === 'assistant') && String(m.content || '').trim())
+          .map(m => ({ role: m.role, content: String(m.content), pending: false }))
+      } catch {
+        return []
+      }
+    }
+    function clearChatHistory(aid) {
+      const id = String(aid || '').trim()
+      if (!id) return
+      storageRemove(chatStorageKey(id))
+    }
+    function persistNow() {
+      const id = agent.value?.id || assistantIdFromPath()
+      if (!id) return
+      saveChatHistory(id, messages.value)
+      if (guestUsed.value) storageSet(guestUsedKey(id), '1')
+    }
+
+    // Markdown → 安全 HTML（助手气泡）；用户消息仍纯文本防注入
+    function renderMarkdown(raw) {
+      const text = String(raw || '')
+      if (!text) return ''
+      try {
+        if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+          const html = marked.parse(text, { gfm: true, breaks: true })
+          if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
+            return DOMPurify.sanitize(html, {
+              USE_PROFILES: { html: true },
+              ADD_ATTR: ['target', 'rel'],
+            })
+          }
+          return html
+        }
+      } catch { /* 回退纯文本 */ }
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>')
+    }
     function assistantIdFromPath() {
       const m = location.pathname.match(/^\/a\/([^/?#]+)/)
       return m ? decodeURIComponent(m[1]) : ''
@@ -284,7 +484,70 @@ createApp({
     function clearChat() {
       if (running.value) return
       messages.value = []
+      pendingImages.value = []
       err.value = ''
+      const id = agent.value?.id || assistantIdFromPath()
+      clearChatHistory(id)
+    }
+
+    function fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result || ''))
+        reader.onerror = () => reject(new Error('read failed'))
+        reader.readAsDataURL(file)
+      })
+    }
+
+    function removePendingImage(i) {
+      pendingImages.value = pendingImages.value.filter((_, idx) => idx !== i)
+    }
+
+    async function addAttachFiles(fileList) {
+      const files = Array.from(fileList || []).filter(f => f && String(f.type || '').startsWith('image/'))
+      if (!files.length) return
+      const room = ATTACH_MAX - pendingImages.value.length
+      if (room <= 0) {
+        err.value = T.value.attachLimit
+        return
+      }
+      const take = files.slice(0, room)
+      if (files.length > room) err.value = T.value.attachLimit
+      const next = pendingImages.value.slice()
+      for (const file of take) {
+        if (file.size > ATTACH_MAX_BYTES) {
+          err.value = T.value.attachSize
+          continue
+        }
+        try {
+          const dataUrl = await fileToDataUrl(file)
+          if (!dataUrl || !dataUrl.startsWith('data:image/')) continue
+          next.push({
+            id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            dataUrl,
+            name: file.name || 'image',
+          })
+        } catch {
+          err.value = T.value.attachSize
+        }
+      }
+      pendingImages.value = next.slice(0, ATTACH_MAX)
+    }
+
+    function onComposerPaste(e) {
+      const items = e.clipboardData?.items
+      if (!items) return
+      const imageFiles = []
+      for (const item of items) {
+        if (item.type && item.type.startsWith('image/')) {
+          const f = item.getAsFile()
+          if (f) imageFiles.push(f)
+        }
+      }
+      if (!imageFiles.length) return
+      e.preventDefault()
+      err.value = ''
+      addAttachFiles(imageFiles)
     }
 
     /** 把多轮对话压成单次 prompt（agent-tasks 仅接受字符串） */
@@ -314,9 +577,14 @@ createApp({
         if (r.ok && data?.agent) {
           agent.value = data.agent
           creditsPerTask.value = data.credits_per_task ?? 10
+          // 恢复本智能体历史对话
+          const restored = loadChatHistory(data.agent.id)
+          if (restored.length) messages.value = restored
+          guestUsed.value = storageGet(guestUsedKey(data.agent.id)) === '1'
           applyMeta()
           loading.value = false
           if (loggedIn.value) await fetchProfile()
+          await scrollChat()
           return
         }
         if (!getToken()) {
@@ -340,8 +608,12 @@ createApp({
         }
         agent.value = data.agent
         creditsPerTask.value = data.credits_per_task ?? 10
+        const restored = loadChatHistory(data.agent.id)
+        if (restored.length) messages.value = restored
+        guestUsed.value = storageGet(guestUsedKey(data.agent.id)) === '1'
         applyMeta()
         await fetchProfile()
+        await scrollChat()
       } catch {
         fatal.value = T.value.notFound
       } finally {
@@ -435,7 +707,11 @@ createApp({
     async function sendMessage() {
       err.value = ''
       const text = prompt.value.trim()
-      if (!text) {
+      const attachList = pendingImages.value.map(p => ({
+        dataUrl: p.dataUrl,
+        name: p.name || 'image',
+      })).filter(p => p.dataUrl)
+      if (!text && !attachList.length) {
         err.value = T.value.emptyPrompt
         return
       }
@@ -444,13 +720,21 @@ createApp({
         err.value = T.value.loginToContinue
         return
       }
+      // 仅图时由服务端补默认 prompt；本地气泡展示占位
+      const displayText = text || (attachList.length ? '请根据附图完成任务' : '')
       const history = messages.value.slice()
       // 访客单轮不带历史；登录后压缩多轮上下文
-      const apiPrompt = isGuest ? text : buildPromptWithHistory(history, text)
-      messages.value.push({ role: 'user', content: text })
+      const apiPrompt = isGuest ? text : buildPromptWithHistory(history, text || displayText)
+      const attachUrls = attachList.map(p => p.dataUrl)
+      messages.value.push({
+        role: 'user',
+        content: displayText,
+        images: attachUrls.length ? attachUrls.slice() : undefined,
+      })
       messages.value.push({ role: 'assistant', content: '', pending: true })
       const asstIdx = messages.value.length - 1
       prompt.value = ''
+      pendingImages.value = []
       running.value = true
       await scrollChat()
 
@@ -464,7 +748,7 @@ createApp({
         // 去掉本轮 assistant + user
         if (messages.value[asstIdx]?.role === 'assistant') messages.value.splice(asstIdx, 1)
         const last = messages.value[messages.value.length - 1]
-        if (last?.role === 'user' && last.content === text) messages.value.pop()
+        if (last?.role === 'user' && last.content === displayText) messages.value.pop()
       }
 
       try {
@@ -473,15 +757,17 @@ createApp({
           const tok = getToken()
           if (tok) headers.Authorization = `Bearer ${tok}`
         }
+        const body = {
+          assistant_id: agent.value.id,
+          prompt: apiPrompt,
+          worker_id: agent.value.worker_id || undefined,
+          stream: true,
+        }
+        if (attachList.length) body.images = attachList
         const r = await fetch('/api/agent-tasks', {
           method: 'POST',
           headers,
-          body: JSON.stringify({
-            assistant_id: agent.value.id,
-            prompt: apiPrompt,
-            worker_id: agent.value.worker_id || undefined,
-            stream: true,
-          }),
+          body: JSON.stringify(body),
         })
 
         // 非 SSE（鉴权失败等）：按 JSON 错误处理
@@ -589,11 +875,19 @@ createApp({
       loadAgent()
     })
 
+    // 消息变化时落盘（流式过程中也会节流写入，刷新可尽量保住）
+    let _saveTimer = null
+    watch(messages, () => {
+      if (_saveTimer) clearTimeout(_saveTimer)
+      _saveTimer = setTimeout(() => persistNow(), 280)
+    }, { deep: true })
+    watch(guestUsed, () => persistNow())
+
     return {
       lang, T, toggleLang, loading, fatal, showAuthGate, agent, creditsPerTask,
-      loggedIn, profile, prompt, messages, chatEl, running, err, guestUsed, guestLocked,
+      loggedIn, profile, currentUserLabel, prompt, messages, pendingImages, chatEl, running, err, guestUsed, guestLocked,
       authTab, authLoading, authErr, form, doLogin, doRegister, logout,
-      sendMessage, clearChat,
+      sendMessage, clearChat, renderMarkdown, onComposerPaste, removePendingImage,
     }
   },
 }).mount('#app')

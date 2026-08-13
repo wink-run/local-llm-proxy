@@ -115,7 +115,16 @@ function registerAgentHandlers() {
   /**
    * 监听实时步骤事件
    */
+  const { isContributeSessionKey } = require('./contribute-session');
+  const shouldBroadcastToUi = (data) => {
+    if (!data) return true;
+    if (data.clientId === 'contribute') return false;
+    if (isContributeSessionKey(data.sessionKey)) return false;
+    return true;
+  };
+
   agentExecutor.on('task:step', (stepData) => {
+    if (!shouldBroadcastToUi(stepData)) return;
     // 广播给所有窗口
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('agent:task:step', stepData);
@@ -123,6 +132,7 @@ function registerAgentHandlers() {
   });
 
   agentExecutor.on('task:dispatched', (data) => {
+    if (!shouldBroadcastToUi(data)) return;
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('agent:task:dispatched', data);
     });
@@ -132,6 +142,7 @@ function registerAgentHandlers() {
    * 监听任务完成事件
    */
   agentExecutor.on('task:completed', (data) => {
+    if (!shouldBroadcastToUi(data)) return;
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('agent:task:completed', data);
     });
@@ -141,6 +152,7 @@ function registerAgentHandlers() {
    * 监听任务失败事件
    */
   agentExecutor.on('task:failed', (data) => {
+    if (!shouldBroadcastToUi(data)) return;
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('agent:task:failed', data);
     });
@@ -150,6 +162,7 @@ function registerAgentHandlers() {
    * 监听任务取消事件
    */
   agentExecutor.on('task:cancelled', (data) => {
+    if (!shouldBroadcastToUi(data)) return;
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('agent:task:cancelled', data);
     });
@@ -157,6 +170,7 @@ function registerAgentHandlers() {
 
   /** 流式解析到 CLI sessionId 时尽早同步前端（停止后续接用） */
   agentExecutor.on('task:cliSession', (data) => {
+    if (!shouldBroadcastToUi(data)) return;
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('agent:task:cliSession', data);
     });

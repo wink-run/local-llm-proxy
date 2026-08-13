@@ -183,6 +183,16 @@ def effective_model_type(worker, model: str) -> str:
         return normalize_model_type(declared)
 
 
+def prefer_model_type(existing: Optional[str], new: str) -> str:
+    """多节点同模型时保留更高模态：生图/嵌入 > 图文 > 文本。"""
+    rank = {"image": 3, "embedding": 3, "vision": 2, "chat": 1}
+    e = (existing or "chat").strip() or "chat"
+    n = (new or "chat").strip() or "chat"
+    if rank.get(n, 0) >= rank.get(e, 0):
+        return n
+    return e
+
+
 def model_type_matches(effective: str, wanted: Optional[str]) -> bool:
     """派发类型匹配：chat 请求可命中 chat/vision；其余精确匹配。"""
     if wanted is None:
@@ -537,7 +547,7 @@ class WorkerPool:
             wids = worker_circle_ids(w)
             if not wids or wids & circles:
                 for m in w.models:
-                    result[m] = effective_model_type(w, m)
+                    result[m] = prefer_model_type(result.get(m), effective_model_type(w, m))
         for v in self._virtual:
             owner = getattr(v, "owner_user_id", None)
             cid = getattr(v, "circle_id", None)
@@ -549,7 +559,7 @@ class WorkerPool:
                 visible = cid is None or cid in circles
             if visible:
                 for m in v.models:
-                    result[m] = effective_model_type(v, m)
+                    result[m] = prefer_model_type(result.get(m), effective_model_type(v, m))
         return result
 
     def circle_model_ids_for_user(self, owner_user_id: Optional[int] = None,
@@ -645,11 +655,11 @@ class WorkerPool:
         return sorted({m for w in self._workers + self._virtual for m in w.models})
 
     def all_model_types(self) -> dict[str, str]:
-        """Returns {model_name: model_type} for all online models. Last writer wins."""
+        """Returns {model_name: model_type} for all online models. 高模态优先。"""
         result: dict[str, str] = {}
         for w in self._workers + self._virtual:
             for m in w.models:
-                result[m] = effective_model_type(w, m)
+                result[m] = prefer_model_type(result.get(m), effective_model_type(w, m))
         return result
 
     def list_workers(self) -> list[dict]:

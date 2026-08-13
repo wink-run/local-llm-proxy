@@ -24,6 +24,7 @@ const TRANSIENT_MS     = 45_000;               // 瞬时限流(429 但非配额�
 const QUOTA_DEFAULT_MS = 10 * 60_000;          // 配额耗尽但拿不到精确 reset
 const AUTH_MS          = 30 * 60_000;          // 401/403 鉴权
 const CREDIT_MS        = 30 * 60_000;          // 402 欠费
+const SLOW_MS          = 20 * 60_000;          // 明显慢于同模型其它源：下沉 20min，避免反复走降级链
 const RESET_BUFFER_MS  = 30_000;               // reset 时刻 + 缓冲，避免边界抖动
 const PERSIST_MIN_MS   = 2 * 60_000;           // reset 距今 > 2min 才算配额级并落盘；短 Retry-After 视为瞬时
 const MAX_MS           = 35 * 24 * 60 * 60_000; // 冷却上限 35 天，覆盖月度配额 reset，同时防解析出离谱时间把源永久拉黑
@@ -145,6 +146,22 @@ function noteTransient(key, err, now = Date.now()) {
   return { ...entry, _new: !wasCooling };
 }
 
+/**
+ * 慢源学习：同模型下某源明显慢于已学到的快源时，短时下沉（不落盘）。
+ * 与硬失败冷却共用 sink，让下次请求先试快源，避免每次都走完整降级链。
+ */
+function noteSlow(key, ms = SLOW_MS, note = null, now = Date.now()) {
+  if (!key) return null;
+  const until = now + Math.min(Math.max(Number(ms) || SLOW_MS, TRANSIENT_MS), MAX_MS);
+  const prev = _map.get(key);
+  // 已有更长冷却（配额/鉴权）时不缩短
+  if (prev && prev.until > until) return { ...prev, _new: false };
+  const wasCooling = isCooling(key, now);
+  const entry = { until, status: 0, reason: 'slow', persist: false, note: note ? String(note).slice(0, 140) : 'slow-vs-peers' };
+  _map.set(key, entry);
+  return { ...entry, _new: !wasCooling };
+}
+
 function isCooling(key, now = Date.now()) {
   const e = _map.get(key);
   if (!e) return false;
@@ -201,4 +218,4 @@ function _save() {
 }
 _load();
 
-module.exports = { noteFailure, noteTransient, isCooling, entryOf, clear, sink, list, parseResetMs, parseResetFromHeaders, classify, FILE };
+module.exports = { noteFailure, noteTransient, noteSlow, isCooling, entryOf, clear, sink, list, parseResetMs, parseResetFromHeaders, classify, FILE, SLOW_MS };

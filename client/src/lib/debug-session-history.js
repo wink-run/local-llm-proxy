@@ -92,16 +92,168 @@ function fingerprintTurns(turns = []) {
   return ids || String(turns.length);
 }
 
-/** 稳定会话键：同一次多轮对话应始终相同（勿用全量 turns 指纹） */
+/** 稳定会话键：同一次多轮对话应始终相同（勿用会变的 cliSessionId 抢先） */
 function resolveAgentHistorySessionKey(snapshot = {}) {
-  const sid = String(snapshot.cliSessionId || '').trim();
-  if (sid) return `cli:${sid}`;
+  // 显式线程 id（内存会话粘性）
+  const sticky = String(snapshot.historyThreadId || '').trim();
+  if (sticky) return sticky;
+
   const turns = snapshot.conversationTurns || [];
+  // 以首轮 taskId 为轴：中断后续跑即使换了 CLI session，仍归同一条历史
   const firstId = String(turns[0]?.taskId || '').trim();
   if (firstId) return `task:${firstId}`;
+
+  const sid = String(snapshot.cliSessionId || '').trim();
+  if (sid) return `cli:${sid}`;
+
   const firstUser = String(turns[0]?.user || '').trim().slice(0, 120);
   if (firstUser) return `user:${firstUser}`;
   return null;
+}
+
+/** 是否像「中断后续跑」占位首轮（不应单独开新历史条） */
+function looksLikeResumePrompt(user) {
+  const s = String(user || '').trim();
+  if (!s) return false;
+  if (s === '继续' || s === 'Continue' || s === 'continue') return true;
+  return /^(请从上次中断处继续|请继续|从上次中断|Resume from|Please continue from)/i.test(s);
+}
+
+function normalizeHistoryDir(dir) {
+  return String(dir || '').replace(/[\\/]+$/, '');
+}
+
+/** 把「仅含续跑提示」的碎片合并进最近一条同 Agent 历史 */
+function findResumeMergeIndex(items, agentKey, turns, workingDir) {
+  if (!turns?.length || !looksLikeResumePrompt(turns[0]?.user)) return -1;
+  const dir = normalizeHistoryDir(workingDir);
+  let bestIdx = -1;
+  let bestAt = 0;
+  for (let i = 0; i < items.length; i += 1) {
+    const it = items[i];
+    if (!it || it.agentKey !== agentKey) continue;
+    const prev = it.conversationTurns || [];
+    if (!prev.length) continue;
+    // 已是同线程前缀则走常规合并
+    if (turnsAreSameThread(prev, turns) || turnsAreSameThread(turns, prev)) continue;
+    if (looksLikeResumePrompt(prev[0]?.user) && prev.length <= 2) continue;
+    const itDir = normalizeHistoryDir(it.sessionWorkingDir);
+    if (dir && itDir && dir !== itDir) continue;
+    const at = it.savedAt || 0;
+    if (at >= bestAt) {
+      bestAt = at;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+/**
+ * 续聊碎片合并：同 cliSessionId，或同工作目录下「单轮新条」并回最近会话。
+ * 避免内存轮次丢失后按新 taskId 另开一条。
+ * opts.disallowDirMerge：用户刚点「新会话」时禁止仅按目录合并。
+ */
+function findContinuationMergeIndex(items, agentKey, turns, workingDir, cliSessionId, opts = {}) {
+  if (!turns?.length) return -1;
+  const sid = String(cliSessionId || '').trim();
+  const dir = normalizeHistoryDir(workingDir);
+  const turnIds = new Set(turns.map((t) => t?.taskId).filter(Boolean));
+
+  // 1) 同 CLI session —— 最强信号（--resume 续跑）
+  if (sid) {
+    const byCli = items.findIndex((it) => (
+      it?.agentKey === agentKey
+      && String(it.cliSessionId || '').trim() === sid
+      && (it.conversationTurns || []).length > 0
+      && !turnsAreSameThread(it.conversationTurns, turns)
+    ));
+    if (byCli >= 0) return byCli;
+  }
+
+  // 2) 当前条的 taskId 已出现在某条历史中 → 同会话补档
+  if (turnIds.size) {
+    const byTask = items.findIndex((it) => {
+      if (!it || it.agentKey !== agentKey) return false;
+      const prev = it.conversationTurns || [];
+      if (!prev.length) return false;
+      return prev.some((t) => t?.taskId && turnIds.has(t.taskId));
+    });
+    if (byTask >= 0) return byTask;
+  }
+
+  // 3) 单轮/双轮碎片 + 同工作目录 → 并入最近多轮会话（新会话窗口内跳过）
+  if (opts.disallowDirMerge || turns.length > 2) return -1;
+  let bestIdx = -1;
+  let bestAt = 0;
+  for (let i = 0; i < items.length; i += 1) {
+    const it = items[i];
+    if (!it || it.agentKey !== agentKey) continue;
+    const prev = it.conversationTurns || [];
+    if (prev.length < 2) continue;
+    if (turnsAreSameThread(prev, turns) || turnsAreSameThread(turns, prev)) continue;
+    const itDir = normalizeHistoryDir(it.sessionWorkingDir);
+    if (!dir || !itDir || dir !== itDir) continue;
+    const at = it.savedAt || 0;
+    if (at >= bestAt) {
+      bestAt = at;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+/** 合并续跑碎片：按 taskId 去重后，再按时间戳排成时间线 */
+function mergeResumeTurns(prevTurns = [], nextTurns = []) {
+  const byId = new Map();
+  const anon = [];
+  for (const t of [...prevTurns, ...nextTurns]) {
+    if (!t || typeof t !== 'object') continue;
+    if (t.taskId) {
+      const prev = byId.get(t.taskId);
+      if (prev) {
+        byId.set(t.taskId, {
+          ...prev,
+          ...t,
+          // 保留更早的时间戳，避免后写入的 now 打乱顺序
+          timestamp: pickEarlierTimestamp(prev.timestamp, t.timestamp),
+        });
+      } else {
+        byId.set(t.taskId, { ...t });
+      }
+    } else {
+      anon.push({ ...t });
+    }
+  }
+  return sortTurnsChronologically([...byId.values(), ...anon]);
+}
+
+function pickEarlierTimestamp(a, b) {
+  const ta = Number(a) || 0;
+  const tb = Number(b) || 0;
+  if (ta > 0 && tb > 0) return Math.min(ta, tb);
+  return ta || tb || undefined;
+}
+
+/** 有 timestamp 的按时间排；缺失则保持稳定相对顺序 */
+function sortTurnsChronologically(turns = []) {
+  return turns
+    .map((t, i) => ({ t, i, ts: Number(t?.timestamp) || 0 }))
+    .sort((a, b) => {
+      if (a.ts > 0 && b.ts > 0 && a.ts !== b.ts) return a.ts - b.ts;
+      return a.i - b.i;
+    })
+    .map(({ t }) => t);
+}
+
+/** 合并前给缺 timestamp 的轮次打上会话级回退时间，便于碎片按时间线归位 */
+function stampTurnsForMerge(turns = [], fallbackTs = 0) {
+  const base = Number(fallbackTs) || 0;
+  return turns.map((t, i) => {
+    if (!t || t.timestamp) return t;
+    if (!base) return t;
+    // 同一会话内用 savedAt + 序号，保持相对先后
+    return { ...t, timestamp: base + i };
+  });
 }
 
 /** prev 是否为 next 的前缀轮次（同线程续写） */
@@ -154,12 +306,12 @@ function serializeAgentTurn(turn) {
 /** 保存当前标签页会话快照（有已完成轮次时） */
 export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
   if (!agentKey) return null;
-  const turns = (snapshot.conversationTurns || []).map(serializeAgentTurn);
+  let turns = (snapshot.conversationTurns || []).map(serializeAgentTurn);
   if (!turns.length) return null;
 
   const store = readStore();
-  const fp = fingerprintTurns(turns);
-  const sessionKey = resolveAgentHistorySessionKey({ ...snapshot, conversationTurns: turns });
+  const workingDir = snapshot.sessionWorkingDir || '';
+  let sessionKey = resolveAgentHistorySessionKey({ ...snapshot, conversationTurns: turns });
   const now = Date.now();
 
   // 优先按稳定 sessionKey / 同线程前缀合并，避免「每轮一条」
@@ -172,12 +324,61 @@ export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
   if (existingIdx < 0) {
     existingIdx = store.items.findIndex(
       it => it.agentKey === agentKey && (
-        it.fingerprint === fp
+        it.fingerprint === fingerprintTurns(turns)
         || turnsAreSameThread(it.conversationTurns, turns)
       ),
     );
   }
+  // 中断后续跑若内存轮次被清空，首轮变成「继续」——并回最近一条同 Agent 历史，勿新开会话
+  if (existingIdx < 0) {
+    const resumeIdx = findResumeMergeIndex(store.items, agentKey, turns, workingDir);
+    if (resumeIdx >= 0) {
+      existingIdx = resumeIdx;
+      const prev = store.items[resumeIdx];
+      const merged = mergeResumeTurns(
+        stampTurnsForMerge(prev.conversationTurns || [], prev.savedAt),
+        stampTurnsForMerge(turns, now),
+      );
+      turns = merged.map(serializeAgentTurn);
+      sessionKey = prev.sessionKey
+        || resolveAgentHistorySessionKey({
+          ...prev,
+          conversationTurns: turns,
+        })
+        || sessionKey;
+    }
+  }
+  // 同 CLI session / 同目录单轮碎片：并回已有会话（修复「每跟一嘴就新开一条」）
+  if (existingIdx < 0) {
+    const contIdx = findContinuationMergeIndex(
+      store.items,
+      agentKey,
+      turns,
+      workingDir,
+      snapshot.cliSessionId,
+      { disallowDirMerge: !!snapshot.disallowDirMerge },
+    );
+    if (contIdx >= 0) {
+      existingIdx = contIdx;
+      const prev = store.items[contIdx];
+      const merged = mergeResumeTurns(
+        stampTurnsForMerge(prev.conversationTurns || [], prev.savedAt),
+        stampTurnsForMerge(turns, now),
+      );
+      turns = merged.map(serializeAgentTurn);
+      sessionKey = prev.sessionKey
+        || resolveAgentHistorySessionKey({
+          ...prev,
+          conversationTurns: turns,
+        })
+        || sessionKey;
+    }
+  }
 
+  // 落盘前再按时间排一次，治愈历史错序
+  turns = sortTurnsChronologically(turns).map(serializeAgentTurn);
+
+  const fp = fingerprintTurns(turns);
   const entry = {
     id: existingIdx >= 0 ? store.items[existingIdx].id : `hist_${now}_${Math.random().toString(36).slice(2, 7)}`,
     agentKey,
@@ -187,8 +388,10 @@ export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
     savedAt: now,
     turnCount: turns.length,
     conversationTurns: turns,
-    sessionWorkingDir: snapshot.sessionWorkingDir || '',
-    cliSessionId: snapshot.cliSessionId || null,
+    sessionWorkingDir: workingDir,
+    cliSessionId: snapshot.cliSessionId
+      || (existingIdx >= 0 ? store.items[existingIdx].cliSessionId : null)
+      || null,
     source: 'local',
   };
 
@@ -200,10 +403,25 @@ export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
 
   // 清掉同线程的旧残片（历史 bug 留下的「1 轮 / 2 轮」重复条）
   const keepId = entry.id;
+  const entryCli = String(entry.cliSessionId || '').trim();
+  const entryDir = normalizeHistoryDir(entry.sessionWorkingDir);
+  const entryTaskIds = new Set(turns.map((t) => t?.taskId).filter(Boolean));
   store.items = store.items.filter((it) => {
     if (it.id === keepId || it.agentKey !== agentKey) return true;
     if (sessionKey && it.sessionKey === sessionKey) return false;
     if (turnsAreSameThread(it.conversationTurns, turns)) return false;
+    // 同 CLI / 已并入的 taskId 碎片条删掉
+    const itCli = String(it.cliSessionId || '').trim();
+    if (entryCli && itCli && entryCli === itCli) return false;
+    const itTurns = it.conversationTurns || [];
+    if (itTurns.length <= 2 && itTurns.some((t) => t?.taskId && entryTaskIds.has(t.taskId))) {
+      return false;
+    }
+    // 同目录单轮碎片且其内容已在本会话中
+    const itDir = normalizeHistoryDir(it.sessionWorkingDir);
+    if (entryDir && itDir && entryDir === itDir && itTurns.length <= 2) {
+      if (itTurns.some((t) => t?.taskId && entryTaskIds.has(t.taskId))) return false;
+    }
     return true;
   });
 
@@ -222,26 +440,64 @@ export function saveAgentSessionSnapshot(agentKey, snapshot = {}) {
 function dedupeAgentItems(items = []) {
   const sorted = items.slice().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
   const kept = [];
+  const DIR_HEAL_MS = 2 * 60 * 60 * 1000; // 2h 内同目录单轮碎片并回多轮
   for (const it of sorted) {
     const key = it.sessionKey || resolveAgentHistorySessionKey(it);
+    const sid = String(it.cliSessionId || '').trim();
+    const dir = normalizeHistoryDir(it.sessionWorkingDir);
+    const itTurns = it.conversationTurns || [];
     const dupIdx = kept.findIndex((k) => {
       if (k.agentKey !== it.agentKey) return false;
       const kKey = k.sessionKey || resolveAgentHistorySessionKey(k);
       if (key && kKey && key === kKey) return true;
-      return turnsAreSameThread(it.conversationTurns, k.conversationTurns)
-        || turnsAreSameThread(k.conversationTurns, it.conversationTurns);
+      const kSid = String(k.cliSessionId || '').trim();
+      if (sid && kSid && sid === kSid) return true;
+      if (turnsAreSameThread(it.conversationTurns, k.conversationTurns)
+        || turnsAreSameThread(k.conversationTurns, it.conversationTurns)) {
+        return true;
+      }
+      // 治愈已拆开的同目录碎片：短时间内单轮 ↔ 多轮，或两个单轮先捏合
+      const kDir = normalizeHistoryDir(k.sessionWorkingDir);
+      const kTurns = k.conversationTurns || [];
+      if (dir && kDir && dir === kDir) {
+        const near = Math.abs((it.savedAt || 0) - (k.savedAt || 0)) <= DIR_HEAL_MS;
+        if (near && itTurns.length <= 2 && kTurns.length <= 2) return true;
+        if (near && ((itTurns.length <= 2 && kTurns.length >= 2)
+          || (kTurns.length <= 2 && itTurns.length >= 2))) {
+          return true;
+        }
+      }
+      return false;
     });
     if (dupIdx < 0) {
       kept.push(key && !it.sessionKey ? { ...it, sessionKey: key } : it);
       continue;
     }
-    // 保留轮次更多 / 更新更晚的那条
+    // 以轮次更多的一侧为骨架合并，再按时间戳排成正确对话顺序
     const cur = kept[dupIdx];
-    const itTurns = (it.conversationTurns || []).length;
-    const curTurns = (cur.conversationTurns || []).length;
-    if (itTurns > curTurns || (itTurns === curTurns && (it.savedAt || 0) > (cur.savedAt || 0))) {
-      kept[dupIdx] = { ...it, sessionKey: key || it.sessionKey || cur.sessionKey };
-    }
+    const curTurns = stampTurnsForMerge(cur.conversationTurns || [], cur.savedAt);
+    const nxtTurns = stampTurnsForMerge(it.conversationTurns || [], it.savedAt);
+    const mergedTurns = mergeResumeTurns(curTurns, nxtTurns);
+    const preferIt = nxtTurns.length > curTurns.length
+      || (nxtTurns.length === curTurns.length && (it.savedAt || 0) > (cur.savedAt || 0));
+    const base = preferIt ? it : cur;
+    // 标题用时间线上最早一轮，避免跟聊碎片抢标题
+    const titleSource = mergedTurns;
+    kept[dupIdx] = {
+      ...base,
+      conversationTurns: mergedTurns,
+      turnCount: mergedTurns.length,
+      title: buildSessionTitle(titleSource),
+      fingerprint: fingerprintTurns(mergedTurns),
+      // sessionKey 优先保留「更早/更多轮」一侧的稳定键
+      sessionKey: (curTurns.length >= nxtTurns.length
+        ? (cur.sessionKey || key)
+        : (it.sessionKey || key))
+        || resolveAgentHistorySessionKey({ ...base, conversationTurns: mergedTurns }),
+      cliSessionId: it.cliSessionId || cur.cliSessionId || null,
+      sessionWorkingDir: it.sessionWorkingDir || cur.sessionWorkingDir || '',
+      savedAt: Math.max(it.savedAt || 0, cur.savedAt || 0),
+    };
   }
   return kept;
 }
@@ -259,6 +515,37 @@ export function listAgentSessionSnapshots(agentKey) {
   return deduped
     .filter(it => it.agentKey === agentKey)
     .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+}
+
+/**
+ * 续跑前查找应附着的本地历史（同 CLI session 或同工作目录最近一条）。
+ * 供内存轮次被清空时回填，避免新开一条。
+ */
+export function findAgentSessionForContinue(agentKey, { workingDir = '', cliSessionId = '' } = {}) {
+  if (!agentKey) return null;
+  const list = listAgentSessionSnapshots(agentKey);
+  if (!list.length) return null;
+  const sid = String(cliSessionId || '').trim();
+  if (sid) {
+    const byCli = list
+      .filter((it) => String(it.cliSessionId || '').trim() === sid)
+      // 同 CLI 下优先多轮完整会话
+      .sort((a, b) => (b.conversationTurns?.length || 0) - (a.conversationTurns?.length || 0)
+        || (b.savedAt || 0) - (a.savedAt || 0));
+    if (byCli[0]?.conversationTurns?.length) return byCli[0];
+  }
+  const dir = normalizeHistoryDir(workingDir);
+  if (dir) {
+    const byDir = list
+      .filter((it) => normalizeHistoryDir(it.sessionWorkingDir) === dir)
+      .sort((a, b) => (b.conversationTurns?.length || 0) - (a.conversationTurns?.length || 0)
+        || (b.savedAt || 0) - (a.savedAt || 0));
+    if (byDir[0]?.conversationTurns?.length) return byDir[0];
+  }
+  // 无目录线索时：仍优先多轮，避免回填到拆开的单轮碎片
+  const ranked = list.slice().sort((a, b) => (b.conversationTurns?.length || 0) - (a.conversationTurns?.length || 0)
+    || (b.savedAt || 0) - (a.savedAt || 0));
+  return ranked[0]?.conversationTurns?.length ? ranked[0] : null;
 }
 
 /** 读取单条历史快照 */

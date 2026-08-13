@@ -12,24 +12,33 @@ import { resolveProviderBrandIcon } from '../lib/brandIcons';
 import { speedDotClass, bucketFromMs } from '../lib/speed';
 import UsageMeter, { usageProviderForDirect } from './UsageMeter';
 
-// 服务质量(上次转发结果)：成功=绿 / 429=红 / 失败=红 / 无请求=灰。文字区分 429 与 失败。
-export const healthDotClass = (h) => h == null ? 'bg-zinc-300 dark:bg-zinc-600' : h === 'ok' ? 'bg-green-500' : 'bg-red-500';
-export const healthWordOf = (h) => h == null ? '无请求' : h === 'ok' ? '成功' : h === 'rate' ? '429' : '失败';
+// 服务质量(上次转发结果)：成功=绿 / 冷却=蓝 / 429=红 / 失败=红 / 无请求=灰。文字区分 429 与 失败。
+export const healthDotClass = (h) => h == null ? 'bg-zinc-300 dark:bg-zinc-600'
+  : h === 'cool' ? 'bg-sky-400'
+  : h === 'ok' ? 'bg-green-500'
+  : 'bg-red-500';
+export const healthWordOf = (h) => h == null ? '无请求'
+  : h === 'cool' ? '冷却中'
+  : h === 'ok' ? '成功'
+  : h === 'rate' ? '429'
+  : '失败';
 // hover 提示：说明这是"上次通过这个源转发请求"的结果，避免只看"成功/失败"不知含义。
 export const healthTitle = (h) =>
   h == null ? '服务质量：还没通过这个源转发过请求'
+  : h === 'cool' ? '冷却中：此供给源暂时不可用（配额/限流等）'
   : h === 'ok' ? '服务质量：上次转发成功（2xx）'
   : h === 'rate' ? '服务质量：上次被限流（429）'
   : '服务质量：上次转发失败';
 
-/** 服务质量徽标：圆点 + 文字，hover 即时弹出说明(自定义，不依赖原生 title)。 */
-export function QualityBadge({ health, note }) {
+/** 服务质量徽标：圆点 + 文字；冷却中优先于上次成功/失败，避免绿点误导。 */
+export function QualityBadge({ health, note, cooling = false }) {
+  const h = cooling ? 'cool' : health;
   return (
     <span className="relative group/q inline-flex items-center gap-1.5">
-      <span className={`w-2 h-2 rounded-full shrink-0 ${healthDotClass(health)}`} />
-      <span>{healthWordOf(health)}</span>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${healthDotClass(h)}`} />
+      <span className={cooling ? 'text-sky-600 dark:text-sky-400' : undefined}>{healthWordOf(h)}</span>
       <span className="pointer-events-none invisible opacity-0 group-hover/q:visible group-hover/q:opacity-100 transition-opacity absolute bottom-full right-0 mb-1 z-50 whitespace-nowrap rounded-md bg-zinc-900 text-white px-2 py-1 text-[10px] leading-tight shadow-lg font-normal">
-        {healthTitle(health)}{note ? `（${note}）` : ''}
+        {healthTitle(h)}{note && !cooling ? `（${note}）` : ''}
       </span>
     </span>
   );
@@ -732,6 +741,8 @@ function accountDisplayName(inst) {
 export function PersonalSourceModelView({
   instances, t, trailing = null, onEmptyAdd = null, modelTypeMap = {},
   latencyMap: latencyMapProp = null, onRefreshLatency = null, probeTargets = [],
+  // 冷却查询：(...ids) => cooldown | null；冷却中不显示绿色「成功」
+  cooldownFor = null,
 }) {
   const [expandedModel, setExpandedModel] = useState(null);
   const [latencyMapLocal, setLatencyMapLocal] = useState({});
@@ -910,6 +921,9 @@ export function PersonalSourceModelView({
                 {sortedSrcs.map((inst, i) => {
                   const row = rowOf.get(inst);
                   const health = row?.statusCode == null ? null : healthFromStatus(row.statusCode);
+                  const cooling = !!(typeof cooldownFor === 'function' && cooldownFor(
+                    inst.gateway_id, inst.id, inst.agent_id, inst.source_id, inst.provider_id,
+                  ));
                   return (
                     <div
                       key={(inst.id || inst.agent_id || inst.source_id) + ':' + i}
@@ -923,7 +937,7 @@ export function PersonalSourceModelView({
                         <span className="truncate text-zinc-700 dark:text-zinc-300">{accountDisplayName(inst)}</span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
-                        <QualityBadge health={health} />
+                        <QualityBadge health={health} cooling={cooling} />
                       </div>
                     </div>
                   );

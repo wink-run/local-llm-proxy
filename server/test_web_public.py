@@ -63,6 +63,59 @@ def test_guest_one_turn_and_rate_limit():
     assert guest_trial_allowed("10.0.0.1", now=1000.0 + 3601.0, limit=2) is True
 
 
+def test_validate_web_chat_multimodal_and_agent_images():
+    """网页对话支持 image_url parts；智能体附图仅 data URL。"""
+    from web_public import normalize_agent_images, WEB_CHAT_MAX_IMAGES
+
+    tiny = "data:image/png;base64,aaaa"
+    out = validate_web_chat_body(
+        "vl-model",
+        [{"role": "user", "content": [
+            {"type": "text", "text": "这是什么"},
+            {"type": "image_url", "image_url": {"url": tiny}},
+        ]}],
+    )
+    parts = out["messages"][0]["content"]
+    assert isinstance(parts, list)
+    assert parts[0]["type"] == "text"
+    assert parts[1]["type"] == "image_url"
+    assert parts[1]["image_url"]["url"] == tiny
+
+    # 仅图：自动补 text part
+    only_img = validate_web_chat_body(
+        "vl-model",
+        [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": tiny}},
+        ]}],
+    )
+    assert any(p.get("type") == "text" for p in only_img["messages"][0]["content"])
+
+    try:
+        validate_web_chat_body(
+            "m",
+            [{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "https://evil.example/x.png"}},
+            ]}],
+        )
+        assert False
+    except ValueError as e:
+        assert "data URL" in str(e)
+
+    imgs = normalize_agent_images([
+        {"dataUrl": tiny, "name": "shot.png"},
+        tiny,
+    ])
+    assert len(imgs) == 2
+    assert imgs[0]["name"] == "shot.png"
+    assert imgs[1]["dataUrl"] == tiny
+
+    try:
+        normalize_agent_images([{"dataUrl": tiny}] * (WEB_CHAT_MAX_IMAGES + 1))
+        assert False
+    except ValueError as e:
+        assert "at most" in str(e)
+
+
 def test_extract_assistant_text():
     assert extract_assistant_text({
         "choices": [{"message": {"role": "assistant", "content": "你好"}}],

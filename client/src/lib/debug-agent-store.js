@@ -38,6 +38,8 @@ export function emptyAgentSession() {
     conversationTurns: [],
     /** CLI 侧 session/thread id（Codex resume 用） */
     cliSessionId: null,
+    /** 历史归档粘性线程（首轮 taskId），中断续跑不换键 */
+    historyThreadId: null,
     /** 当前会话绑定的工作目录 */
     sessionWorkingDir: '',
     /** 用户点击「新会话」后，短暂跳过 DB 历史恢复 */
@@ -190,6 +192,9 @@ export function getStoreSelectedAgentId() {
 /** 从任务记录推断应展示在哪个 Agent 标签页 */
 export function inferSessionKeyFromTask(status) {
   const ctx = status.context || {};
+  // 社区接单不归属本机游乐场标签
+  if (ctx.clientId === 'contribute') return null;
+  if (typeof ctx.sessionKey === 'string' && ctx.sessionKey.startsWith('contribute:')) return null;
   // 优先用显式 sessionKey（派发子任务会继承父窗口 key）
   if (ctx.sessionKey) return ctx.sessionKey;
   if (ctx.mode === 'orchestrator') return '__hub__';
@@ -587,6 +592,7 @@ export function clearSessionTaskState(sessionKey) {
     delegations: {},
     conversationTurns: [],
     cliSessionId: null,
+    historyThreadId: null,
     sessionWorkingDir: '',
     skipHistoryRecover: Date.now(),
     sessionInstanceId: instanceId,
@@ -740,6 +746,9 @@ export function archiveCompletedTurn(sessionKey, turn) {
     conversationTurns: turns,
     cliSessionId: turn.cliSessionId || s.cliSessionId || null,
     sessionWorkingDir: normalizeWorkingDir(turn.workingDir || s.sessionWorkingDir || ''),
+    // 粘住首轮线程，避免后续 CLI session 变化把历史拆成新会话
+    historyThreadId: s.historyThreadId
+      || (turns[0]?.taskId ? `task:${turns[0].taskId}` : null),
   });
 }
 
@@ -762,9 +771,12 @@ export function shouldContinueCliSession(sessionKey, workingDir) {
   const sid = s.cliSessionId || last?.cliSessionId || last?.result?.cliSessionId || null;
   // 有明确 sessionId：中止/失败后也可 --resume，避免「停止再继续」丢上下文
   if (sid) return true;
-  // 无 id 时仅上一轮成功才盲续接（--continue / resume --last）
-  if (!last || last.status !== 'completed') return false;
-  return true;
+  if (!last) return false;
+  // 无 CLI id 时：成功可盲续；中止/失败也允许同目录续聊（靠 prompt 摘要，不拆新会话）
+  if (['completed', 'cancelled', 'failed'].includes(last.status) || last?.result?.cancelled) {
+    return true;
+  }
+  return false;
 }
 
 /** 上一轮是否为中止/失败且仍可续接 */

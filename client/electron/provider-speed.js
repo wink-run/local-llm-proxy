@@ -16,7 +16,7 @@ const TPS_FAST  = 30,   TPS_SLOW  = 12;
 // 总延迟兜底阈值（当供给源不返回 usage/不流式、TTFT/TPS 都测不出时用；针对小探针的往返 ms）
 const LAT_FAST  = 1500, LAT_SLOW  = 5000;
 
-const _map = new Map();     // 归一化 modelId → { ttft, tps, lat, samples, ts }
+const _map = new Map();     // 归一化 modelId 或 modelId@providerId → { ttft, tps, lat, samples, ts }
 
 // ── 持久化（重启不丢；节流写盘，与 route log 同套路）──
 const SPEED_FILE = path.join(os.homedir(), '.tokenbank', 'gateway-speed.json');
@@ -50,25 +50,25 @@ function normKey(id) {
   return s;
 }
 
+/** 同模型分源测速键：model@providerId */
+function provKey(rawModel, providerId) {
+  const m = normKey(rawModel);
+  const p = String(providerId || '').trim();
+  if (!m || !p) return '';
+  return `${m}@${p}`;
+}
+
 function _ewma(prev, val) { return prev == null ? val : (prev * (1 - ALPHA) + val * ALPHA); }
 
-/**
- * 记录一次真实调用的测速。
- * @param model 解析后的真实模型名
- * @param firstTokenMs 首字延迟（ms）
- * @param outputTokens 本次输出 token 数
- * @param totalMs 总耗时（ms）
- */
-function record(rawModel, { firstTokenMs, outputTokens, totalMs, streaming } = {}) {
-  const model = normKey(rawModel);
-  if (!model) return;
+function _recordInto(key, { firstTokenMs, outputTokens, totalMs, streaming } = {}) {
+  if (!key) return;
   const total = Number(totalMs);
   const ftt   = Number(firstTokenMs);
   const out   = Number(outputTokens);
   // 只有流式、且首字明显早于总耗时，才算拿到"真实首字延迟"；
   // 非流式整包返回时 first_token==总耗时，不是真实 TTFT，不记（否则会把总延迟当首字）。
   const hasRealTtft = !!streaming && Number.isFinite(ftt) && ftt >= 0 && (total - ftt) > 50;
-  let cur = _map.get(model) || { ttft: null, tps: null, lat: null, samples: 0, ts: 0 };
+  let cur = _map.get(key) || { ttft: null, tps: null, lat: null, samples: 0, ts: 0 };
   if (cur.seeded) cur = { ttft: null, tps: null, lat: null, samples: 0, ts: 0 };   // 真实数据到来即丢弃随机种子
   if (hasRealTtft) cur.ttft = _ewma(cur.ttft, ftt);
   // TPS：有真实首字用"生成窗口"（total-ttft）；否则用总耗时（非流式整体吞吐，偏保守）。
@@ -81,8 +81,40 @@ function record(rawModel, { firstTokenMs, outputTokens, totalMs, streaming } = {
   if (Number.isFinite(total) && total > 0) cur.lat = _ewma(cur.lat, total);
   cur.samples += 1;
   cur.ts = Date.now();
-  _map.set(model, cur);
+  _map.set(key, cur);
+}
+
+/**
+ * 记录一次真实调用的测速。
+ * @param model 解析后的真实模型名
+ * @param opts.firstTokenMs 首字延迟（ms）
+ * @param opts.outputTokens 本次输出 token 数
+ * @param opts.totalMs 总耗时（ms）
+ * @param opts.providerId 可选：写入 model@provider 分源测速，供同模型多源选路
+ */
+function record(rawModel, { firstTokenMs, outputTokens, totalMs, streaming, providerId } = {}) {
+  const model = normKey(rawModel);
+  if (!model) return;
+  _recordInto(model, { firstTokenMs, outputTokens, totalMs, streaming });
+  const pk = provKey(rawModel, providerId);
+  if (pk) _recordInto(pk, { firstTokenMs, outputTokens, totalMs, streaming });
   _save();
+}
+
+/**
+ * 取某模型在某供给源上的延迟分（ms）：优先 TTFT，否则总延迟。
+ * 无分源数据时回退模型级聚合。
+ */
+function getProviderSpeedMs(rawModel, providerId) {
+  const pk = provKey(rawModel, providerId);
+  const read = (key) => {
+    const v = key && _map.get(key);
+    if (!v || v.seeded) return null;
+    if (v.ttft != null && Number.isFinite(v.ttft)) return Math.round(v.ttft);
+    if (v.lat != null && Number.isFinite(v.lat)) return Math.round(v.lat);
+    return null;
+  };
+  return read(pk) ?? read(normKey(rawModel));
 }
 
 // 首次为某模型随机初始化测速：不发真实探针，只给圆点一个初始速率（ttft ms + tps）。
@@ -116,10 +148,11 @@ function bucketOf(ttft, tps, lat) {
   return 'medium';
 }
 
-/** 返回 { [modelId]: { ttft_ms, tps, samples, bucket, ts } } */
+/** 返回 { [modelId]: { ttft_ms, tps, samples, bucket, ts } }（仅模型级，不含 @provider 分源键） */
 function getSpeedMap() {
   const out = {};
   for (const [model, v] of _map) {
+    if (String(model).includes('@')) continue; // 分源键不进入模型级 map，避免污染 UI
     out[model] = {
       ttft_ms: v.ttft == null ? null : Math.round(v.ttft),
       tps: v.tps == null ? null : Math.round(v.tps),
@@ -163,4 +196,7 @@ function getSpeedMapWithLatency(latencyByModel) {
 
 _load();   // 启动时从磁盘恢复上次的测速结果（重启不再回到"暂无"）
 
-module.exports = { record, getSpeedMap, getSpeedMapWithLatency, bucketOf, seedIfMissing, THRESHOLDS: { TTFT_FAST, TTFT_SLOW, TPS_FAST, TPS_SLOW } };
+module.exports = {
+  record, getSpeedMap, getSpeedMapWithLatency, getProviderSpeedMs, bucketOf, seedIfMissing, normKey, provKey,
+  THRESHOLDS: { TTFT_FAST, TTFT_SLOW, TPS_FAST, TPS_SLOW, LAT_FAST, LAT_SLOW },
+};

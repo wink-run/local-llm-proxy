@@ -9,6 +9,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="/static/vue.global.prod.js"></script>
+<script src="/static/marked.min.js"></script>
+<script src="/static/purifier.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -27,6 +29,8 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .brand{display:flex;align-items:center;gap:10px;font-weight:600}
 .brand-mark{width:28px;height:28px;border-radius:8px;object-fit:contain;display:block;flex-shrink:0}
 .lang-btn,.ghost-btn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit;color:var(--text-muted)}
+.lang-btn:hover,.ghost-btn:hover{color:var(--text);border-color:var(--text-muted)}
+.user-chip{font-size:13px;color:var(--text);font-weight:500;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 24px;box-shadow:0 8px 24px rgba(0,0,0,.03)}
 .h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px;font-family:var(--mono)}
 .model-pick{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
@@ -38,19 +42,21 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 }
 .model-select:focus{border-color:var(--text)}
 .model-select:disabled{opacity:.6;cursor:not-allowed}
-.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:4px 0 14px}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:4px 0 14px;height:360px;overflow:auto;align-content:start;padding:12px;background:var(--bg-muted);border:1px solid #f0eeec;border-radius:var(--radius)}
 .gallery img{width:100%;border-radius:12px;border:1px solid var(--border);background:#fff;display:block}
-.gallery-empty{grid-column:1/-1;color:var(--text-muted);font-size:13px;text-align:center;padding:36px 12px;background:var(--bg-muted);border-radius:var(--radius);border:1px solid #f0eeec}
+.gallery-empty{grid-column:1/-1;color:var(--text-muted);font-size:13px;text-align:center;padding:36px 12px;margin:auto;line-height:1.5}
 .meta{color:var(--text-muted);font-size:13px;line-height:1.5;margin-bottom:16px}
 .badge.img{color:#7c3aed;border-color:#ddd6fe;background:#f5f3ff}
 .badge.txt{color:#0369a1;border-color:#bae6fd;background:#f0f9ff}
+.badge.vision{color:#0f766e;border-color:#99f6e4;background:#f0fdfa}
+.badge.embed{color:#64748b;border-color:#e2e8f0;background:#f8fafc}
 .badges{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
 .badge{font-size:11px;padding:4px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-muted);background:var(--bg-muted)}
 .field{margin-bottom:12px}
 label{display:block;color:var(--text-muted);font-size:12px;margin-bottom:5px}
 textarea,input{
   width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
-  color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:vertical
+  color:var(--text);font-size:14px;outline:none;font-family:inherit;resize:none
 }
 textarea:focus,input:focus{border-color:var(--text)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 18px;background:var(--primary);color:var(--primary-fg);border:none;border-radius:var(--radius);cursor:pointer;font-size:14px;font-family:inherit;font-weight:500}
@@ -59,15 +65,46 @@ textarea:focus,input:focus{border-color:var(--text)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .err{color:var(--danger);font-size:13px;margin-top:10px}
 .hint{color:var(--text-muted);font-size:12px;line-height:1.5}
-.chat{display:flex;flex-direction:column;gap:10px;margin:4px 0 14px;min-height:200px;max-height:420px;overflow:auto;padding:12px;background:var(--bg-muted);border:1px solid #f0eeec;border-radius:var(--radius)}
-.chat-empty{color:var(--text-muted);font-size:13px;text-align:center;padding:36px 12px;line-height:1.5}
-.bubble{max-width:88%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
-.bubble.user{align-self:flex-end;background:var(--primary);color:var(--primary-fg);border-bottom-right-radius:4px}
+.chat{display:flex;flex-direction:column;gap:10px;margin:4px 0 14px;height:360px;overflow:auto;padding:12px;background:var(--bg-muted);border:1px solid #f0eeec;border-radius:var(--radius)}
+.chat-empty{color:var(--text-muted);font-size:13px;text-align:center;padding:36px 12px;line-height:1.5;margin:auto}
+.bubble{max-width:88%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.55;word-break:break-word}
+.bubble.user{align-self:flex-end;background:var(--primary);color:var(--primary-fg);border-bottom-right-radius:4px;white-space:pre-wrap}
 .bubble.assistant{align-self:flex-start;background:#fff;border:1px solid var(--border);color:var(--text);border-bottom-left-radius:4px}
-.bubble.pending{opacity:.7;font-style:italic}
-.composer{display:flex;gap:8px;align-items:flex-end}
-.composer textarea{flex:1;min-height:44px;max-height:140px;resize:vertical}
-.composer .btn{flex-shrink:0;height:44px}
+.bubble.pending{opacity:.85}
+.bubble.pending .md-body{font-style:italic}
+.bubble-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bubble-imgs img{max-width:160px;max-height:120px;border-radius:8px;object-fit:cover;display:block;background:rgba(255,255,255,.15)}
+.bubble.assistant .bubble-imgs img{background:#f0eeec}
+/* Markdown 助手气泡 */
+.md-body{line-height:1.6}
+.md-body>:first-child{margin-top:0}
+.md-body>:last-child{margin-bottom:0}
+.md-body p{margin:.45em 0}
+.md-body h1,.md-body h2,.md-body h3,.md-body h4{font-weight:700;letter-spacing:-.02em;margin:.7em 0 .35em;line-height:1.3}
+.md-body h1{font-size:1.2em}.md-body h2{font-size:1.1em}.md-body h3{font-size:1.05em}
+.md-body ul,.md-body ol{margin:.4em 0;padding-left:1.35em}
+.md-body li{margin:.15em 0}
+.md-body strong{font-weight:700}
+.md-body em{font-style:italic}
+.md-body a{color:#2563eb;text-decoration:underline}
+.md-body code{font-family:var(--mono);font-size:11.5px;background:var(--bg-muted);border:1px solid #f0eeec;border-radius:5px;padding:.1em .35em}
+.md-body pre{margin:.55em 0;padding:10px 12px;background:#1e1e1e;color:#f3f3f3;border-radius:8px;overflow:auto}
+.md-body pre code{background:transparent;border:none;padding:0;color:inherit;font-size:11.5px}
+.md-body blockquote{margin:.5em 0;padding:.35em .8em;border-left:3px solid var(--border);color:var(--text-muted);background:var(--bg-subtle)}
+.md-body hr{border:none;border-top:1px solid var(--border);margin:.8em 0}
+.md-body table{border-collapse:collapse;width:100%;margin:.55em 0;font-size:12px;display:block;overflow-x:auto;max-width:100%}
+.md-body th,.md-body td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
+.md-body th{background:var(--bg-muted);font-weight:600;white-space:nowrap}
+.md-body tr:nth-child(even) td{background:#fafafa}
+.composer{display:flex;flex-direction:column;gap:8px}
+.composer-row{display:flex;gap:8px;align-items:flex-end}
+.composer-row textarea{flex:1;height:44px;min-height:44px;max-height:44px;resize:none}
+.composer-row .btn{flex-shrink:0;height:44px}
+.attach-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.attach-thumb{position:relative;width:56px;height:56px;border-radius:8px;overflow:hidden;border:1px solid var(--border);background:var(--bg-muted)}
+.attach-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.attach-thumb button{position:absolute;top:2px;right:2px;width:18px;height:18px;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:11px;line-height:18px;cursor:pointer;padding:0}
+.attach-hint{font-size:11px;color:var(--text-muted)}
 .toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap}
 .ghost-link{background:transparent;border:none;color:var(--text-muted);font-size:12px;cursor:pointer;font-family:inherit;padding:0;text-decoration:underline}
 .auth-box{margin-top:16px;padding-top:16px;border-top:1px solid #f0eeec}
@@ -85,6 +122,8 @@ textarea:focus,input:focus{border-color:var(--text)}
       <span>Token Bank</span>
     </a>
     <div class="row">
+      <a class="ghost-btn" href="/network">{{ T.backNetwork }}</a>
+      <span v-if="loggedIn && currentUserLabel" class="user-chip" :title="currentUserLabel">{{ currentUserLabel }}</span>
       <button class="lang-btn" type="button" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中文' }}</button>
       <button v-if="loggedIn" class="ghost-btn" type="button" @click="logout">{{ T.logout }}</button>
       <a v-else class="ghost-btn" href="/app">{{ T.openApp }}</a>
@@ -119,13 +158,15 @@ textarea:focus,input:focus{border-color:var(--text)}
     <p class="meta">{{ isEmbed ? T.metaEmbed : (isImage ? T.metaImage : T.meta) }}</p>
     <div class="badges">
       <span class="badge">{{ T.publicTry }}</span>
-      <span class="badge" :class="isImage ? 'img' : 'txt'">{{ typeBadge }}</span>
+      <span class="badge" :class="typeBadgeClass">{{ typeBadge }}</span>
+      <!-- 与智能体页「每次 n 积分」同款徽章，展示模型消费率 -->
+      <span v-if="!isEmbed && consumeRate != null" class="badge">{{ T.creditsRate.replace('{n}', formatRate(consumeRate)) }}</span>
       <span v-if="sharer" class="badge" style="font-family:var(--mono)">{{ T.pinned }} {{ sharer }}</span>
       <a v-if="sharer" class="badge" :href="'/u/' + encodeURIComponent(sharer)">{{ T.viewSharer }}</a>
     </div>
 
     <div class="toolbar">
-      <span class="hint">{{ loggedIn && profile ? T.balance.replace('{n}', Number(profile.credits_balance || 0).toFixed(1)) : (isEmbed ? T.embedHint : (isImage ? T.imageHint : T.chatHint)) }}</span>
+      <span class="hint" style="margin:0">{{ loggedIn && profile ? T.balance.replace('{n}', Number(profile.credits_balance || 0).toFixed(1)) : (isEmbed ? T.embedHint : (isImage ? T.imageHint : T.chatHint)) }}</span>
       <button v-if="(isImage ? images.length : messages.length)" type="button" class="ghost-link" @click="clearAll" :disabled="running">{{ T.clear }}</button>
     </div>
 
@@ -137,14 +178,42 @@ textarea:focus,input:focus{border-color:var(--text)}
     <!-- 文本/图文：多轮对话 -->
     <template v-else-if="!isImage">
       <div class="chat" ref="chatEl">
-        <div v-if="!messages.length" class="chat-empty">{{ T.chatEmpty }}</div>
-        <div v-for="(m, i) in messages" :key="i" class="bubble" :class="[m.role, { pending: m.pending }]">{{ m.content }}</div>
+        <div v-if="!messages.length" class="chat-empty">{{ isVision ? T.visionEmpty : T.chatEmpty }}</div>
+        <div v-for="(m, i) in messages" :key="i" class="bubble" :class="[m.role, { pending: m.pending }]">
+          <div
+            v-if="m.role === 'assistant'"
+            class="md-body"
+            v-html="renderMarkdown(m.content || (m.pending ? T.thinking : ''))"
+          ></div>
+          <template v-else>
+            <div v-if="m.content">{{ m.content }}</div>
+            <div v-if="m.images && m.images.length" class="bubble-imgs">
+              <img v-for="(src, j) in m.images" :key="j" :src="src" alt="">
+            </div>
+          </template>
+        </div>
       </div>
       <div class="composer">
-        <textarea v-model="prompt" rows="2" :placeholder="T.promptPh" :disabled="running || guestLocked" @keydown.enter.exact.prevent="sendMessage"></textarea>
-        <button class="btn" type="button" :disabled="running || guestLocked || !prompt.trim()" @click="sendMessage">
-          {{ running ? T.running : T.send }}
-        </button>
+        <div v-if="isVision && pendingImages.length" class="attach-bar">
+          <div v-for="(p, i) in pendingImages" :key="p.id" class="attach-thumb">
+            <img :src="p.dataUrl" alt="">
+            <button type="button" :disabled="running" @click="removePendingImage(i)" title="×">×</button>
+          </div>
+          <span class="attach-hint">{{ T.attachHint }}</span>
+        </div>
+        <div class="composer-row">
+          <textarea
+            v-model="prompt"
+            rows="1"
+            :placeholder="isVision ? T.promptPhVision : T.promptPh"
+            :disabled="running || guestLocked"
+            @keydown.enter.exact.prevent="sendMessage"
+            @paste="onComposerPaste"
+          ></textarea>
+          <button class="btn" type="button" :disabled="running || guestLocked || (!prompt.trim() && !(isVision && pendingImages.length))" @click="sendMessage">
+            {{ running ? ((messages.length && messages[messages.length - 1].pending && messages[messages.length - 1].content) ? T.streaming : T.running) : T.send }}
+          </button>
+        </div>
       </div>
     </template>
 
@@ -157,10 +226,12 @@ textarea:focus,input:focus{border-color:var(--text)}
         </a>
       </div>
       <div class="composer">
-        <textarea v-model="prompt" rows="2" :placeholder="T.imagePh" :disabled="running" @keydown.enter.exact.prevent="genImage"></textarea>
-        <button class="btn" type="button" :disabled="running || !prompt.trim()" @click="genImage">
-          {{ running ? T.running : T.gen }}
-        </button>
+        <div class="composer-row">
+          <textarea v-model="prompt" rows="1" :placeholder="T.imagePh" :disabled="running" @keydown.enter.exact.prevent="genImage"></textarea>
+          <button class="btn" type="button" :disabled="running || !prompt.trim()" @click="genImage">
+            {{ running ? T.running : T.gen }}
+          </button>
+        </div>
       </div>
     </template>
     <p v-if="err" class="err">{{ err }}</p>
@@ -194,7 +265,7 @@ textarea:focus,input:focus{border-color:var(--text)}
 </div>
 
 <script>
-const { createApp, ref, computed, onMounted, nextTick } = Vue
+const { createApp, ref, computed, onMounted, nextTick, watch } = Vue
 
 let _storageOk = false
 const _mem = {}
@@ -208,45 +279,63 @@ createApp({
     const lang = ref(storageGet('tb_lang') || ((navigator.language || '').startsWith('zh') ? 'zh' : 'en'))
     const i18n = {
       zh: {
-        unavailable: '无法试用', badModel: '暂无可用模型', backNet: '返回全球网络',
+        unavailable: '无法试用', badModel: '暂无可用模型', backNet: '返回全球网络', backNetwork: '← 全球网络',
         meta: '未登录可试用一轮；登录后按积分规则多轮对话，可随时切换模型。',
         metaImage: '图像模型用于文生图：需登录，按正常积分扣费。',
+        creditsRate: '{n} 积分/千Token',
         metaEmbed: '嵌入模型不支持网页试用，请在客户端或 API 中使用。',
         pickModel: '当前模型', groupChat: '文本对话', groupVision: '图文对话', groupImage: '图像生成', groupEmbed: '嵌入',
         typeChat: '文本', typeVision: '图文', typeImage: '生图', typeEmbedding: '嵌入',
         publicTry: '网页试用', pinned: '钉选', viewSharer: '贡献者主页 →',
-        promptPh: '输入消息，Enter 发送…', imagePh: '描述你想生成的画面…',
-        send: '发送', gen: '生成', running: '生成中…',
+        promptPh: '输入消息，Enter 发送…',
+        promptPhVision: '输入消息或粘贴图片，Enter 发送…',
+        imagePh: '描述你想生成的画面…',
+        send: '发送', gen: '生成', running: '生成中…', streaming: '生成中…',
         needLogin: '文生图需要登录 Token Bank 账号。',
         loginToContinue: '试用一轮已结束，登录后可继续对话（按正常积分扣费）。',
         login: '登录', register: '注册', loggingIn: '登录中…', registering: '注册中…',
         email: '邮箱', password: '密码', nickname: '昵称', logout: '退出', openApp: '账户',
         balance: '余额 {n} 积分', footer: '模型网页试用',
         emptyPrompt: '请先输入内容',
+        emptyPromptVision: '请先输入内容或粘贴图片',
+        attachHint: '最多 3 张，粘贴即可',
+        attachLimit: '最多附 3 张图',
+        attachSize: '单张图片过大',
+        attachVisionOnly: '当前模型为文本模型，不支持识图；请切换到「图文」模型后再粘贴',
         chatHint: '未登录可试一轮', imageHint: '文生图需登录', embedHint: '嵌入模型不支持网页试用',
         chatEmpty: '发送一条消息试用；登录后可多轮追问。',
+        visionEmpty: '发送消息或粘贴图片试用；登录后可多轮追问。',
         imageEmpty: '输入画面描述后点击生成。',
         embedEmpty: '嵌入模型请在客户端 / API 中使用，网页暂不支持试用。',
         clear: '清空', thinking: '…',
       },
       en: {
-        unavailable: 'Unavailable', badModel: 'No models available', backNet: 'Back to network',
+        unavailable: 'Unavailable', badModel: 'No models available', backNet: 'Back to network', backNetwork: '← Global Network',
         meta: 'Guests get one free turn; sign in for multi-turn chat with normal credits.',
         metaImage: 'Image models require sign-in and use normal credit billing.',
+        creditsRate: '{n} credits / 1K tokens',
         metaEmbed: 'Embedding models are not available in the web trial.',
         pickModel: 'Model', groupChat: 'Text chat', groupVision: 'Vision chat', groupImage: 'Image generation', groupEmbed: 'Embedding',
         typeChat: 'Text', typeVision: 'Vision', typeImage: 'Image', typeEmbedding: 'Embedding',
         publicTry: 'Web trial', pinned: 'Pinned', viewSharer: 'Contributor →',
-        promptPh: 'Message, Enter to send…', imagePh: 'Describe the image…',
-        send: 'Send', gen: 'Generate', running: 'Running…',
+        promptPh: 'Message, Enter to send…',
+        promptPhVision: 'Message or paste image, Enter to send…',
+        imagePh: 'Describe the image…',
+        send: 'Send', gen: 'Generate', running: 'Running…', streaming: 'Generating…',
         needLogin: 'Sign in to generate images.',
         loginToContinue: 'Guest trial used. Sign in to continue (normal credits).',
         login: 'Sign in', register: 'Sign up', loggingIn: 'Signing in…', registering: 'Signing up…',
         email: 'Email', password: 'Password', nickname: 'Nickname', logout: 'Log out', openApp: 'Account',
         balance: 'Balance {n} credits', footer: 'Model web trial',
-        emptyPrompt: 'Enter a prompt first',
+        emptyPrompt: 'Enter a message first',
+        emptyPromptVision: 'Enter a message or paste an image',
+        attachHint: 'Up to 3 images — paste to attach',
+        attachLimit: 'At most 3 images',
+        attachSize: 'Image too large',
+        attachVisionOnly: 'This is a text model — switch to a Vision model to paste images',
         chatHint: 'One free guest turn', imageHint: 'Sign in for images', embedHint: 'Embedding: use client/API',
         chatEmpty: 'Try one message; sign in for multi-turn chat.',
+        visionEmpty: 'Try a message or paste images; sign in for multi-turn chat.',
         imageEmpty: 'Describe a scene, then generate.',
         embedEmpty: 'Embedding models are not available in the web trial.',
         clear: 'Clear', thinking: '…',
@@ -271,12 +360,29 @@ createApp({
     const model = ref(modelFromPath())
     const modelOptions = ref([])
     const modelTypes = ref({})
+    // name → consume_rate（积分/千Token）
+    const rateMap = ref({})
     const sharer = ref(sharerFromQuery())
     const loggedIn = ref(!!storageGet('user_token'))
     const profile = ref(null)
+    // 右上角展示：昵称优先，否则邮箱前缀
+    const currentUserLabel = computed(() => {
+      const p = profile.value
+      if (!p) return ''
+      const nick = String(p.nickname || '').trim()
+      if (nick) return nick
+      const email = String(p.email || '').trim()
+      if (!email) return ''
+      const at = email.indexOf('@')
+      return at > 0 ? email.slice(0, at) : email
+    })
     const prompt = ref('')
     const messages = ref([])
     const images = ref([])
+    // 待发送附图（粘贴）
+    const pendingImages = ref([])
+    const ATTACH_MAX = 3
+    const ATTACH_MAX_BYTES = 4 * 1024 * 1024
     const chatEl = ref(null)
     const running = ref(false)
     const err = ref('')
@@ -289,6 +395,218 @@ createApp({
 
     function getToken() { return storageGet('user_token') || '' }
     const guestLocked = computed(() => guestUsed.value && !loggedIn.value)
+
+    // ── 对话本地持久化（文本 localStorage + 附图 IndexedDB；刷新不丢图）────────
+    const CHAT_MAX_MSGS = 80
+    const CHAT_MAX_CHARS = 200_000
+    const IDB_NAME = 'tb_model_chat_v1'
+    const IDB_STORE = 'threads'
+    function chatThreadKey(modelName, sharerId) {
+      const m = String(modelName || '').trim()
+      const s = String(sharerId || '').trim()
+      return `tb_model_chat:${m}${s ? ':' + s : ''}`
+    }
+    function guestUsedStorageKey() {
+      // 与换模型不重置额度一致：全局一份访客试用标记
+      return 'tb_web_model_guest_used'
+    }
+    function idbAvailable() {
+      try { return typeof indexedDB !== 'undefined' && !!indexedDB } catch { return false }
+    }
+    function idbOpen() {
+      return new Promise((resolve, reject) => {
+        if (!idbAvailable()) { reject(new Error('no idb')); return }
+        const req = indexedDB.open(IDB_NAME, 1)
+        req.onupgradeneeded = () => {
+          const db = req.result
+          if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE)
+        }
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error || new Error('idb open failed'))
+      })
+    }
+    async function idbPut(key, value) {
+      try {
+        const db = await idbOpen()
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(IDB_STORE, 'readwrite')
+          tx.objectStore(IDB_STORE).put(value, key)
+          tx.oncomplete = () => resolve()
+          tx.onerror = () => reject(tx.error)
+          tx.onabort = () => reject(tx.error)
+        })
+        db.close()
+      } catch { /* quota / private mode */ }
+    }
+    async function idbGet(key) {
+      try {
+        const db = await idbOpen()
+        const val = await new Promise((resolve, reject) => {
+          const tx = db.transaction(IDB_STORE, 'readonly')
+          const req = tx.objectStore(IDB_STORE).get(key)
+          req.onsuccess = () => resolve(req.result)
+          req.onerror = () => reject(req.error)
+        })
+        db.close()
+        return val
+      } catch {
+        return null
+      }
+    }
+    async function idbDel(key) {
+      try {
+        const db = await idbOpen()
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(IDB_STORE, 'readwrite')
+          tx.objectStore(IDB_STORE).delete(key)
+          tx.oncomplete = () => resolve()
+          tx.onerror = () => reject(tx.error)
+        })
+        db.close()
+      } catch { /* ignore */ }
+    }
+    /** 仅文本（localStorage 兜底） */
+    function serializeChatText(msgs) {
+      const cleaned = (msgs || [])
+        .filter(m => {
+          if (!m || (m.role !== 'user' && m.role !== 'assistant')) return false
+          if (m.pending) return false
+          if (String(m.content || '').trim()) return true
+          return m.role === 'user' && Array.isArray(m.images) && m.images.length
+        })
+        .map(m => ({
+          role: m.role,
+          content: String(m.content || '').trim()
+            || (m.role === 'user' && m.images?.length ? '[image]' : ''),
+        }))
+        .filter(m => String(m.content || '').trim())
+        .map(m => ({
+          role: m.role,
+          content: String(m.content || '').slice(0, 80_000),
+        }))
+        .slice(-CHAT_MAX_MSGS)
+      let total = 0
+      const out = []
+      for (let i = cleaned.length - 1; i >= 0; i -= 1) {
+        const c = cleaned[i]
+        total += c.content.length
+        if (total > CHAT_MAX_CHARS && out.length) break
+        out.unshift(c)
+      }
+      return out
+    }
+    /** 含附图（IndexedDB）；限制附图条数以免撑爆配额 */
+    function serializeChatFull(msgs) {
+      const list = (msgs || [])
+        .filter(m => {
+          if (!m || (m.role !== 'user' && m.role !== 'assistant')) return false
+          if (m.pending) return false
+          if (String(m.content || '').trim()) return true
+          return m.role === 'user' && Array.isArray(m.images) && m.images.length
+        })
+        .map(m => {
+          const row = {
+            role: m.role,
+            content: String(m.content || '').slice(0, 80_000),
+          }
+          if (m.role === 'user' && Array.isArray(m.images) && m.images.length) {
+            row.images = m.images.filter(u => typeof u === 'string' && u.startsWith('data:image/')).slice(0, 3)
+          }
+          if (!row.content && row.images?.length) row.content = '[image]'
+          return row
+        })
+        .filter(m => String(m.content || '').trim() || (m.images && m.images.length))
+        .slice(-CHAT_MAX_MSGS)
+      // 从尾部保留附图，最多约 12 张，避免单线程过大
+      let imgBudget = 12
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        const imgs = list[i].images
+        if (!imgs?.length) continue
+        if (imgBudget <= 0) {
+          delete list[i].images
+          continue
+        }
+        if (imgs.length > imgBudget) list[i].images = imgs.slice(0, imgBudget)
+        imgBudget -= list[i].images.length
+      }
+      return list
+    }
+    async function saveChatHistory(modelName, msgs, sharerId) {
+      const key = chatThreadKey(modelName, sharerId)
+      if (!String(modelName || '').trim()) return
+      try {
+        storageSet(key, JSON.stringify({
+          v: 1,
+          updatedAt: Date.now(),
+          messages: serializeChatText(msgs),
+        }))
+      } catch { /* quota */ }
+      // 附图走 IndexedDB（容量更大）
+      await idbPut(key, {
+        v: 2,
+        updatedAt: Date.now(),
+        messages: serializeChatFull(msgs),
+      })
+    }
+    function normalizeLoadedMessages(list) {
+      return (Array.isArray(list) ? list : [])
+        .filter(m => m && (m.role === 'user' || m.role === 'assistant'))
+        .map(m => {
+          const row = {
+            role: m.role,
+            content: String(m.content || ''),
+            pending: false,
+          }
+          if (m.role === 'user' && Array.isArray(m.images) && m.images.length) {
+            const imgs = m.images.filter(u => typeof u === 'string' && u.startsWith('data:image/')).slice(0, 3)
+            if (imgs.length) row.images = imgs
+          }
+          return row
+        })
+        .filter(m => String(m.content || '').trim() || (m.images && m.images.length))
+    }
+    function loadChatHistory(modelName, sharerId) {
+      const key = chatThreadKey(modelName, sharerId)
+      if (!String(modelName || '').trim()) return []
+      try {
+        const raw = storageGet(key)
+        if (!raw) return []
+        const data = JSON.parse(raw)
+        const list = Array.isArray(data?.messages) ? data.messages : (Array.isArray(data) ? data : [])
+        return normalizeLoadedMessages(list)
+      } catch {
+        return []
+      }
+    }
+    async function loadChatHistoryFull(modelName, sharerId) {
+      const key = chatThreadKey(modelName, sharerId)
+      if (!String(modelName || '').trim()) return []
+      // 优先 IndexedDB（含附图）
+      try {
+        const data = await idbGet(key)
+        const list = Array.isArray(data?.messages) ? data.messages : null
+        if (list && list.length) return normalizeLoadedMessages(list)
+      } catch { /* fall through */ }
+      return loadChatHistory(modelName, sharerId)
+    }
+    function clearChatHistory(modelName, sharerId) {
+      const key = chatThreadKey(modelName, sharerId)
+      if (!String(modelName || '').trim()) return
+      storageRemove(key)
+      void idbDel(key)
+    }
+    async function persistNow() {
+      if (!model.value || isImage.value || isEmbed.value) return
+      await saveChatHistory(model.value, messages.value, sharer.value)
+      if (guestUsed.value) storageSet(guestUsedStorageKey(), '1')
+    }
+    async function restoreChatForCurrent() {
+      if (!model.value || isImage.value || isEmbed.value) {
+        messages.value = []
+        return
+      }
+      messages.value = await loadChatHistoryFull(model.value, sharer.value)
+    }
 
     function inferType(name) {
       const t = modelTypes.value[name]
@@ -303,6 +621,7 @@ createApp({
 
     const isImage = computed(() => inferType(model.value) === 'image')
     const isEmbed = computed(() => inferType(model.value) === 'embedding')
+    const isVision = computed(() => inferType(model.value) === 'vision')
     const typeBadge = computed(() => {
       const t = inferType(model.value)
       if (t === 'image') return T.value.typeImage
@@ -310,10 +629,30 @@ createApp({
       if (t === 'embedding') return T.value.typeEmbedding
       return T.value.typeChat
     })
+    // 徽章样式：文本 / 图文 / 生图 / 嵌入分开
+    const typeBadgeClass = computed(() => {
+      const t = inferType(model.value)
+      if (t === 'image') return 'img'
+      if (t === 'vision') return 'vision'
+      if (t === 'embedding') return 'embed'
+      return 'txt'
+    })
     const chatModels = computed(() => modelOptions.value.filter(m => inferType(m) === 'chat'))
     const visionModels = computed(() => modelOptions.value.filter(m => inferType(m) === 'vision'))
     const imageModels = computed(() => modelOptions.value.filter(m => inferType(m) === 'image'))
     const embedModels = computed(() => modelOptions.value.filter(m => inferType(m) === 'embedding'))
+    // 当前模型消费率；未配置时不展示扣费徽章
+    const consumeRate = computed(() => {
+      const name = String(model.value || '').trim()
+      if (!name) return null
+      const r = rateMap.value[name]
+      return (typeof r === 'number' && Number.isFinite(r) && r >= 0) ? r : null
+    })
+    function formatRate(n) {
+      const x = Number(n)
+      if (!Number.isFinite(x)) return '—'
+      return Number.isInteger(x) ? String(x) : String(Math.round(x * 10) / 10)
+    }
 
     function syncUrl() {
       const m = model.value
@@ -324,15 +663,26 @@ createApp({
       document.title = `${m} · Token Bank`
     }
 
-    function onModelChange(ev) {
+    async function onModelChange(ev) {
       const next = (ev?.target?.value || '').trim()
       if (!next || next === model.value) return
+      // 先落盘当前模型对话，再切换并恢复目标模型历史（含附图）
+      if (!isImage.value && !isEmbed.value) {
+        await saveChatHistory(model.value, messages.value, sharer.value)
+      }
       model.value = next
-      messages.value = []
-      // 换模型不重置访客额度（IP 限流在服务端）；仅清空本地对话
-      images.value = []
+      pendingImages.value = []
       prompt.value = ''
       err.value = ''
+      if (inferType(next) === 'image') {
+        messages.value = []
+      } else if (inferType(next) === 'embedding') {
+        messages.value = []
+        images.value = []
+      } else {
+        images.value = []
+        messages.value = await loadChatHistoryFull(next, sharer.value)
+      }
       syncUrl()
     }
 
@@ -340,12 +690,102 @@ createApp({
       if (running.value) return
       messages.value = []
       images.value = []
+      pendingImages.value = []
       err.value = ''
+      if (model.value) clearChatHistory(model.value, sharer.value)
+    }
+
+    function fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result || ''))
+        reader.onerror = () => reject(new Error('read failed'))
+        reader.readAsDataURL(file)
+      })
+    }
+
+    /** 组装 OpenAI 多模态 content：无图保持 string */
+    function buildMultimodalContent(text, urls = []) {
+      const list = (urls || []).filter(Boolean)
+      const trimmed = String(text || '').trim()
+      if (!list.length) return trimmed
+      const parts = []
+      if (trimmed) parts.push({ type: 'text', text: trimmed })
+      for (const url of list) parts.push({ type: 'image_url', image_url: { url } })
+      return parts
+    }
+
+    function removePendingImage(i) {
+      pendingImages.value = pendingImages.value.filter((_, idx) => idx !== i)
+    }
+
+    async function addAttachFiles(fileList) {
+      const files = Array.from(fileList || []).filter(f => f && String(f.type || '').startsWith('image/'))
+      if (!files.length) return
+      const room = ATTACH_MAX - pendingImages.value.length
+      if (room <= 0) {
+        err.value = T.value.attachLimit
+        return
+      }
+      const take = files.slice(0, room)
+      if (files.length > room) err.value = T.value.attachLimit
+      const next = pendingImages.value.slice()
+      for (const file of take) {
+        if (file.size > ATTACH_MAX_BYTES) {
+          err.value = T.value.attachSize
+          continue
+        }
+        try {
+          const dataUrl = await fileToDataUrl(file)
+          if (!dataUrl || !dataUrl.startsWith('data:image/')) continue
+          next.push({
+            id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            dataUrl,
+            name: file.name || 'image',
+          })
+        } catch {
+          err.value = T.value.attachSize
+        }
+      }
+      pendingImages.value = next.slice(0, ATTACH_MAX)
+    }
+
+    function onComposerPaste(e) {
+      // 仅图文（vision）模型接受粘贴图片；文本模型保持「文本」语义
+      if (!isVision.value) {
+        const items = e.clipboardData?.items
+        if (items) {
+          for (const item of items) {
+            if (item.type && item.type.startsWith('image/')) {
+              e.preventDefault()
+              err.value = T.value.attachVisionOnly
+              return
+            }
+          }
+        }
+        return
+      }
+      const items = e.clipboardData?.items
+      if (!items) return
+      const imageFiles = []
+      for (const item of items) {
+        if (item.type && item.type.startsWith('image/')) {
+          const f = item.getAsFile()
+          if (f) imageFiles.push(f)
+        }
+      }
+      if (!imageFiles.length) return
+      e.preventDefault()
+      err.value = ''
+      addAttachFiles(imageFiles)
     }
 
     async function loadModels() {
       try {
-        const { r, data } = await fetchJson('/public/network')
+        const [{ r, data }, ratesRes] = await Promise.all([
+          fetchJson('/public/network'),
+          fetchJson('/api/rates').catch(() => ({ r: { ok: false }, data: null })),
+        ])
         let ids = []
         const types = (r.ok && data?.available_model_types && typeof data.available_model_types === 'object')
           ? { ...data.available_model_types } : {}
@@ -365,6 +805,20 @@ createApp({
         if (model.value && !ids.includes(model.value)) ids = [model.value, ...ids]
         modelTypes.value = types
         modelOptions.value = ids
+        // 公开汇率表 → 当前模型扣费规则
+        try {
+          const ratesData = ratesRes?.data
+          const rows = Array.isArray(ratesData?.models) ? ratesData.models : []
+          const map = {}
+          for (const row of rows) {
+            const name = String(row?.name || '').trim()
+            const rate = Number(row?.consume_rate)
+            if (name && Number.isFinite(rate)) map[name] = rate
+          }
+          rateMap.value = map
+        } catch {
+          rateMap.value = {}
+        }
         if (!model.value && ids.length) {
           model.value = ids[0]
           syncUrl()
@@ -468,6 +922,45 @@ createApp({
       return ''
     }
 
+    // Markdown → 安全 HTML（助手气泡）；用户消息仍纯文本
+    function renderMarkdown(raw) {
+      const text = String(raw || '')
+      if (!text) return ''
+      try {
+        if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+          const html = marked.parse(text, { gfm: true, breaks: true })
+          if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
+            return DOMPurify.sanitize(html, {
+              USE_PROFILES: { html: true },
+              ADD_ATTR: ['target', 'rel'],
+            })
+          }
+          return html
+        }
+      } catch { /* 回退纯文本 */ }
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>')
+    }
+
+    /** 从 OpenAI SSE chunk 抽出增量正文 */
+    function extractStreamDelta(obj) {
+      if (!obj || typeof obj !== 'object') return ''
+      if (obj.error) return ''
+      const choice = Array.isArray(obj.choices) ? obj.choices[0] : null
+      if (!choice || typeof choice !== 'object') return ''
+      const delta = choice.delta
+      if (delta && typeof delta === 'object') {
+        if (typeof delta.content === 'string') return delta.content
+        // 部分上游把推理放在 reasoning_content，试用页只展示最终回答
+      }
+      const msg = choice.message
+      if (msg && typeof msg.content === 'string') return msg.content
+      return ''
+    }
+
     async function sendMessage() {
       err.value = ''
       if (isEmbed.value) {
@@ -479,65 +972,169 @@ createApp({
         return
       }
       const text = prompt.value.trim()
-      if (!text) {
-        err.value = T.value.emptyPrompt
+      const attachUrls = isVision.value
+        ? pendingImages.value.map(p => p.dataUrl).filter(Boolean)
+        : []
+      if (!text && !attachUrls.length) {
+        err.value = isVision.value ? T.value.emptyPromptVision : T.value.emptyPrompt
         return
       }
       const isGuest = !loggedIn.value || !getToken()
-      // 访客仅一轮；登录后按积分多轮
       if (isGuest && guestUsed.value) {
         err.value = T.value.loginToContinue
         return
       }
-      const prior = messages.value.filter(m => !m.pending).map(m => ({ role: m.role, content: m.content }))
+      const userContent = buildMultimodalContent(text, attachUrls)
+      const prior = messages.value.filter(m => !m.pending).map(m => {
+        if (m.role === 'user') {
+          const histImgs = Array.isArray(m.images) ? m.images.filter(Boolean) : []
+          return { role: 'user', content: buildMultimodalContent(m.content, histImgs) }
+        }
+        return { role: m.role, content: m.content }
+      })
       const payloadMsgs = isGuest
-        ? [{ role: 'user', content: text }]
-        : [...prior, { role: 'user', content: text }].slice(-8)
+        ? [{ role: 'user', content: userContent }]
+        : [...prior, { role: 'user', content: userContent }].slice(-8)
 
-      messages.value.push({ role: 'user', content: text })
-      messages.value.push({ role: 'assistant', content: T.value.thinking, pending: true })
+      messages.value.push({
+        role: 'user',
+        content: text,
+        images: attachUrls.length ? attachUrls.slice() : undefined,
+      })
+      messages.value.push({ role: 'assistant', content: '', pending: true })
+      const asstIdx = messages.value.length - 1
       prompt.value = ''
+      pendingImages.value = []
+      // 有附图时立刻落盘，避免刷新丢图
+      if (attachUrls.length) void persistNow()
       running.value = true
       await scrollChat()
+
+      const setAssistant = (content, { pending = true } = {}) => {
+        const row = messages.value[asstIdx]
+        if (!row || row.role !== 'assistant') return
+        row.content = content
+        row.pending = pending
+      }
+      const dropTurn = () => {
+        if (messages.value[asstIdx]?.role === 'assistant') messages.value.splice(asstIdx, 1)
+        const last = messages.value[messages.value.length - 1]
+        if (last?.role === 'user' && last.content === text) messages.value.pop()
+      }
+
       try {
-        const body = { model: model.value, messages: payloadMsgs }
+        const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream' }
+        if (!isGuest) {
+          const tok = getToken()
+          if (tok) headers.Authorization = `Bearer ${tok}`
+        }
+        const body = {
+          model: model.value,
+          messages: payloadMsgs,
+          stream: true,
+        }
         if (!isGuest && sharer.value) body.sharer = sharer.value
-        const { r, data } = await fetchJson('/api/web-chat', {
+
+        const r = await fetch('/api/web-chat', {
           method: 'POST',
-          auth: !isGuest,
+          headers,
           body: JSON.stringify(body),
         })
-        if (messages.value.length && messages.value[messages.value.length - 1].pending) {
-          messages.value.pop()
-        }
-        if (r.status === 401) {
-          if (!isGuest) logout()
-          err.value = detailMsg(data) || (isGuest ? T.value.loginToContinue : T.value.needLogin)
-          if (isGuest) guestUsed.value = true
-          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') messages.value.pop()
-          return
-        }
-        if (r.status === 429) {
-          guestUsed.value = true
-          err.value = detailMsg(data) || T.value.loginToContinue
-          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') messages.value.pop()
-          return
-        }
-        if (!r.ok) {
+
+        const ctype = (r.headers.get('content-type') || '').toLowerCase()
+        // 非 SSE：鉴权失败等，按 JSON 处理
+        if (!r.ok || !ctype.includes('text/event-stream')) {
+          let data = null
+          try { data = await r.json() } catch { data = null }
+          if (r.status === 401) {
+            if (!isGuest) logout()
+            err.value = detailMsg(data) || (isGuest ? T.value.loginToContinue : T.value.needLogin)
+            if (isGuest) guestUsed.value = true
+            dropTurn()
+            return
+          }
+          if (r.status === 429) {
+            guestUsed.value = true
+            err.value = detailMsg(data) || T.value.loginToContinue
+            dropTurn()
+            return
+          }
+          // 兼容旧非流式成功响应
+          if (r.ok && data?.output != null) {
+            setAssistant(String(data.output || '(empty)'), { pending: false })
+            if (data?.guest || data?.need_login_to_continue || isGuest) guestUsed.value = true
+            if (!isGuest) await fetchProfile()
+            await scrollChat()
+            return
+          }
           err.value = detailMsg(data) || ('HTTP ' + r.status)
-          if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') messages.value.pop()
+          dropTurn()
           return
         }
-        messages.value.push({ role: 'assistant', content: String(data?.output || '(empty)') })
-        if (data?.guest || data?.need_login_to_continue || isGuest) {
+
+        const reader = r.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        let acc = ''
+        let streamErr = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() || ''
+          for (const block of parts) {
+            const lines = block.split('\n')
+            for (const rawLine of lines) {
+              const line = rawLine.trim()
+              if (!line.startsWith('data:')) continue
+              const payload = line.slice(5).trim()
+              if (!payload) continue
+              if (payload === '[DONE]') continue
+              let obj = null
+              try { obj = JSON.parse(payload) } catch { continue }
+              if (obj?.error) {
+                const e = obj.error
+                streamErr = typeof e === 'string' ? e : (e.message || e.type || 'stream error')
+                continue
+              }
+              const delta = extractStreamDelta(obj)
+              if (delta) {
+                acc += delta
+                setAssistant(acc, { pending: true })
+                await scrollChat()
+              }
+            }
+          }
+        }
+
+        if (streamErr) {
+          if (acc.trim()) {
+            setAssistant(`${acc}\n\n[${streamErr}]`, { pending: false })
+            err.value = streamErr
+          } else {
+            err.value = streamErr
+            dropTurn()
+          }
+          if (isGuest || r.headers.get('X-TB-Guest') === '1') guestUsed.value = true
+          return
+        }
+
+        if (!acc.trim()) {
+          err.value = 'empty response'
+          dropTurn()
+          return
+        }
+        setAssistant(acc, { pending: false })
+        if (isGuest || r.headers.get('X-TB-Guest') === '1' || r.headers.get('X-TB-Need-Login') === '1') {
           guestUsed.value = true
         }
         if (!isGuest) await fetchProfile()
         await scrollChat()
-      } catch {
-        if (messages.value.length && messages.value[messages.value.length - 1].pending) messages.value.pop()
-        if (messages.value.length && messages.value[messages.value.length - 1].role === 'user') messages.value.pop()
-        err.value = 'Network error'
+      } catch (e) {
+        dropTurn()
+        err.value = e?.message || 'Network error'
       } finally {
         running.value = false
       }
@@ -589,14 +1186,35 @@ createApp({
         document.title = `${model.value} · Token Bank`
         if (loggedIn.value) fetchProfile()
       }
+      // 恢复本模型对话（含附图）+ 访客试用标记
+      guestUsed.value = storageGet(guestUsedStorageKey()) === '1'
+      await restoreChatForCurrent()
+    })
+
+    // 消息变化时落盘（流式过程中节流；离开页面前强制落盘）
+    let _saveTimer = null
+    watch(messages, () => {
+      if (_saveTimer) clearTimeout(_saveTimer)
+      _saveTimer = setTimeout(() => { void persistNow() }, 280)
+    }, { deep: true })
+    function flushPersist() {
+      if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null }
+      void persistNow()
+    }
+    window.addEventListener('pagehide', flushPersist)
+    window.addEventListener('beforeunload', flushPersist)
+    watch(guestUsed, () => {
+      if (guestUsed.value) storageSet(guestUsedStorageKey(), '1')
+      else storageRemove(guestUsedStorageKey())
     })
 
     return {
       lang, T, toggleLang, model, modelOptions, chatModels, visionModels, imageModels, embedModels,
-      isImage, isEmbed, typeBadge, sharer,
-      loggedIn, profile, prompt, messages, images, chatEl,
+      isImage, isEmbed, isVision, typeBadge, typeBadgeClass, sharer, consumeRate, formatRate,
+      loggedIn, profile, currentUserLabel, prompt, messages, images, pendingImages, chatEl,
       running, err, guestUsed, guestLocked, authTab, authLoading, authErr, form,
       logout, doLogin, doRegister, sendMessage, genImage, clearAll, onModelChange,
+      onComposerPaste, removePendingImage, renderMarkdown,
     }
   }
 }).mount('#app')

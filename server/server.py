@@ -53,6 +53,7 @@ from web_public import (
     extract_assistant_text,
     guest_trial_allowed,
     infer_model_type,
+    normalize_agent_images,
     validate_guest_web_chat_messages,
     validate_web_chat_body,
     validate_web_image_body,
@@ -612,6 +613,7 @@ class WebChatBody(BaseModel):
     model: str
     messages: list
     sharer: Optional[str] = None
+    stream: Optional[bool] = True
 
 
 @app.post("/api/web-chat")
@@ -623,6 +625,7 @@ async def web_chat(
     """网页模型短试用。
     - 已登录：多轮对话，按正常积分扣费
     - 未登录：仅允许单轮（一条 user），按 IP 限流
+    - stream=true（默认）：OpenAI SSE 流式输出
     """
     try:
         cleaned = validate_web_chat_body(body.model, body.messages, body.sharer)
@@ -644,10 +647,11 @@ async def web_chat(
         if not guest_trial_allowed(_client_ip(request)):
             raise HTTPException(429, "guest trial limit reached — sign in to continue")
 
+    want_stream = body.stream is not False
     chat_body = {
         "model": cleaned["model"],
         "messages": cleaned["messages"],
-        "stream": False,
+        "stream": want_stream,
     }
     try:
         resp = await handle_chat(
@@ -661,6 +665,25 @@ async def web_chat(
             e.status_code,
             detail={"error": e.message, "type": getattr(e, "error_type", None)},
         ) from e
+
+    # 流式：透传 OpenAI SSE，附带访客标记供前端收尾
+    if want_stream and isinstance(resp, StreamingResponse):
+        headers = {
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+        wid = resp.headers.get("X-TB-Worker")
+        if wid:
+            headers["X-TB-Worker"] = wid
+        if guest:
+            headers["X-TB-Guest"] = "1"
+            headers["X-TB-Need-Login"] = "1"
+        return StreamingResponse(
+            resp.body_iterator,
+            media_type="text/event-stream",
+            headers=headers,
+        )
 
     payload = None
     worker_id = None
@@ -789,10 +812,12 @@ async def api_agent_hire(body: AgentHireBody, uid: int = Depends(auth_api_key_or
 
 class AgentTaskBody(BaseModel):
     assistant_id: str
-    prompt: str
+    prompt: str = ""
     worker_id: Optional[str] = None
     timeout_ms: Optional[int] = None
     stream: Optional[bool] = False
+    # 本轮附图：[{dataUrl, name?}]，仅 data:image/…
+    images: Optional[list] = None
 
 
 @app.post("/api/agent-tasks")
@@ -806,10 +831,15 @@ async def create_agent_task(
     - 未登录：公开智能体单轮试用，按 IP 限流
     - stream=true：SSE（progress / done / error）
     """
+    try:
+        task_images = normalize_agent_images(body.images)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
     guest = uid is None
     if guest:
         text = (body.prompt or "").strip()
-        if not text:
+        if not text and not task_images:
             raise HTTPException(400, "prompt required")
         # 访客禁止带历史（前端多轮会包装 Conversation so far）
         if text.startswith("Conversation so far:"):
@@ -817,6 +847,7 @@ async def create_agent_task(
         if not guest_trial_allowed(_client_ip(request)):
             raise HTTPException(429, "guest trial limit reached — sign in to continue")
 
+    guest_ip = _client_ip(request) if guest else None
     if body.stream:
         from dispatch_agent import iter_agent_task_sse
         gen = iter_agent_task_sse(
@@ -826,6 +857,8 @@ async def create_agent_task(
             worker_id=body.worker_id,
             timeout_ms=body.timeout_ms,
             guest=guest,
+            guest_ip=guest_ip,
+            images=task_images or None,
         )
         return StreamingResponse(
             gen,
@@ -843,6 +876,8 @@ async def create_agent_task(
         consumer_user_id=uid,
         worker_id=body.worker_id,
         timeout_ms=body.timeout_ms,
+        guest_ip=guest_ip,
+        images=task_images or None,
     )
     if not result.get("ok"):
         status = result.get("status") or "failed"

@@ -1629,8 +1629,16 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
   );
 }
 
-function StatusBadge({ verified }) {
+function StatusBadge({ verified, cooling = false }) {
   const { t } = useLang();
+  // 冷却中优先：不要用绿色「已通过」误导可用性
+  if (cooling) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-sky-600 dark:text-sky-400" title={t('providers.badge.cooling')}>
+        <span className="w-2 h-2 rounded-full bg-sky-400 shrink-0" aria-hidden />
+      </span>
+    );
+  }
   if (verified) {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400" title={t('providers.badge.verified')}>
@@ -2639,7 +2647,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, onSilentPers
               <span className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">
                 {displayLabel}
               </span>
-              <StatusBadge verified={provider.test_verified === true} />
+              <StatusBadge verified={provider.test_verified === true} cooling={!!cooldown} />
               <PersonalSourceTypeBadge
                 tag={personalTag}
                 t={t}
@@ -3002,7 +3010,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, onSilentPers
                   {accountInst.plan_label}
                 </span>
               )}
-              <StatusBadge verified={provider.test_verified === true} />
+              <StatusBadge verified={provider.test_verified === true} cooling={!!cooldown} />
               <PersonalSourceTypeBadge
                 tag={personalTag}
                 t={t}
@@ -3866,7 +3874,30 @@ export default function Providers() {
       } else {
         list.push({ id, type: 'paid', enabled: true, token: '', base_url: '', models: normalized });
       }
-      await getConfig().write({ ...cfg, providers: list });
+      // 同步贡献列表同名模型的 type，全球网络试用页才能显示「图文」
+      const typeByName = Object.fromEntries(normalized.map(m => [m.name, m.type || 'chat']));
+      const syncEntry = (m) => {
+        if (typeof m === 'string') {
+          return typeByName[m] ? { name: m, type: typeByName[m] } : m;
+        }
+        const n = m?.name;
+        if (n && typeByName[n]) return { ...m, name: n, type: typeByName[n] };
+        return m;
+      };
+      const next = { ...cfg, providers: list };
+      if (Array.isArray(cfg.models)) next.models = cfg.models.map(syncEntry);
+      if (Array.isArray(cfg.model_groups)) {
+        next.model_groups = cfg.model_groups.map(g => ({
+          ...g,
+          models: (g.models || []).map(syncEntry),
+        }));
+      }
+      await getConfig().write(next);
+      // 贡献节点在跑时热重连，立刻把新 type 报到服务端
+      try {
+        const st = await window.electronAPI?.agent?.getStatus?.();
+        if (st?.running) await window.electronAPI.agent.start();
+      } catch { /* ignore */ }
     } catch { /* 离线时仍保留内存态 */ }
   }, []);
 
@@ -4522,6 +4553,7 @@ export default function Providers() {
             onRefreshLatency={loadPersonalLatency}
             trailing={renderSourcesViewTabs()}
             probeTargets={personalProbeTargets}
+            cooldownFor={cooldownFor}
             onEmptyAdd={() => { setSourcesView('list'); setPickerOpen(true); }}
           />
         ) : (

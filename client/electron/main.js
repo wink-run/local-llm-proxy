@@ -2774,6 +2774,10 @@ function registerIPC() {
   // PKCE 流：start 返回 authUrl，用户浏览器授权后粘贴 code，exchange 换 credentials。
   // 设备码流（codex/copilot）：start 返回 userCode+verificationUrl，poll 轮询。
   const oauthMod = require('./oauth');
+  // OAuth 换 token / 设备码请求与网关一样走 network_proxy / HTTPS_PROXY
+  oauthMod.setNetworkProxyGetter(() => {
+    try { return (readAgentConfig() || {}).network_proxy || null; } catch { return null; }
+  });
   const _oauthSessions = new Map(); // sessionId -> { provider, session, created }
   function gcOauthSessions() {
     const now = Date.now();
@@ -2783,19 +2787,28 @@ function registerIPC() {
     gcOauthSessions();
     const mod = oauthMod.getModule(provider);
     if (!mod) throw new Error('unsupported oauth provider: ' + provider);
-    const r = await mod.startLogin({ setupToken });
-    const sessionId = require('crypto').randomUUID();
-    _oauthSessions.set(sessionId, { provider, session: r.session, created: Date.now() });
-    return { sessionId, mode: mod.mode, authUrl: r.authUrl || null,
-             userCode: r.userCode || null, verificationUrl: r.verificationUrl || null };
+    try {
+      const r = await mod.startLogin({ setupToken });
+      const sessionId = require('crypto').randomUUID();
+      _oauthSessions.set(sessionId, { provider, session: r.session, created: Date.now() });
+      return { sessionId, mode: mod.mode, authUrl: r.authUrl || null,
+               userCode: r.userCode || null, verificationUrl: r.verificationUrl || null };
+    } catch (e) {
+      throw new Error((e && e.message) || String(e));
+    }
   });
   ipcMain.handle('oauth:exchange', async (_e, { sessionId, code } = {}) => {
     const s = _oauthSessions.get(sessionId);
     if (!s) throw new Error('session 不存在或已过期，请重新登录');
     const mod = oauthMod.getModule(s.provider);
-    const credentials = await mod.completeLogin(s.session, code);
-    _oauthSessions.delete(sessionId);
-    return { ok: true, oauth_provider: s.provider, credentials, email: credentials.email || '' };
+    try {
+      const credentials = await mod.completeLogin(s.session, code);
+      _oauthSessions.delete(sessionId);
+      return { ok: true, oauth_provider: s.provider, credentials, email: credentials.email || '' };
+    } catch (e) {
+      // 保留可读网络/代理提示，避免 IPC 只剩 TypeError: fetch failed
+      throw new Error((e && e.message) || String(e));
+    }
   });
   // 设备码流轮询（codex/copilot 用；PKCE 流不需要）
   ipcMain.handle('oauth:poll', async (_e, { sessionId } = {}) => {
@@ -2803,12 +2816,16 @@ function registerIPC() {
     if (!s) throw new Error('session 不存在或已过期');
     const mod = oauthMod.getModule(s.provider);
     if (typeof mod.poll !== 'function') throw new Error('provider 不支持轮询');
-    const result = await mod.poll(s.session);
-    if (result && result.credentials) {
-      _oauthSessions.delete(sessionId);
-      return { ok: true, done: true, oauth_provider: s.provider, credentials: result.credentials, email: result.credentials.email || '' };
+    try {
+      const result = await mod.poll(s.session);
+      if (result && result.credentials) {
+        _oauthSessions.delete(sessionId);
+        return { ok: true, done: true, oauth_provider: s.provider, credentials: result.credentials, email: result.credentials.email || '' };
+      }
+      return { ok: true, done: false, status: (result && result.status) || 'pending' };
+    } catch (e) {
+      throw new Error((e && e.message) || String(e));
     }
-    return { ok: true, done: false, status: (result && result.status) || 'pending' };
   });
   ipcMain.handle('oauth:openExternal', (_e, { url } = {}) => { if (url) shell.openExternal(url); return { ok: true }; });
 
@@ -5601,7 +5618,12 @@ function registerIPC() {
         let result = null;
         for (const probeUrl of oauthTargets) {
           logProviderTestProbe(ctx, { url: probeUrl, headers }, 'request');
-          result = await nodeRequest(probeUrl, 'GET', headers, null);
+          const agent = resolveOutboundProxyAgent({
+            provider: { proxy: p.proxy },
+            urlStr: probeUrl,
+            networkProxy: agentCfg.network_proxy,
+          });
+          result = await nodeRequest(probeUrl, 'GET', headers, null, agent);
           const ok = result.status >= 200 && result.status < 400;
           logProviderTestProbe(ctx, { url: probeUrl, headers }, 'response', {
             ok,

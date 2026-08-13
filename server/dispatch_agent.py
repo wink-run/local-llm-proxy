@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -109,6 +110,20 @@ async def _finalize_agent_result(
     }
 
 
+def consumer_isolation_key(
+    consumer_user_id: Optional[int],
+    *,
+    guest_ip: Optional[str] = None,
+) -> str:
+    """出租方执行隔离键：登录用户按 uid，访客按 IP 哈希，避免共用同一 CLI session/工作目录。"""
+    if consumer_user_id is not None:
+        return f"u{int(consumer_user_id)}"
+
+    raw = (guest_ip or "").strip() or "unknown"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return f"g{digest}"
+
+
 async def _prepare_agent_task(
     *,
     assistant_id: str,
@@ -116,14 +131,25 @@ async def _prepare_agent_task(
     consumer_user_id: Optional[int],
     worker_id: Optional[str] = None,
     timeout_ms: Optional[int] = None,
+    guest_ip: Optional[str] = None,
+    images: Optional[list] = None,
 ) -> tuple[Optional[dict], Optional[dict]]:
     """预检 + 下发。成功返回 (ctx, None)；失败返回 (None, error_dict)。"""
+    from web_public import WEB_AGENT_IMAGE_ONLY_PROMPT, normalize_agent_images
+
     aid = (assistant_id or "").strip()
     text = (prompt or "").strip()
+    try:
+        img_list = normalize_agent_images(images)
+    except ValueError as e:
+        return None, {"ok": False, "error": str(e), "status": "rejected"}
+    if not text and img_list:
+        text = WEB_AGENT_IMAGE_ONLY_PROMPT
     if not aid or not text:
         return None, {"ok": False, "error": "assistant_id and prompt required", "status": "rejected"}
 
     guest = consumer_user_id is None
+    consumer_key = consumer_isolation_key(consumer_user_id, guest_ip=guest_ip)
     if not guest:
         user = await db.get_user_by_id(consumer_user_id)
         if not user or float(user["credits_balance"] or 0) < AGENT_TASK_CREDITS:
@@ -153,6 +179,7 @@ async def _prepare_agent_task(
         "assistant_id": aid,
         "dispatch_time": time.time(),
         "consumer_user_id": consumer_user_id,
+        "consumer_key": consumer_key,
     }
     worker.active_requests += 1
 
@@ -183,10 +210,14 @@ async def _prepare_agent_task(
             "assistant_id": aid,
             "prompt": text[:50_000],
             "timeout_ms": int(timeout_sec * 1000),
+            # 出租方按调用方隔离 CLI session / 工作目录，避免多用户互相影响
+            "consumer_key": consumer_key,
+            "consumer_user_id": consumer_user_id,
+            "images": img_list or None,
         })
         logger.info(
-            "[agent_task] dispatch task_id=%s assistant=%s worker=%s user=%s guest=%s",
-            task_id, aid, worker.worker_id, consumer_user_id, guest,
+            "[agent_task] dispatch task_id=%s assistant=%s worker=%s user=%s guest=%s key=%s",
+            task_id, aid, worker.worker_id, consumer_user_id, guest, consumer_key,
         )
     except Exception as e:
         worker.pending_agents.pop(task_id, None)
@@ -213,6 +244,7 @@ async def _prepare_agent_task(
         "queue": q,
         "guest": guest,
         "consumer_user_id": consumer_user_id,
+        "consumer_key": consumer_key,
         "timeout_sec": timeout_sec,
     }, None
 
@@ -254,6 +286,8 @@ async def handle_agent_task(
     consumer_user_id: Optional[int],
     worker_id: Optional[str] = None,
     timeout_ms: Optional[int] = None,
+    guest_ip: Optional[str] = None,
+    images: Optional[list] = None,
 ) -> dict:
     """选 worker → 预扣积分 → 下发 → 等待终态结果；失败退款。"""
     ctx, err = await _prepare_agent_task(
@@ -262,6 +296,8 @@ async def handle_agent_task(
         consumer_user_id=consumer_user_id,
         worker_id=worker_id,
         timeout_ms=timeout_ms,
+        guest_ip=guest_ip,
+        images=images,
     )
     if err:
         return err
@@ -315,6 +351,8 @@ async def iter_agent_task_sse(
     worker_id: Optional[str] = None,
     timeout_ms: Optional[int] = None,
     guest: bool = False,
+    guest_ip: Optional[str] = None,
+    images: Optional[list] = None,
 ) -> AsyncIterator[str]:
     """SSE：progress 事件推正文，done/error 收尾。"""
     ctx, err = await _prepare_agent_task(
@@ -323,6 +361,8 @@ async def iter_agent_task_sse(
         consumer_user_id=consumer_user_id,
         worker_id=worker_id,
         timeout_ms=timeout_ms,
+        guest_ip=guest_ip,
+        images=images,
     )
     if err:
         payload = {**err, "event": "error", "guest": guest, "need_login_to_continue": guest}

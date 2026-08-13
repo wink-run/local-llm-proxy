@@ -660,8 +660,8 @@ function mergeProviderModelEntries(existingModels, extraNames) {
 /** 运行时合并账户登记模型到 provider.models（网关路由 /v1/models 用） */
 function enrichProvidersFromAccounts(providers, localCfg) {
   if (!localCfg || !Array.isArray(providers)) return providers || [];
-  // provider id → 计费来源（subscription/payg），供 cost 路由策略区分（实惠优先：订阅在前，超限 failover 到按量）。
-  // 同 id 既订阅又按量时以订阅为准（cost 里订阅本就排前）。
+  // provider id → 计费来源（subscription/payg），供路由策略区分（订阅 → 免费 → 按量；同档比速度）。
+  // 同 id 既订阅又按量时以订阅为准。
   const srcMap = {};
   for (const s of (localCfg.user_subscriptions || [])) { if (s.gateway_id) srcMap[s.gateway_id] = 'subscription'; }
   for (const p of (localCfg.user_payg_providers || [])) { const g = paygGatewayId(p); if (g && !srcMap[g]) srcMap[g] = 'payg'; }

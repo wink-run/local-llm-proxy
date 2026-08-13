@@ -63,7 +63,7 @@ import LlmSessionHistoryPanel from '../components/LlmSessionHistoryPanel';
 import LocalFilePreviewHost from '../components/LocalFilePreview';
 import { StreamMarkdownContent } from '../components/RichMediaContent';
 import { openLocalPath } from '../lib/local-path';
-import { saveAgentSessionSnapshot, saveLlmSessionSnapshot } from '../lib/debug-session-history';
+import { saveAgentSessionSnapshot, saveLlmSessionSnapshot, listAgentSessionSnapshots, findAgentSessionForContinue } from '../lib/debug-session-history';
 
 /** 下拉 value：同 id 跨层时用 tier:id，避免 HTML option 重复 value 选中错位 */
 function modelSelectValue(m) {
@@ -821,18 +821,36 @@ export default function Debug() {
     if (!key) return;
     const sess = getStoreSession(key);
     if (!sess.conversationTurns?.length) return;
+    // 「新会话」后短时间内勿按工作目录并回旧条
+    const disallowDirMerge = !!(sess.skipHistoryRecover
+      && Date.now() - sess.skipHistoryRecover < 120_000);
     saveAgentSessionSnapshot(key, {
       conversationTurns: sess.conversationTurns,
       sessionWorkingDir: sess.sessionWorkingDir,
       cliSessionId: sess.cliSessionId,
+      historyThreadId: sess.historyThreadId,
+      disallowDirMerge,
     });
   }
 
   /** 恢复历史会话到当前标签页 */
   function applyHistorySnapshot(execKey, snapshot) {
     if (!execKey || !snapshot) return;
+    // 恢复时按时间戳排轮次，避免合并治愈后仍显示乱序
+    const turns = [...(snapshot.conversationTurns || [])].sort((a, b) => {
+      const ta = Number(a?.timestamp) || 0;
+      const tb = Number(b?.timestamp) || 0;
+      if (ta > 0 && tb > 0 && ta !== tb) return ta - tb;
+      return 0;
+    });
+    const threadId = snapshot.historyThreadId
+      || snapshot.sessionKey
+      || (turns[0]?.taskId ? `task:${turns[0].taskId}` : null)
+      || null;
+    // 先归档当前未保存会话，再切入目标 session，互不影响
+    persistCurrentSessionHistory(execKey);
     patchSession(execKey, {
-      conversationTurns: snapshot.conversationTurns || [],
+      conversationTurns: turns,
       currentUserPrompt: '',
       currentUserImages: [],
       taskSteps: [],
@@ -843,6 +861,7 @@ export default function Debug() {
       agentPrompt: '',
       sessionWorkingDir: snapshot.sessionWorkingDir || getStoreSession(execKey).sessionWorkingDir || '',
       cliSessionId: snapshot.cliSessionId || null,
+      historyThreadId: threadId,
       skipHistoryRecover: Date.now(),
     });
     if (snapshot.sessionWorkingDir) {
@@ -1024,16 +1043,54 @@ export default function Debug() {
   const scheduleAutoFinalizeRef = useRef(scheduleAutoFinalize);
   scheduleAutoFinalizeRef.current = scheduleAutoFinalize;
 
-  /** 切换标签时从 DB 恢复最近任务（派发完成但前端未同步时） */
+  /** 切换标签时恢复会话：优先本地多轮历史，避免只捞 DB 最近 1 条把续跑拆成新会话 */
   const recoverSessionHistory = useCallback(async (syncKey) => {
     if (!syncKey || syncKey === '__hub__') return;
-    if (!window.electronAPI?.agent?.listRecentTasks) return;
     const sess = getStoreSession(syncKey);
     if (sess.currentUserPrompt || sess.taskSteps?.length || sess.executing || sess.conversationTurns?.length) return;
     // 「新会话」后切换窗口/标签，不回填任何历史（含旧派发）
     if (sess.skipHistoryRecover && Date.now() - sess.skipHistoryRecover < 120_000) return;
 
     try {
+      const savedDir = (() => {
+        try { return localStorage.getItem('tokenbank.debug.agentWorkingDir') || ''; } catch { return ''; }
+      })();
+      const local = findAgentSessionForContinue(syncKey, {
+        workingDir: sess.sessionWorkingDir || savedDir,
+        cliSessionId: sess.cliSessionId,
+      }) || listAgentSessionSnapshots(syncKey)[0];
+      if (local?.conversationTurns?.length) {
+        // 回填时按时间排序，避免历史合并残留乱序
+        const turns = [...local.conversationTurns].sort((a, b) => {
+          const ta = Number(a?.timestamp) || 0;
+          const tb = Number(b?.timestamp) || 0;
+          if (ta > 0 && tb > 0 && ta !== tb) return ta - tb;
+          return 0;
+        });
+        const threadId = local.sessionKey
+          || (turns[0]?.taskId ? `task:${turns[0].taskId}` : null);
+        patchStoreSession(syncKey, {
+          conversationTurns: turns,
+          sessionWorkingDir: local.sessionWorkingDir || '',
+          cliSessionId: local.cliSessionId || null,
+          historyThreadId: threadId,
+          currentUserPrompt: '',
+          currentUserImages: [],
+          taskSteps: [],
+          taskResult: null,
+          currentTask: null,
+          executing: false,
+          delegations: {},
+        });
+        if (local.sessionWorkingDir) {
+          setAgentWorkingDir(local.sessionWorkingDir);
+          saveAgentWorkingDir(local.sessionWorkingDir);
+        }
+        syncSessionToStateRef.current?.(syncKey);
+        return;
+      }
+
+      if (!window.electronAPI?.agent?.listRecentTasks) return;
       const res = await window.electronAPI.agent.listRecentTasks({ agentId: syncKey, limit: 1 });
       if (!res.success || !res.tasks?.length) return;
       const recent = res.tasks[0];
@@ -1956,7 +2013,28 @@ export default function Debug() {
     setAgentPrompt(prompt);
     const execKey = agentSessionKey(selectedAgent);
     const workDir = normalizeWorkingDir(agentWorkingDir.trim());
-    const sess = getStoreSession(execKey);
+    let sess = getStoreSession(execKey);
+
+    // 内存轮次空但非「新会话」：从本地历史回填，避免跟一嘴就拆成新历史条
+    if (!sess.conversationTurns?.length && !isFreshAgentSession(sess)) {
+      const hist = findAgentSessionForContinue(execKey, {
+        workingDir: workDir,
+        cliSessionId: sess.cliSessionId,
+      });
+      if (hist?.conversationTurns?.length) {
+        const threadId = hist.sessionKey
+          || (hist.conversationTurns[0]?.taskId ? `task:${hist.conversationTurns[0].taskId}` : null);
+        patchStoreSession(execKey, {
+          conversationTurns: hist.conversationTurns,
+          historyThreadId: threadId,
+          cliSessionId: sess.cliSessionId || hist.cliSessionId || null,
+          sessionWorkingDir: workDir || hist.sessionWorkingDir || '',
+        });
+        sess = getStoreSession(execKey);
+        syncSessionToState(execKey, { preserveAgentPrompt: true });
+      }
+    }
+
     const continueSession = shouldContinueCliSession(execKey, workDir);
     const lastTurn = sess.conversationTurns?.length
       ? sess.conversationTurns[sess.conversationTurns.length - 1]
@@ -1971,6 +2049,12 @@ export default function Debug() {
       : prompt;
     const instanceId = beginSessionInstance(execKey);
 
+    // 粘住历史线程：有轮次时务必带上 historyThreadId，防止后续归档按新 taskId 拆条
+    const stickyThread = sess.historyThreadId
+      || (sess.conversationTurns?.[0]?.taskId
+        ? `task:${sess.conversationTurns[0].taskId}`
+        : null);
+
     patchSession(execKey, {
       currentUserPrompt: displayPrompt,
       currentUserImages: displayImages,
@@ -1984,6 +2068,7 @@ export default function Debug() {
       sessionInstanceId: instanceId,
       // 续接时保留 id，避免新一轮开始前被清空
       cliSessionId: resumeCliSessionId || sess.cliSessionId || null,
+      historyThreadId: stickyThread,
     });
     setPendingImages([]);
     setAttachError('');
@@ -2125,12 +2210,18 @@ export default function Debug() {
   function startNewAgentSession() {
     const execKey = agentSessionKey(selectedAgent);
     const doClear = () => {
+      // cancel 已归档进行中轮次；再落盘，避免中断后续跑只剩「继续」成新会话
       persistCurrentSessionHistory(execKey);
       clearSessionTaskState(execKey);
       syncSessionToState(execKey);
     };
     if (executing || taskCanStop) {
-      cancelAgent().then(doClear);
+      cancelAgent().then(() => {
+        // cancel 异步归档后再清，保证历史含中断轮
+        persistCurrentSessionHistory(execKey);
+        clearSessionTaskState(execKey);
+        syncSessionToState(execKey);
+      });
       return;
     }
     doClear();

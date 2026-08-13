@@ -89,6 +89,7 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
       <div class="stat"><div class="k">{{ T.nodes }}</div><div class="v">{{ summary.online_workers ?? 0 }}</div></div>
       <div class="stat"><div class="k">{{ T.models }}</div><div class="v">{{ models.length }}</div></div>
       <div class="stat"><div class="k">{{ T.agents }}</div><div class="v">{{ agents.length }}</div></div>
+      <div class="stat"><div class="k">{{ T.resources }}</div><div class="v">{{ catalogResources.length }}</div></div>
       <div class="stat"><div class="k">{{ T.circles }}</div><div class="v">{{ summary.circle_count ?? circles.length }}</div></div>
       <div class="stat"><div class="k">{{ T.tokens }}</div><div class="v">{{ fmtTok(summary.contrib_tokens) }}</div></div>
       <div class="stat"><div class="k">{{ T.users }}</div><div class="v">{{ summary.active_users ?? 0 }}</div></div>
@@ -238,7 +239,7 @@ createApp({
       zh: {
         title: '全球网络', subtitle: '点模型或智能体试用；点用户查看贡献者主页与其分享的模型',
         loading: '加载中…', app: '账户', home: '首页', footer: '实时公开供给',
-        nodes: '在线节点', models: '可用模型', agents: '智能体', circles: '圈子', tokens: '贡献 Token', users: '活跃用户',
+        nodes: '在线节点', models: '可用模型', agents: '智能体', resources: '资源', circles: '圈子', tokens: '贡献 Token', users: '活跃用户',
         modelsTitle: '可用模型', agentsTitle: '可用智能体', circlesTitle: '圈子列表', leaderboard: '供给排行',
         leaderboardHint: '按 Token / 接单量 · 点用户进主页', tryHint: '点击试用',
         tryModel: '对话 →', tryImage: '生图 →', tryEmbed: '嵌入', tryAgent: '试用 →', nodesN: '{n} 节点', noDesc: '暂无简介',
@@ -258,7 +259,7 @@ createApp({
       en: {
         title: 'Global network', subtitle: 'Try models or agents; open a contributor profile for shared offers',
         loading: 'Loading…', app: 'Account', home: 'Home', footer: 'Live public supply',
-        nodes: 'Online nodes', models: 'Models', agents: 'Agents', circles: 'Circles', tokens: 'Tokens', users: 'Active users',
+        nodes: 'Online nodes', models: 'Models', agents: 'Agents', resources: 'Resources', circles: 'Circles', tokens: 'Tokens', users: 'Active users',
         modelsTitle: 'Available models', agentsTitle: 'Available agents', circlesTitle: 'Circles', leaderboard: 'Offer leaderboard',
         leaderboardHint: 'By tokens / jobs · tap user for profile', tryHint: 'Click to try',
         tryModel: 'Chat →', tryImage: 'Image →', tryEmbed: 'Embed', tryAgent: 'Try →', nodesN: '{n} nodes', noDesc: 'No description',
