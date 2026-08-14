@@ -316,8 +316,9 @@ class MCPManager {
   }
 
   /**
-   * 内置 prompts/models/resources：未显式配置 sync_clients 时，默认投射到本机已安装可写 Agent。
-   * 用户一旦手动改过（含撤成空数组）则不再覆盖。
+   * 内置 prompts/models/resources：默认投射到本机已安装可写 Agent。
+   * 显式清空（sync_clients=[]）= 用户意图不投射，跳过；否则每次探测到新装 Agent
+   * （如 deepseek-harness 刚被识别）就追加进列表，让新纳管应用自动拿到内置 MCP。
    */
   _ensureBuiltinDefaultProjection() {
     if (this._ensuringBuiltinProjection) return { updated: [] };
@@ -334,11 +335,14 @@ class MCPManager {
         const row = db.prepare('SELECT id, metadata FROM mcp_servers WHERE id = ?').get(serverId);
         if (!row) continue;
         const metadata = this._parseJson(row.metadata, {});
-        // 已有显式列表（含空）= 用户意图，跳过
-        if (Array.isArray(metadata.sync_clients)) continue;
+        const cur = Array.isArray(metadata.sync_clients) ? metadata.sync_clients : [];
+        // 显式清空 = 用户意图不投射 → 跳过；非空（含旧版自动投射）→ 仅追加新增，不删既有
+        if (Array.isArray(metadata.sync_clients) && cur.length === 0) continue;
+        const added = installed.filter(id => !cur.includes(id));
+        if (!added.length) continue;
         const nextMeta = {
           ...metadata,
-          sync_clients: [...installed],
+          sync_clients: [...cur, ...added],
           builtin_default_projected_at: now,
         };
         db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')

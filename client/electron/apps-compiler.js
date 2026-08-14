@@ -149,12 +149,21 @@ function compileAppsDoc(doc) {
 
 /** 从 tokenbank.yaml 解析运行时段；无 app_entities 时回退内置 default_entities（离线百宝箱） */
 function resolveAppsRuntime(doc) {
-  const entities = doc.app_entities || doc.entities;
-  if (Array.isArray(entities) && entities.length) {
-    return compileAppsDoc({ ...doc, entities });
+  const { loadDoc, canonicalAppEntityId } = require('./app-handlers');
+  const defaults = (loadDoc().default_entities || []).filter(e => e?.id && e?.handler);
+  const canon = (id) => { try { return canonicalAppEntityId(id) || id; } catch { return id; } };
+
+  const provided = doc.app_entities || doc.entities;
+  if (Array.isArray(provided) && provided.length) {
+    // 升级回填：目录新增的默认实体（如 deepseek-harness）按 id 缺失则追加到尾部，
+    // 保留已存实体、顺序与用户定制。避免持久化的 app_entities 盖掉新捆绑的应用。
+    const have = new Set(provided.map(e => canon(e?.id)).filter(Boolean));
+    const missing = defaults.filter(e => !have.has(canon(e.id)));
+    const entities = missing.length ? [...provided, ...missing] : provided;
+    // compileAppsDoc 内部优先读 app_entities，须一并覆盖，否则合并结果被原 app_entities 盖掉
+    return compileAppsDoc({ ...doc, app_entities: entities, entities });
   }
-  const { loadDoc } = require('./app-handlers');
-  const fallback = (loadDoc().default_entities || []).filter(e => e?.id && e?.handler);
+  const fallback = defaults;
   if (fallback.length) {
     return compileAppsDoc({ ...doc, entities: fallback, app_entities: fallback });
   }

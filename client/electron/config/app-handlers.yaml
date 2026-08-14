@@ -97,6 +97,52 @@ handlers:
         OPENAI_BASE_URL: "http://{REVERSE}/v1"
         OPENAI_API_KEY: "{KEY}"
 
+  # DeepSeek Harness（dsh）：配置文件写入法——把网关注册为 $DSH_HOME/settings.yaml 的 llm-pi-ai provider
+  # （带全量网关模型），key 写 $DSH_HOME/.credentials.yaml（apiKeyEnv: TOKENBANK_DSH_API_KEY，扁平 mapping）。
+  # 必须用独立 env 名：dsh credentials-local 优先读进程环境，TOKENBANK_API_KEY 已被 Codex 写进 shell。
+  # settings.yaml 是 dsh 活文档，须合并式写入（保留 ui-onboarding 等用户段）+ 动态模型注入 →
+  # 见 main.js apps:writeConfigFile 里 handlerId==='deepseek-harness-cli' 的特化。
+  # MCP 资源中转另走 mcp-agent-targets 的 cordis-mcp-client（写 $DSH_HOME/cordis.patch.yml）。
+  deepseek-harness-cli:
+    label: DeepSeek Harness CLI
+    label_zh: DeepSeek Harness CLI
+    description: DeepSeek Harness (dsh) · 写 settings.yaml 注册网关 provider + MCP 资源中转
+    default_icon: "🐳"
+    default_name: DeepSeek Harness
+    capabilities: [gateway_proxy, session_import]
+    proxy:
+      mode: api_key
+      route_bindable: true
+      allow_direct: false
+      detect_type: command
+      detect_value: dsh
+      config_file: "{DSH_HOME|~/.dsh}/settings.yaml"
+      marker: tokenbank
+      # 静态段；llm-pi-ai.providers.tokenbank.models 由 patch_route 策略（绑路由多选）或
+      # main.js 特化兜底（未绑路由时注入全量网关模型，去重）写入
+      patch:
+        llm-pi-ai.providers.tokenbank.displayName: tokenbank
+        llm-pi-ai.providers.tokenbank.apiKeyEnv: TOKENBANK_DSH_API_KEY
+        llm-pi-ai.providers.tokenbank.api: openai-completions
+        llm-pi-ai.providers.tokenbank.baseURL: "{BASE}/v1"
+        agent-default-model.provider: tokenbank
+        agent-default-model.model: deepseek-v4-flash
+        agent-default-model.reasoningEffort: high
+        agent-presets.default: cordis
+      # 绑路由多选 → 所选路由/模型的 id 列表写入 llm-pi-ai.providers.tokenbank.models
+      patch_route:
+        strategy: tokenbank_models
+        models_key: llm-pi-ai.providers.tokenbank.models
+        multi_select: true
+    # session_import：与 Kimi Code 一样，默认打开会话 trace + 用量补录；云端 vars.capabilities 可单项关闭。
+    session:
+      source_id: dsh
+      standalone: false
+      activity_agent_id: deepseek-harness
+      trace_agent_id: deepseek-harness
+      trace:
+        profile: dsh-trace
+
   # Moonshot Kimi Code CLI：通过 KIMI_MODEL_* 指到网关（Anthropic 兼容协议）
   kimi-code-cli:
     label: Kimi Code CLI
@@ -349,6 +395,7 @@ default_entities:
   - { id: grok, handler: grok-stats }
   - { id: workbuddy, handler: workbuddy-stats, vars: { route_multi_select: true } }
   - { id: trae-work, handler: trae-work-stats }
+  - { id: deepseek-harness, handler: deepseek-harness-cli }
 
 # vars 可覆盖字段（管理后台运营配置，下发在 app_entities[].vars）
 var_schema:

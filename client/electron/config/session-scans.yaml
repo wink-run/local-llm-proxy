@@ -328,6 +328,33 @@ scans:
       output_tokens: usage.output
       cache_read_tokens: usage.inputCacheRead
       cache_create_tokens: usage.inputCacheCreation
+  # DeepSeek Harness：~/.dsh/sessions/**/session-*/session.jsonl.zstd
+  # 补录 assistant/message.data.usage；云端可关 session_usage_import
+  dsh:
+    data_source: session-dsh
+    agent_id: deepseek-harness
+    provider_id: deepseek-harness-cli
+    tier: paid
+    billing_type: api-key
+    direct_only: false
+    app_name: DeepSeek Harness
+    app_icon: 🐳
+    root: ~/.dsh/sessions
+    glob: '**/session.jsonl.zstd'
+    format: jsonl-zstd
+    session_id_from: path_re
+    session_id_path_re: '(session-[0-9a-f-]+)'
+    record_filter:
+      field: type
+      equals: assistant/message
+    skip_if_zero: true
+    request_id: dsh:{session_id}:{time}
+    fields:
+      ts: time
+      model: data.message.source.model
+      input_tokens: data.usage.inputTokens
+      output_tokens: data.usage.outputTokens
+      cache_read_tokens: data.usage.cacheReadTokens
   trae-work:
     data_source: session-trae-work
     agent_id: trae-work

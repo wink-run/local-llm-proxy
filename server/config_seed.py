@@ -186,6 +186,7 @@ async def migrate_apps_config_with_defaults() -> None:
         await db.set_config("config.apps", merged)
         content = merged
     await _ensure_app_entities_in_apps_config(content)
+    await _backfill_missing_default_entities()
 
 
 async def _ensure_app_entities_in_apps_config(content: str = "") -> None:
@@ -210,6 +211,39 @@ async def _ensure_app_entities_in_apps_config(content: str = "") -> None:
     if not entities:
         return
     compiled = ac.compile_apps_doc({"version": doc.get("version") or 1, "entities": entities})
+    yaml_text = yaml.dump(
+        compiled, allow_unicode=True, sort_keys=False, default_flow_style=False,
+    ).rstrip()
+    await db.set_config("config.apps", yaml_text)
+
+
+async def _backfill_missing_default_entities(content: str = "") -> None:
+    """升级回填：目录默认新增实体（如 deepseek-harness）→ 按 id 补进已存 app_entities。
+    仅追加缺失项、保留既有实体与用户定制（vars / 手动新建的 API 应用），再按 seed 同路径重编译。"""
+    if not content:
+        content = await db.get_config("config.apps", "")
+    if not content.strip():
+        return
+    try:
+        doc = yaml.safe_load(content) or {}
+    except yaml.YAMLError:
+        return
+    if not isinstance(doc, dict):
+        return
+    stored = doc.get("app_entities")
+    if not isinstance(stored, list) or not stored:
+        return  # 空则交给 _ensure_app_entities_in_apps_config 从默认重建
+    import app_catalog as ac
+    import app_handlers as ah
+    defaults = ah.default_entities_compact()
+    if not defaults:
+        return
+    existing_ids = {str(e.get("id")) for e in stored if isinstance(e, dict) and e.get("id")}
+    missing = [e for e in defaults if str(e.get("id")) not in existing_ids]
+    if not missing:
+        return
+    merged_entities = list(stored) + missing
+    compiled = ac.compile_apps_doc({"version": doc.get("version") or 1, "entities": merged_entities})
     yaml_text = yaml.dump(
         compiled, allow_unicode=True, sort_keys=False, default_flow_style=False,
     ).rstrip()

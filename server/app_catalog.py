@@ -348,8 +348,11 @@ def _merge_entity(base: dict, overlay: dict) -> dict:
 
 
 def enrich_entities_from_defaults(entities: list[dict]) -> list[dict]:
-    """加载 DB 后：旧扁平条目迁移为 handler；缺 handler 的用默认清单补全。"""
-    defaults = {e["id"]: e for e in import_from_defaults().get("entities") or []}
+    """加载 DB 后：旧扁平条目迁移为 handler；缺 handler 的用默认清单补全。
+    已存目录不会自动含新捆绑应用（如 deepseek-harness）→ 按 canonical id 追加缺失项，
+    保留既有实体与运营勾选。"""
+    defaults_list = import_from_defaults().get("entities") or []
+    defaults = {e["id"]: e for e in defaults_list}
     out: list[dict] = []
     for e in entities:
         norm = normalize_entity(e)
@@ -370,7 +373,14 @@ def enrich_entities_from_defaults(entities: list[dict]) -> list[dict]:
             out.append(defaults[e["id"]])
         else:
             out.append(norm)
-    return _dedupe_entities_by_canonical(out)
+    out = _dedupe_entities_by_canonical(out)
+    have = {ah.canonical_app_entity_id(str(e.get("id") or "")) for e in out if e.get("id")}
+    for d in defaults_list:
+        cid = ah.canonical_app_entity_id(str(d.get("id") or ""))
+        if cid and cid not in have:
+            out.append(d)
+            have.add(cid)
+    return out
 
 
 def legacy_doc_to_entities(doc: dict) -> list[dict]:

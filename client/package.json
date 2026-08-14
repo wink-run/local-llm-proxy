@@ -1,6 +1,6 @@
 {
   "name": "llm-proxy-client",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
@@ -26,6 +26,7 @@
     "better-sqlite3": "^12.10.0",
     "electron-store": "^9.0.0",
     "electron-updater": "^6.8.3",
+    "fzstd": "^0.1.1",
     "https-proxy-agent": "^7.0.6",
     "js-yaml": "^4.2.0",
     "proxy-from-env": "^2.1.0",

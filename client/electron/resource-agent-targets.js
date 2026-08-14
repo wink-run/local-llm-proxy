@@ -151,6 +151,29 @@ function isWorkbuddyPresent() {
 }
 
 /**
+ * DeepSeek Harness 强信号：$DSH_HOME（默认 ~/.dsh）下 dsh 自建目录 profiles / sessions / storages
+ * 含非隐藏内容即算已安装并跑过。
+ * 不认 settings.yaml / cordis.patch.yml —— 那两个 tokenbank 纳管时自己会写，用它们反推会自证循环。
+ */
+function isDshPresent() {
+  const raw = process.env.DSH_HOME;
+  const home = raw
+    ? String(raw).replace(/^~(?=\/|$)/, os.homedir())
+    : path.join(os.homedir(), '.dsh');
+  for (const sub of ['profiles', 'sessions', 'storages']) {
+    try {
+      const dir = path.join(home, sub);
+      if (!fs.existsSync(dir)) continue;
+      for (const name of fs.readdirSync(dir)) {
+        if (name.startsWith('.')) continue;
+        return true;
+      }
+    } catch { /* ignore */ }
+  }
+  return false;
+}
+
+/**
  * 本机是否已安装该 Agent（投射目标用）：
  * 只认 CLI / App bundle / 桌面 userData 等强信号。
  * 禁止用「配置文件或父目录存在」反推——启动自写 config 会造成假已安装。
@@ -216,6 +239,12 @@ function _probeAgentInstalled(id) {
     if (isWorkbuddyPresent()) return true;
   }
 
+  // DeepSeek Harness：PATH 上的 `dsh` 命令，或 $DSH_HOME 下 dsh 自建目录。
+  if (id === 'deepseek-harness') {
+    if (shimInstaller?.resolveRealCommand?.('dsh')) return true;
+    if (isDshPresent()) return true;
+  }
+
   // 注意：不再用「Skill 根目录非空」反推安装 —— TB 投射会往该目录写内容，
   // 会把本程序自建的目录误判为已安装（自证循环），且与 Gateway 列表口径不一致。
   return false;
@@ -253,6 +282,7 @@ const api = {
   invalidateAgentInstalledCache,
   isCodexDesktopPresent,
   isWorkbuddyPresent,
+  isDshPresent,
   getAgentTarget,
 
   /**

@@ -147,7 +147,27 @@ def resolve_user_capabilities(h: dict, vars_: dict) -> dict[str, bool]:
             out[key] = bool(raw[key])
         else:
             out[key] = defaults[key]
-    return out
+    return _upgrade_stale_gateway_only_session_caps(h, raw, out, defaults)
+
+
+def _upgrade_stale_gateway_only_session_caps(
+    h: dict, raw: dict, out: dict[str, bool], defaults: dict[str, bool],
+) -> dict[str, bool]:
+    """旧目录把后来才加 session 能力的应用写成 gateway-only 种子（两会话开关均为 false）。"""
+    caps = set(h.get("capabilities") or [])
+    if "session_import" not in caps and "session_trace" not in caps:
+        return out
+    if not isinstance(raw, dict):
+        return out
+    if "session_trace" not in raw and "session_usage_import" not in raw:
+        return out
+    if out.get("session_trace") or out.get("session_usage_import"):
+        return out
+    return {
+        **out,
+        "session_trace": bool(defaults.get("session_trace")),
+        "session_usage_import": bool(defaults.get("session_usage_import")),
+    }
 
 
 def handler_has_patch_route(hid: str) -> bool:

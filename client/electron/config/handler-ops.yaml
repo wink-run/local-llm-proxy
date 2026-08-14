@@ -77,6 +77,9 @@ ops:
     npm_package: opencode-ai
   hermes-cli:
     install_url: https://hermes-agent.nousresearch.com
+  deepseek-harness-cli:
+    install_url: https://github.com/deepseek-ai/deepseek-harness
+    npm_package: '@deepseek-ai/dsh'
   kimi-code-cli:
     install_url: https://moonshotai.github.io/kimi-code/
     install_guide:

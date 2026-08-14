@@ -66,13 +66,33 @@ describe('apps-compiler', () => {
         vars: { capabilities: { gateway_proxy: true, session_trace: false, session_usage_import: false } },
       }],
     });
-    assert.equal(rt.tools.length, 1);
-    assert.equal(rt.tools[0].id, 'hermes');
+    // 提供的实体一定编译出来（新增默认会被回填，故不再断言独占数量）
+    assert.ok(rt.tools.some(t => t.id === 'hermes'));
+  });
+
+  test('resolveAppsRuntime backfills newly-bundled default entities into a populated list', () => {
+    // 持久化的 app_entities 只有 hermes，且不含 deepseek-harness（新捆绑应用）。
+    // 回填后：既有实体保留，新默认按 id 补入；用户没删过的新应用应出现在百宝箱。
+    const rt = resolveAppsRuntime({
+      app_entities: [{ id: 'hermes', handler: 'hermes-cli' }],
+    });
+    const ids = (rt.app_entities || []).map(e => e.id);
+    assert.ok(ids.includes('hermes'), 'existing entity preserved');
+    assert.ok(ids.includes('deepseek-harness'), 'new default backfilled');
+    // dsh 是 config-file（api_key）型应用 → 编译进 api_key_apps，patch 写 settings.yaml
+    const dsh = rt.api_key_apps.find(t => t.id === 'deepseek-harness');
+    assert.ok(dsh, 'deepseek-harness compiles to an api_key app');
+    assert.equal(dsh.command, 'dsh');
+    assert.ok(dsh.config_file.includes('settings.yaml'));
+    assert.equal(dsh.patch['agent-default-model.provider'], 'tokenbank');
+    assert.equal(dsh.patch['llm-pi-ai.providers.tokenbank.baseURL'], '{BASE}/v1');
+    assert.equal(dsh.patch['llm-pi-ai.providers.tokenbank.apiKeyEnv'], 'TOKENBANK_DSH_API_KEY');
   });
 
   // kimi-code-cli：云端实体依赖内置 handler，避免「未知 handler」被 skip
   test('kimi-code-cli compiles to tools with KIMI_MODEL_* inject', () => {
-    const rt = resolveAppsRuntime({
+    // 单实体编译用 compileAppsDoc（纯编译，不做默认回填）
+    const rt = compileAppsDoc({
       app_entities: [{
         id: 'kimi-code',
         handler: 'kimi-code-cli',
@@ -89,7 +109,7 @@ describe('apps-compiler', () => {
   });
 
   test('kimi-code-cli with session caps emits session_sources', () => {
-    const rt = resolveAppsRuntime({
+    const rt = compileAppsDoc({
       app_entities: [{
         id: 'kimi-code',
         handler: 'kimi-code-cli',

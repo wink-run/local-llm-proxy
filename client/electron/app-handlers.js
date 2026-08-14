@@ -96,7 +96,18 @@ function handlersMap() {
   if (!_cloudHandlers) return base;
   const out = { ...base };
   for (const [id, h] of Object.entries(_cloudHandlers)) {
-    const merged = { ...(base[id] || {}), ...h };
+    // 结构身份冲突（proxy.mode）以内置为准：tokenbank.yaml 的 handlers 是旧目录快照，
+    // 升级后内置改了编译目标（如 deepseek-harness cli env 注入 → api_key config-file），
+    // 旧 mode 会让应用编成另一类目标、探测路径全变 → 让内置当前形态胜出。
+    // 云端/快照在其余字段的新增/定制仍保留（分发新版 handler 子字段的能力不受影响）。
+    const cloudH = { ...h };
+    const baseProxyMode = base[id]?.proxy?.mode;
+    if (baseProxyMode && cloudH.proxy?.mode && cloudH.proxy.mode !== baseProxyMode) {
+      // 快照整段 proxy 结构都过期（cli inject_env → api_key config_file）→ 用内置当前形态，
+      // 避免 mode 改了却留着旧字段（detect/config_file/patch 全空）编成残缺应用。
+      cloudH.proxy = base[id].proxy;
+    }
+    const merged = { ...(base[id] || {}), ...cloudH };
     // capabilities 取并集：避免旧版云端快照缺新能力位（如 resource_project）冲掉内置默认
     const baseCaps = Array.isArray(base[id]?.capabilities) ? base[id].capabilities : [];
     const cloudCaps = Array.isArray(h?.capabilities) ? h.capabilities : [];
@@ -150,6 +161,7 @@ const TRACE_PROFILE_BY_SOURCE = {
   workbuddy: 'workbuddy-trace',
   'trae-work': 'trae-work-trace',
   kimi: 'kimi-code-trace',
+  dsh: 'dsh-trace',
 };
 
 /** Trae Work 标准 handler / 实体 id（旧 trae / trae-stats 仍兼容） */
@@ -418,12 +430,28 @@ function patchRouteTraeModels(patch, cfg, ctx) {
   return { ...patch, [modelsKey]: models };
 }
 
+/** DeepSeek Harness：绑定的路由/模型（多选）→ llm-pi-ai.providers.tokenbank.models 的 [{ id }] 列表 */
+function patchTokenbankModels(patch, cfg, ctx) {
+  const modelsKey = cfg.models_key || 'llm-pi-ai.providers.tokenbank.models';
+  const routeIds = ctx.routeIds?.length ? ctx.routeIds : (ctx.routeId ? [ctx.routeId] : []);
+  if (!routeIds.length) return patch;
+  const routes = ctx.routes || [];
+  const ids = [];
+  for (const rid of routeIds) {
+    const modelId = routeModelId(rid, routes);
+    if (modelId && !ids.includes(modelId)) ids.push(modelId);
+  }
+  if (!ids.length) return patch;
+  return { ...patch, [modelsKey]: ids.map(id => ({ id })) };
+}
+
 const PATCH_ROUTE_STRATEGIES = {
   workbuddy_models: patchRouteWorkbuddyModels,
   marker_model_list: patchRouteWorkbuddyModels,
   trae_models: patchRouteTraeModels,
   claude_inference_models: patchRouteClaudeInferenceModels,
   codex_model: patchRouteCodexModel,
+  tokenbank_models: patchTokenbankModels,
 };
 
 /**
@@ -518,7 +546,25 @@ function resolveUserCapabilities(h, vars) {
     if (key in raw) out[key] = !!raw[key];
     else out[key] = defaults[key];
   }
-  return out;
+  return upgradeStaleGatewayOnlySessionCaps(h, raw, out, defaults);
+}
+
+/**
+ * 旧目录把「后来才加 session 能力」的应用写成 gateway-only 种子
+ * （session_trace / session_usage_import 均为显式 false）。按 handler 默认打开。
+ * 运营若只关其中一个，不走这条升级。
+ */
+function upgradeStaleGatewayOnlySessionCaps(h, raw, out, defaults) {
+  const caps = new Set(h.capabilities || []);
+  if (!caps.has('session_import') && !caps.has('session_trace')) return out;
+  if (!raw || typeof raw !== 'object') return out;
+  if (!('session_trace' in raw) && !('session_usage_import' in raw)) return out;
+  if (out.session_trace || out.session_usage_import) return out;
+  return {
+    ...out,
+    session_trace: !!defaults.session_trace,
+    session_usage_import: !!defaults.session_usage_import,
+  };
 }
 
 /** 合并 handler.ops + vars.ops */

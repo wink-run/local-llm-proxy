@@ -8,6 +8,7 @@ const claude3pSandbox = require('./claude-3p-sandbox');
 const workbuddyTrace = require('./workbuddy-trace');
 const traeWorkTrace = require('./trae-work-trace');
 const kimiCodeTrace = require('./kimi-code-trace');
+const dshTrace = require('./dsh-trace');
 
 /** profile id → 适配器模块 */
 const PROFILE_ADAPTERS = {
@@ -18,6 +19,7 @@ const PROFILE_ADAPTERS = {
   [workbuddyTrace.profile]: workbuddyTrace,
   [traeWorkTrace.profile]: traeWorkTrace,
   [kimiCodeTrace.profile]: kimiCodeTrace,
+  [dshTrace.profile]: dshTrace,
 };
 
 /** 兼容旧 trace_agent_id 调用 */
@@ -29,6 +31,7 @@ const AGENT_ID_TO_PROFILE = {
   [workbuddyTrace.agentId]: workbuddyTrace.profile,
   [traeWorkTrace.agentId]: traeWorkTrace.profile,
   [kimiCodeTrace.agentId]: kimiCodeTrace.profile,
+  [dshTrace.agentId]: dshTrace.profile,
 };
 
 /** Cowork 3p 会话在 UI 上归属 Claude Desktop（trace 仍走 claude-3p 适配器） */

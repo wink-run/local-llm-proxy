@@ -19,7 +19,7 @@ const path = require('path');
 const os   = require('os');
 const { estimateCost } = require('./pricing');
 const { resolvePricingProviderId } = require('./billing-config');
-const { iterFileLines, countJsonlLines, MAX_JSONL_FILE_BYTES, STREAM_THRESHOLD_BYTES } = require('./jsonl-lines');
+const { iterFileLines, iterZstdJsonlLines, countJsonlLines, MAX_JSONL_FILE_BYTES, STREAM_THRESHOLD_BYTES } = require('./jsonl-lines');
 
 // 大文件兜底：启动时 run() 同步扫描所有会话文件，单个文件 readFileSync 一次性载入会撑爆内存。
 // 曾有用户的 Codex rollout JSONL 达 ~1GB，0.5.4 启动首屏前就 OOM 崩溃。
@@ -613,11 +613,17 @@ function importSource(localStats, src) {
       // 扫过即 markDone：无用量/暂写不出的历史文件也不反复重扫
       markDone(localStats, file, st);
     } else {
-      // jsonl：逐行；维护运行上下文（meta 行更新 model/session_id；accumulate 累计 prev）。
+      // jsonl / jsonl-zstd：逐行；维护运行上下文（meta 行更新 model/session_id；accumulate 累计 prev）。
       // 大文件走流式（iterFileLines），避免 readFileSync + split 的双份整文件内存拷贝。
-      const streaming = st.size > STREAM_THRESHOLD_BYTES;
+      // jsonl-zstd（DSH 拼接帧）不能按 utf8 读，统一走解压迭代器。
+      const isZstd = (src.format || '') === 'jsonl-zstd';
+      const streaming = !isZstd && st.size > STREAM_THRESHOLD_BYTES;
       let lines, lineCount;
-      if (streaming) {
+      if (isZstd) {
+        try { lines = iterZstdJsonlLines(file); }
+        catch { markDone(localStats, file, st); continue; }
+        lineCount = Math.max(1, Math.floor(st.size / 200));
+      } else if (streaming) {
         try { lineCount = countJsonlLines(file); }
         catch { markDone(localStats, file, st); continue; }
         lines = iterFileLines(file);

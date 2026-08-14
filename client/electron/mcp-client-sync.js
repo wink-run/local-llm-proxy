@@ -315,6 +315,146 @@ function syncCodexClient(clientId, filePath, servers, prevKeys, { allowCreate = 
   return { synced, keys: newKeys, path: filePath };
 }
 
+// ── DeepSeek Harness（cordis-mcp-client）────────────────────────────────────
+// dsh 的 MCP 不是 mcpServers map，而是 $DSH_HOME/cordis.patch.yml 顶层 patch 列表里的
+// 一个 `@deepseek-ai/dsh-mcp-client` 插件行（每 server 一行）。文件可能含 `!!js` 自定义
+// 标签，整文件 YAML round-trip 不安全 → 沿用 Codex 的「托管标记块」文本策略：只在块内增删。
+const DSH_MCP_CLIENT_NAME = '@deepseek-ai/dsh-mcp-client';
+
+/** serverToEntry 的结果（stdio {command,args,env} 或 http {url,headers}）→ dsh 插件行 */
+function dshRowFromEntry(key, entry) {
+  const config = { serverName: key };
+  if (entry.url) {
+    config.transport = 'streamable-http';
+    config.url = String(entry.url);
+    if (entry.headers && typeof entry.headers === 'object' && Object.keys(entry.headers).length) {
+      config.headers = entry.headers;
+    }
+  } else {
+    config.transport = 'stdio';
+    config.command = String(entry.command);
+    config.args = Array.isArray(entry.args) ? entry.args : [];
+    if (entry.env && Object.keys(entry.env).length) config.env = entry.env;
+  }
+  return { id: `tb-mcp-${key}`, name: DSH_MCP_CLIENT_NAME, config };
+}
+
+/** 渲染顶层 patch 列表项：`- insert:\n    - id: ...` */
+function buildCordisInsertBlock(rows) {
+  return require('js-yaml').dump([{ insert: rows }], { lineWidth: 200, noRefs: true });
+}
+
+/** 清掉 tokenbank-mcp 托管块（含残缺开/闭标记），与 Codex 逻辑对齐 */
+function stripCordisManagedBlock(text) {
+  let out = String(text || '');
+  out = out.replace(
+    /(?:^|\n)[ \t]*# >>> tokenbank-mcp managed >>>[ \t]*\r?\n[\s\S]*?# <<< tokenbank-mcp managed <<<[ \t]*(?:\r?\n|$)/g,
+    '\n',
+  );
+  out = out.replace(/^[ \t]*# >>> tokenbank-mcp managed >>>[ \t]*\r?\n/gm, '');
+  out = out.replace(/^[ \t]*# <<< tokenbank-mcp managed <<<[ \t]*\r?\n/gm, '');
+  out = out.replace(/^[ \t]*# >>> tokenbank-mcp managed >>>[ \t]*$/gm, '');
+  out = out.replace(/^[ \t]*# <<< tokenbank-mcp managed <<<[ \t]*$/gm, '');
+  out = out.replace(/\n{3,}/g, '\n\n');
+  return out;
+}
+
+function syncCordisClient(clientId, filePath, servers, prevKeys, { allowCreate = false } = {}) {
+  const list = Array.isArray(servers) ? servers : [];
+  const prev = Array.isArray(prevKeys) ? prevKeys : [];
+  if (!fs.existsSync(filePath)) {
+    if (!allowCreate) {
+      return { synced: [], keys: [], path: filePath, skipped: true, reason: 'config-missing' };
+    }
+    ensureDir(filePath);
+    fs.writeFileSync(filePath, '# Created by Token Bank for DeepSeek Harness MCP sync\n', 'utf8');
+  }
+  const original = fs.readFileSync(filePath, 'utf8');
+  const text0 = stripCordisManagedBlock(original);
+
+  const rows = [];
+  const synced = [];
+  const newKeys = [];
+  for (const srv of list) {
+    const entry = serverToEntry(srv, clientId);
+    if (!entry) continue;
+    const key = clientKeyForServer(srv, new Set(), prev);
+    rows.push(dshRowFromEntry(key, entry));
+    newKeys.push(key);
+    synced.push({ id: srv.id, name: srv.display_name || srv.name, clientKey: key });
+  }
+
+  let text = text0;
+  if (rows.length) {
+    const marker = `\n# >>> ${TB_MCP_MARKER} managed >>>\n`;
+    const body = buildCordisInsertBlock(rows);
+    const end = `# <<< ${TB_MCP_MARKER} managed <<<\n`;
+    text = text0.trimEnd() + marker + (body.endsWith('\n') ? body : body + '\n') + end;
+  }
+
+  const next = text.endsWith('\n') ? text : text + '\n';
+  if (next === (original.endsWith('\n') ? original : original + '\n')) {
+    return { synced, keys: newKeys, path: filePath, skipped: true };
+  }
+  fs.writeFileSync(filePath, next, 'utf8');
+  return { synced, keys: newKeys, path: filePath };
+}
+
+/** 解析 cordis.patch.yml 托管块内的 dsh-mcp-client 行 → [{clientKey, entry}]（仅读 TB 托管块，避开用户 !!js） */
+function parseCordisMcpClientSections(text) {
+  const results = [];
+  const m = String(text || '').match(
+    /# >>> tokenbank-mcp managed >>>[ \t]*\r?\n([\s\S]*?)# <<< tokenbank-mcp managed <<</,
+  );
+  if (!m) return results;
+  let ops;
+  try { ops = require('js-yaml').load(m[1]); } catch { return results; }
+  if (!Array.isArray(ops)) return results;
+  for (const op of ops) {
+    const insertRows = op && Array.isArray(op.insert) ? op.insert : [];
+    for (const row of insertRows) {
+      if (!row || row.name !== DSH_MCP_CLIENT_NAME) continue;
+      const cfg = row.config || {};
+      const key = String(cfg.serverName || '').trim();
+      if (!key) continue;
+      const entry = (cfg.transport === 'streamable-http' || cfg.url)
+        ? { command: '', args: [], env: {}, url: String(cfg.url || ''), headers: cfg.headers || undefined }
+        : { command: String(cfg.command || ''), args: Array.isArray(cfg.args) ? cfg.args : [], env: cfg.env || {} };
+      results.push({ clientKey: key, entry });
+    }
+  }
+  return results;
+}
+
+/** 从 cordis.patch.yml 删除单个 serverName 的 dsh-mcp-client 行（块空则整块移除） */
+function stripCordisMcpKey(text, key) {
+  const re = /(# >>> tokenbank-mcp managed >>>[ \t]*\r?\n)([\s\S]*?)(# <<< tokenbank-mcp managed <<<[ \t]*\r?\n?)/;
+  const m = String(text || '').match(re);
+  if (!m) return text;
+  let ops;
+  try { ops = require('js-yaml').load(m[2]); } catch { return text; }
+  if (!Array.isArray(ops)) return text;
+
+  let changed = false;
+  for (const op of ops) {
+    if (op && Array.isArray(op.insert)) {
+      const before = op.insert.length;
+      op.insert = op.insert.filter(
+        (r) => !(r && r.name === DSH_MCP_CLIENT_NAME && String((r.config || {}).serverName || '') === key),
+      );
+      if (op.insert.length !== before) changed = true;
+    }
+  }
+  if (!changed) return text;
+
+  const remaining = ops.filter((op) => !(op && Array.isArray(op.insert) && op.insert.length === 0));
+  if (!remaining.length) {
+    return text.replace(re, '').replace(/\n{3,}/g, '\n\n');
+  }
+  const body = require('js-yaml').dump(remaining, { lineWidth: 200, noRefs: true });
+  return text.replace(re, `${m[1]}${body}${m[3]}`);
+}
+
 /**
  * 同步 active MCP 到 Agent 客户端（可按 Agent 分别写入）
  * @param {object[]} servers 来自 mcpManager.listManagedServers()
@@ -355,6 +495,8 @@ function syncAll(servers, options = {}) {
         result = syncJsonClient(clientId, filePath, clientServers, { allowCreate });
       } else if (target.format === 'toml-mcp') {
         result = syncCodexClient(clientId, filePath, clientServers, prevKeys, { allowCreate });
+      } else if (target.format === 'cordis-mcp-client') {
+        result = syncCordisClient(clientId, filePath, clientServers, prevKeys, { allowCreate });
       } else {
         continue;
       }
@@ -692,6 +834,11 @@ function parseMcpEntriesFromFile(filePath, target) {
       .map(({ clientKey, entry }) => [clientKey, entry]);
   }
 
+  if (format === 'cordis-mcp-client') {
+    return parseCordisMcpClientSections(fs.readFileSync(filePath, 'utf8'))
+      .map(({ clientKey, entry }) => [clientKey, entry]);
+  }
+
   return [];
 }
 
@@ -998,6 +1145,15 @@ function removeRawClientMcpEntry(clientId, clientKey, { ignoreMissing = false } 
         removedPath = filePath;
         break;
       }
+
+      if (target.format === 'cordis-mcp-client') {
+        const original = fs.readFileSync(filePath, 'utf8');
+        const stripped = stripCordisMcpKey(original, key);
+        if (stripped === original) continue;
+        fs.writeFileSync(filePath, stripped.endsWith('\n') ? stripped : stripped + '\n', 'utf8');
+        removedPath = filePath;
+        break;
+      }
     } catch (e) {
       console.warn(`[mcp-client-sync] remove ${clientId}/${key} from ${filePath}:`, e.message);
     }
@@ -1131,4 +1287,9 @@ module.exports = {
   syncJsonClient,
   syncCodexClient,
   stripCodexManagedMcpBlock,
+  syncCordisClient,
+  parseCordisMcpClientSections,
+  stripCordisManagedBlock,
+  stripCordisMcpKey,
+  dshRowFromEntry,
 };

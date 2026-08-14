@@ -206,6 +206,15 @@ function isTraeApp(app_id) {
   } catch { return false; }
 }
 
+function isDshApp(app_id) {
+  if (String(app_id || '').includes('deepseek-harness')) return true;
+  try {
+    const app = (readLocalConfig()?.apps || []).find(a => a.id === app_id);
+    const pid = app?.preset_id || app?.agent_id;
+    return pid === 'deepseek-harness' || pid === 'deepseek-harness-cli';
+  } catch { return false; }
+}
+
 /** 还原 config-file 应用配置（与 apps:revertConfigFile IPC 共用） */
 function revertAppConfigFile(app_id, config_file) {
   if (isClaudeDesktopApp(app_id)) runClaude3pSync('revert');
@@ -223,6 +232,11 @@ function revertAppConfigFile(app_id, config_file) {
   if (isTraeApp(app_id) && file) {
     require('./trae-config').revertTraeModels(file);
     return;
+  }
+  // DeepSeek Harness：settings.yaml 由下方通用分支从 .tokenbank-bak 整份还原；
+  // 这里只清我们写入的网关 key，合并保留用户其他凭证（不整份删 .credentials.yaml）。
+  if (isDshApp(app_id) && file) {
+    try { require('./dsh-config').revertDshCredentials(path.dirname(file)); } catch {}
   }
   if (file) {
     const bak = file + '.tokenbank-bak';
@@ -2273,6 +2287,14 @@ function allowCreateMissingProxyConfig(handlerId, { isClaudeDesktop } = {}) {
   if (handlerId === 'workbuddy-stats') return workbuddyStrongPresent();
   if (handlerId === 'openclaw-api') return commandInstalled('openclaw');
   if (handlerId === 'codex-desktop-api') return codexDesktopStrongPresent();
+  // DeepSeek Harness：settings.yaml 首次运行才有；检测口径 isDshPresent()（profiles/sessions/storages），
+  // 不认 settings.yaml/cordis.patch.yml 本身（那些是纳管时我们写的）→ 无自证循环，允许新建
+  if (handlerId === 'deepseek-harness-cli') {
+    try {
+      const { isDshPresent } = require('./resource-agent-targets');
+      if (isDshPresent() || commandInstalled('dsh')) return true;
+    } catch { /* ignore */ }
+  }
   return false;
 }
 
@@ -2339,6 +2361,15 @@ function apiKeyDetect(d) {
   if (d.id === 'workbuddy') {
     strongDefined = true;
     if (workbuddyStrongPresent()) strong = true;
+  }
+  // DeepSeek Harness：dsh 装在 ~/.dsh/profiles/node_modules 而非 PATH（GUI Electron PATH 精简常探不到命令）。
+  // ~/.dsh 下 dsh 自建目录(profiles/sessions/storages)= 强信号；settings.yaml/cordis.patch.yml 是纳管时我们自己会写的，刻意不认。
+  if (d.id === 'deepseek-harness') {
+    strongDefined = true;
+    try {
+      const { isDshPresent } = require('./resource-agent-targets');
+      if (isDshPresent()) strong = true;
+    } catch { /* ignore */ }
   }
   let weak = false;
   if (d.config_file) {
@@ -4868,6 +4899,12 @@ function registerIPC() {
         // 在线(经网关) = 纳管 且 绑了路由；纳管但直连(无 route_id) = 仅读文件、不走网关
         // installed：以强信号探测为准，避免残留配置把未安装应用标成已纳管
         const detected = def ? apiKeyAppDetected(def) : true;
+        // 已纳管 dsh：旧 apiKeyEnv=TOKENBANK_API_KEY 会继承 Codex 的 shell env，用量记到 Codex
+        if (app.hosted === true && app.api_key && isDshApp(app.id) && freshConfigFile) {
+          try {
+            require('./dsh-config').syncDshGatewayKey(resolveCfgPath(freshConfigFile), app.api_key);
+          } catch (e) { console.warn('[dsh] sync gateway key failed:', e.message); }
+        }
         return { ...withCaps, linked: true, installed: detected,
                  hosted: app.hosted === true,
                  configured: !!(app.hosted && (app.route_id || (app.route_ids && app.route_ids.length))),
@@ -5198,6 +5235,64 @@ function registerIPC() {
         // 缺官方登录 → Desktop 门控会藏掉自定义模型，回传提示让前端引导登录
         return { ok: true, file, envCount: 0, codex: true, officialLogin,
           ...(officialLogin ? {} : { warning: 'codex-no-official-login' }) };
+      }
+      // DeepSeek Harness：settings.yaml 是 dsh 活文档（hot-reload + web Models 页也写），
+      // 必须合并式写入（保留 ui-onboarding 等用户段），并动态注入全量网关模型到
+      // llm-pi-ai.providers.tokenbank.models；key 写 $DSH_HOME/.credentials.yaml（扁平 mapping）。
+      if (handlerId === 'deepseek-harness-cli') {
+        const yaml = require('js-yaml');
+        const dshHome = path.dirname(file);
+        if (!fs.existsSync(file)) {
+          if (!allowCreateMissingProxyConfig(handlerId)) return { ok: false, error: 'config-missing', file };
+          try { fs.mkdirSync(dshHome, { recursive: true }); }
+          catch (e) { return { ok: false, error: e.message || 'mkdir-failed', file }; }
+        }
+        // 备份原始 settings.yaml（仅首次、非托管态），供取消纳管整份还原
+        const bak = file + '.tokenbank-bak';
+        if (fs.existsSync(file) && !fs.existsSync(bak) && !isTokenbankManagedConfig(file)) {
+          try { fs.copyFileSync(file, bak); } catch {}
+        }
+        const deepSetDot = (obj, dotKey, val) => {
+          const parts = String(dotKey).split('.');
+          let cur = obj;
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+            cur = cur[parts[i]];
+          }
+          cur[parts[parts.length - 1]] = val;
+        };
+        // 读现有文档（保留用户段）；settings.yaml 是普通 YAML（!!js 只在 cordis.patch.yml）
+        let doc = {};
+        try { if (fs.existsSync(file)) doc = yaml.load(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+        if (!doc || typeof doc !== 'object' || Array.isArray(doc)) doc = {};
+        for (const [k, v] of Object.entries(resolvedPatch || {})) deepSetDot(doc, k, v);
+        // 旧云端快照可能仍带 TOKENBANK_API_KEY；强制独立名，避免撞 Codex 的 shell env
+        deepSetDot(doc, 'llm-pi-ai.providers.tokenbank.apiKeyEnv', require('./dsh-config').DSH_API_KEY_ENV);
+        // 模型列表：绑了路由（patch_route 策略 tokenbank_models 已填 models）→ 保留所选；
+        // 未绑路由 → 兜底注入全量网关模型（/v1/models 按模态重复，须去重后写 [{ id }]）。
+        if (!resolvedPatch['llm-pi-ai.providers.tokenbank.models']) {
+          try {
+            const res = await fetch(`${patchCtx.base}/v1/models`, {
+              headers: patchCtx.key ? { Authorization: `Bearer ${patchCtx.key}` } : {},
+            });
+            if (res.ok) {
+              const json = await res.json();
+              const ids = [...new Set(
+                (Array.isArray(json?.data) ? json.data : [])
+                  .map(m => m?.id).filter(x => typeof x === 'string' && x.trim()),
+              )];
+              if (ids.length) deepSetDot(doc, 'llm-pi-ai.providers.tokenbank.models', ids.map(id => ({ id })));
+            }
+          } catch (e) { console.warn('[dsh] fetch /v1/models failed:', e.message); }
+        }
+        // key → $DSH_HOME/.credentials.yaml（独立 TOKENBANK_DSH_API_KEY，避免撞 Codex 的 shell env）
+        if (patchCtx.key) {
+          try { require('./dsh-config').writeDshCredentials(dshHome, patchCtx.key); }
+          catch (e) { console.warn('[dsh] write .credentials.yaml failed:', e.message); }
+        }
+        fs.writeFileSync(file, yaml.dump(doc, { lineWidth: 120 }), 'utf8');
+        setAppHosted(app_id, true);
+        return { ok: true, file, envCount: 0 };
       }
       // Trae：模型配置由用户在 IDE 内手工填写，此处不写入 state.vscdb
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
@@ -6005,7 +6100,8 @@ app.whenReady().then(() => {
       localStats.setImportState(MIG, 1, 0);
     }
   } catch (e) { console.error('[session-import] migrate unskip sdk-cli', e.message); }
-  runSessionImport();
+  // 延后到 didFinishLaunching 返回之后：同步扫 DSH zstd 会卡住启动，且曾在该通知栈上 SIGTRAP
+  setImmediate(runSessionImport);
   setInterval(runSessionImport, 30_000);
 
   if (!isDev) setupAutoUpdater();

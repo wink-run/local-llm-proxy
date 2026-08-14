@@ -117,6 +117,29 @@ def merge_apps_doc(current: dict | None) -> dict:
                 out = ac.compile_apps_doc({"version": out.get("version") or 1, "entities": entities})
         except Exception:
             pass
+    # 结构身份冲突（proxy.mode）以目录为准：旧快照 cli env 注入 → api_key config-file 过渡后，
+    # 旧 mode 会把应用编成另一类目标、探测路径全变。仅 mode 冲突时刷新整段 proxy，其余保留。
+    try:
+        import app_handlers as ah
+        hmap = ah.handlers_map()
+        handlers = out.get("handlers")
+        if isinstance(handlers, dict):
+            changed = False
+            for hid, stored in list(handlers.items()):
+                if not isinstance(stored, dict):
+                    continue
+                base_h = hmap.get(hid) or {}
+                base_mode = (base_h.get("proxy") or {}).get("mode")
+                stored_mode = (stored.get("proxy") or {}).get("mode")
+                if base_mode and stored_mode and stored_mode != base_mode and base_h.get("proxy"):
+                    merged = dict(stored)
+                    merged["proxy"] = base_h["proxy"]
+                    handlers[hid] = merged
+                    changed = True
+            if changed:
+                out["handlers"] = handlers
+    except Exception:
+        pass
     return out
 
 

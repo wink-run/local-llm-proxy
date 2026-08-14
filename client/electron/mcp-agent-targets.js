@@ -17,6 +17,7 @@ function expandHome(p) {
  *   toml-mcp        — [mcp_servers.key] 段（Codex）
  *   yaml-mcp-servers — config.yaml 顶层 mcp_servers（Hermes）
  *   json-nested     — 嵌套路径如 mcp.servers（OpenClaw）
+ *   cordis-mcp-client — $DSH_HOME/cordis.patch.yml 里的 @deepseek-ai/dsh-mcp-client 插件行（DeepSeek Harness）
  */
 const AGENT_MCP_TARGETS = {
   cursor: {
@@ -106,6 +107,17 @@ const AGENT_MCP_TARGETS = {
     // 独立 mcp.json，避免改写 config.toml
     getPaths: () => [path.join(os.homedir(), '.kimi-code', 'mcp.json')],
     format: 'json-mcp',
+    sync: true,
+  },
+  'deepseek-harness': {
+    id: 'deepseek-harness',
+    label: 'DeepSeek Harness',
+    // MCP 不落 mcpServers map，而是 home 级 cordis.patch.yml 里的 dsh-mcp-client 插件行（对所有 profile 生效）
+    getPaths: () => {
+      const home = process.env.DSH_HOME ? expandHome(process.env.DSH_HOME) : path.join(os.homedir(), '.dsh');
+      return [path.join(home, 'cordis.patch.yml')];
+    },
+    format: 'cordis-mcp-client',
     sync: true,
   },
 };
