@@ -31,7 +31,8 @@ const CMD_TTL = 30000;
 // Windows 有时不含 %APPDATA%\npm。导致 where/command -v 找不到明明装好的 npm CLI，
 // 应用被误判"未安装"、一键装/卸按钮显示不对。这些目录追加进查询 PATH + 直接查目录兜底。
 // Node 版本管理器（nvm/fnm/volta/asdf）的 node bin 目录。GUI 启动的 electron PATH 精简，且
-// `sh -lc` 不加载用户 zsh/bash rc（nvm 就在 rc 里初始化），故这些目录既不在 PATH 也探不到 →
+// 探测用 `sh -c`（不用 login shell，避免 ~/.profile 把 BIN_DIR 拼回 PATH 探到 shim 自身），
+// 也不加载用户 zsh/bash rc（nvm 就在 rc 里初始化），故这些目录既不在 PATH 也探不到 →
 // 只装了 nvm/fnm 的用户会「找不到 npm」→ 一键装/卸报 ENOENT。这里把它们直接补进搜索目录。
 function nodeVersionManagerBinDirs() {
   const home = os.homedir();
@@ -123,6 +124,21 @@ function resolveBundledCodexPath() {
   return null;
 }
 
+function ownShimPath(command) {
+  return IS_WIN ? path.join(BIN_DIR, command + '.cmd') : path.join(BIN_DIR, command);
+}
+
+// 候选路径是否就是我们写的 shim（含 symlink）。命中则不能当 realPath，否则 exec 自己死循环。
+function isOwnShimPath(command, candidate) {
+  if (!candidate) return false;
+  const own = ownShimPath(command);
+  try {
+    return fs.realpathSync(candidate) === fs.realpathSync(own);
+  } catch {
+    return path.resolve(candidate) === path.resolve(own);
+  }
+}
+
 function resolveRealCommand(command) {
   const now = Date.now();
   const cached = _cmdCache.get(command);
@@ -143,13 +159,15 @@ function resolveRealCommand(command) {
       const first = out.split(/\r?\n/).find(l => l.trim());
       result = first ? first.trim() : null;
     } else {
-      const out = execFileSync('sh', ['-lc', `command -v ${command}`], {
+      // 不用 -l：login shell 会读 ~/.profile，把 BIN_DIR 又拼回 PATH，command -v 探到 shim 自身。
+      const out = execFileSync('sh', ['-c', `command -v ${command}`], {
         env: { ...process.env, PATH: cleanPath },
         stdio: ['ignore', 'pipe', 'ignore'],
       }).toString();
       result = out.trim() || null;
     }
   } catch { result = null; }
+  if (result && isOwnShimPath(command, result)) result = null;
   // 兜底：where/command -v 没命中就直接查 npm 全局 bin 目录里有没有该命令（最可靠，不依赖进程 PATH）
   if (!result) {
     const exts = IS_WIN ? ['.cmd', '.exe', '.ps1', ''] : [''];
@@ -157,7 +175,9 @@ function resolveRealCommand(command) {
     for (const dir of extraDirs) {
       for (const ext of exts) {
         const p = path.join(dir, command + ext);
-        try { if (fs.existsSync(p)) { result = p; break outer; } } catch {}
+        try {
+          if (fs.existsSync(p) && !isOwnShimPath(command, p)) { result = p; break outer; }
+        } catch {}
       }
     }
   }
@@ -186,6 +206,31 @@ function probeOrigin(envMap) {
   return null;
 }
 
+// 探活成功后 10s 内复用缓存，避免 CLI 短时连启把 /health 打成刷屏。
+// 失败则清缓存，下次立刻重试（网关刚启动时能马上接上）。
+const GW_ALIVE_TTL_SEC = 10;
+function unixHealthProbeLines(origin) {
+  const ttl = GW_ALIVE_TTL_SEC;
+  return [
+    '_TB_GW_CACHE="$HOME/.tokenbank/gw-alive"',
+    '_TB_GW_OK=0',
+    'if [ -f "$_TB_GW_CACHE" ]; then',
+    '  _TB_TS=`cat "$_TB_GW_CACHE" 2>/dev/null`',
+    '  _TB_NOW=`date +%s`',
+    `  if [ -n "$_TB_TS" ] && [ "$_TB_NOW" -le $((_TB_TS + ${ttl})) ] 2>/dev/null; then _TB_GW_OK=1; fi`,
+    'fi',
+    'if [ "$_TB_GW_OK" -eq 0 ]; then',
+    `  if curl -s -o /dev/null -m 1 "${origin}/health" 2>/dev/null; then`,
+    '    mkdir -p "$HOME/.tokenbank" 2>/dev/null',
+    '    date +%s > "$_TB_GW_CACHE" 2>/dev/null',
+    '    _TB_GW_OK=1',
+    '  else',
+    '    rm -f "$_TB_GW_CACHE" 2>/dev/null',
+    '  fi',
+    'fi',
+  ];
+}
+
 // shim 注入网关 env，但先探活：网关 /health 通才注入（否则直接调真程序走官方）。
 // 这样网关没启动时 shim 不会把工具指向死端口 —— 透明托管对“网关未运行”自动回落。
 // dispatch（可选）：[{ dir, env }]，按 $PWD 前缀匹配（首个命中胜出，调用方按 dir 长度降序传入）
@@ -202,6 +247,10 @@ function probeOrigin(envMap) {
 //   在探活块的兜底处 unset 基础网关 env，让默认账号走自己 config-dir 的配置，而非被指向网关。
 function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {}, opts = {}) {
   ensureBinDir();
+  // 写死真实路径防递归：realPath 绝不能是 BIN_DIR 里的 shim 自己
+  if (!realPath || isOwnShimPath(command, realPath)) {
+    throw new Error(`shim realPath 不能是自身: ${realPath || '(empty)'}`);
+  }
   const defaultDirect = !!(opts && opts.defaultDirect);
   const exports = Object.entries(envMap || {});
   const baseSel = Object.entries(baseSelectEnv || {});
@@ -279,7 +328,8 @@ function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {},
           'esac',
         ] : []),
         // 2) 走网关：探活通过才注入；路由态实例覆盖 token，直连态实例 unset 网关 env
-        `if curl -s -o /dev/null -m 1 "${origin}/health" 2>/dev/null; then`,
+        ...unixHealthProbeLines(origin),
+        'if [ "$_TB_GW_OK" -eq 1 ]; then',
         ...exports.map(([k, v]) => `  export ${k}="${v}"`),
         '  case "$PWD/" in',
         ...disp.map(d => {
@@ -301,7 +351,8 @@ function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {},
       lines = [
         '#!/bin/sh',
         MARK_BEGIN,
-        `if curl -s -o /dev/null -m 1 "${origin}/health" 2>/dev/null; then`,
+        ...unixHealthProbeLines(origin),
+        'if [ "$_TB_GW_OK" -eq 1 ]; then',
         ...exports.map(([k, v]) => `  export ${k}="${v}"`),
         'fi',
         `exec "${realPath}" "$@"`,

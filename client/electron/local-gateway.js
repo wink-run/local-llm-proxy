@@ -3392,6 +3392,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           will_failover: !res.headersSent,
         });
         routeErrors.push({ id: c.provider.id, err }); lastErr = err;
+        recordProviderFail(c.provider, c.model, err, Date.now() - t0, callerKey, reqPath);
         noteCooldown(c.provider, c.model, err, stratSharer);   // 硬失败(429/401/403/402)记冷却，下次请求下沉此候选
         // 源级失效跳过：仅对「单账号多模型」的直连源有效（如 openai 一个账号下多个 gpt-* 全 429）。
         // p2p 所有模型共享同一 provider.id(tokenbank-p2p) 但各是独立 worker，一个挂不代表其它挂，
@@ -3480,6 +3481,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
               will_failover: !res.headersSent,
             });
             stepErrors.push({ id: c.provider.id, err }); lastErr = err;
+            recordProviderFail(c.provider, c.model, err, Date.now() - t0, callerKey, reqPath);
             noteCooldown(c.provider, c.model, err, stepSharer);   // 硬失败记冷却
             // 见上：p2p 各模型独立 worker，不能因一个源级失败拉黑整个 tokenbank-p2p 池
             if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
@@ -3578,6 +3580,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           });
           stepErrors.push({ id: provider.id, err });
           lastErr = err;
+          recordProviderFail(provider, stepModel, err, Date.now() - t0, callerKey, reqPath);
           noteCooldown(provider, stepModel, err, stepMetaSharer);   // 硬失败记冷却，下次请求下沉此源
           if (res.headersSent) return;
           await pauseBeforeNextProvider(err);
@@ -3714,6 +3717,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       });
       routeErrors.push({ id: provider.id, err });
       lastErr = err;
+      recordProviderFail(provider, model, err, Date.now() - t0, callerKey, reqPath);
       noteCooldown(provider, model, err, routeMeta && routeMeta.sharer);
       if (res.headersSent) return;
       await pauseBeforeNextProvider(err);
@@ -3780,6 +3784,24 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming, billingT
     // 否则免费/P2P 流量会按 Claude/GPT 刊例价虚增 dashboard 的 total_cost。
     cost_usd:             (tier === 'free' || tier === 'p2p') ? 0 : estimateCost(model, inTok, outTok, cCreate, cRead, providerId),
     billing_type:         billingType || null,
+  });
+}
+
+// 单个供给源失败：带上 provider_id，个人源展开才能显示「失败」而不是「无请求」
+function recordProviderFail(provider, model, err, latencyMs, apiKey, reqPath) {
+  if (!provider?.id || !model) return;
+  _statsRecorder?.({
+    api_key:     apiKey || null,
+    app_id:      resolveStatsAppId(apiKey, reqPath),
+    model,
+    provider_id: provider.id,
+    tier:        _providerTier(provider),
+    tokens: 0, input_tokens: 0, output_tokens: 0,
+    request_id:  synthReqId(),
+    data_source: 'proxy',
+    status_code: err?.status || 502,
+    error:       err?.message || 'provider_failed',
+    latency_ms:  (latencyMs > 0) ? latencyMs : null,
   });
 }
 
@@ -3908,7 +3930,10 @@ function handleRequest(req, res) {
   // 归一化路径：去查询串、折叠多斜杠、去尾斜杠。
   // 容忍客户端用尾斜杠 baseURL（如 http://host:11430/）拼出的 //v1/models、带 ?查询、/v1/models/ 等变体。
   const cleanPath = (url.split('?')[0] || '/').replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1');
-  console.log('[gw-req]', method, url, 'auth=' + (req.headers['authorization'] ? req.headers['authorization'].slice(0,25) : (req.headers['x-api-key'] ? 'x-api-key:'+String(req.headers['x-api-key']).slice(0,18) : 'none')));
+  // /health 是 shim 探活，正常时很密，不打请求日志
+  if (!(method === 'GET' && cleanPath === '/health')) {
+    console.log('[gw-req]', method, url, 'auth=' + (req.headers['authorization'] ? req.headers['authorization'].slice(0,25) : (req.headers['x-api-key'] ? 'x-api-key:'+String(req.headers['x-api-key']).slice(0,18) : 'none')));
+  }
 
   // Health
   if (method === 'GET' && cleanPath === '/health') {
@@ -4012,10 +4037,37 @@ function handleRequest(req, res) {
 
   // Embeddings
   if (method === 'POST' && cleanPath === '/v1/embeddings') {
+    const authRaw = req.headers['authorization'] || req.headers['x-api-key'] || '';
+    const callerKey = authRaw.startsWith('Bearer ') ? authRaw.slice(7).trim() : authRaw.trim();
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      try { handleEmbedding(JSON.parse(body), res, enabledProviders); }
+      try {
+        handleEmbedding(JSON.parse(body), res, enabledProviders, {
+          onComplete({ ok, status, latencyMs, origModel, model, provider, error }) {
+            const t0 = Date.now() - (latencyMs || 0);
+            pushLog({
+              ts: t0, requested_model: origModel, model,
+              via: provider?.id || null, via_label: provider?.label,
+              tier: provider ? _providerTier(provider) : null,
+              latency_ms: latencyMs, status: ok ? 'ok' : 'error',
+              error: ok ? undefined : (error || `HTTP_${status}`),
+              provider_errors: (!ok && provider) ? [{
+                provider: provider.id, error: error || `HTTP_${status}`, status,
+              }] : undefined,
+            });
+            if (ok && provider) {
+              recordStats(provider.id, model, {
+                status_code: status, latency: latencyMs, first_token_ms: latencyMs,
+              }, _providerTier(provider), callerKey, false, provider.billing_type || null, cleanPath);
+            } else if (provider) {
+              recordProviderFail(provider, model, { status, message: error || `HTTP_${status}` }, latencyMs, callerKey, cleanPath);
+            } else {
+              recordError(model || origModel, callerKey, { status, message: error }, cleanPath);
+            }
+          },
+        });
+      }
       catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); }
     });
     return;

@@ -1602,6 +1602,46 @@ class ResourceManager {
   }
 
   /**
+   * 撤掉某 client（Gateway 应用 id 或 agent_id）上的全部资源投射。
+   * 磁盘卸载失败仍删库记录，避免已删应用继续占着投射标签。
+   */
+  unprojectAllForClient(clientId) {
+    if (!clientId) return { count: 0 };
+    this.init();
+    const db = this._getDb();
+    const rows = db.prepare('SELECT id FROM resource_projections WHERE agent_id = ?').all(clientId);
+    let count = 0;
+    for (const row of rows) {
+      try {
+        this.unproject({ projectionId: row.id });
+        count += 1;
+      } catch (e) {
+        try { db.prepare('DELETE FROM resource_projections WHERE id = ?').run(row.id); count += 1; } catch { /* ignore */ }
+        console.warn('[resource-manager] unprojectAllForClient', clientId, e.message);
+      }
+    }
+    return { count };
+  }
+
+  /** 清掉已删除 app-* 上的资源投射残留 */
+  pruneStaleDeletedAppProjections() {
+    if (this._pruningStale) return { count: 0 };
+    this._pruningStale = true;
+    try {
+      const { isDeletedAppClientId } = require('./mcp-gateway-targets');
+      const db = this._getDb();
+      const ids = db.prepare('SELECT DISTINCT agent_id FROM resource_projections').all()
+        .map((r) => r.agent_id)
+        .filter((id) => isDeletedAppClientId(id));
+      let count = 0;
+      for (const id of ids) count += this.unprojectAllForClient(id).count || 0;
+      return { count, stale: ids };
+    } finally {
+      this._pruningStale = false;
+    }
+  }
+
+  /**
    * 按当前投射列表同步智能体 content.runtime_agent，并刷新 Debug Agent 列表缓存
    */
   /** 已装/已发现的 MCP 里是否已提供这些工具(判断用户是否已具备该能力,避免重复安装) */

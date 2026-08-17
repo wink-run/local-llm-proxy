@@ -313,6 +313,8 @@ class MCPManager {
     this._seeded = true;
     // seeded 之后再默认投射，避免 sync→listManagedServers→init 重入未完成的 seed
     this._ensureBuiltinDefaultProjection();
+    // 清掉已删除 API 应用残留的中转/投射，避免 MCP 页仍显示「New app」
+    this.pruneStaleDeletedAppBindings();
   }
 
   /**
@@ -736,10 +738,10 @@ class MCPManager {
     };
 
     if (payload.type === 'stdio' && !payload.command) {
-      throw new Error('stdio 类型需填写 command');
+      throw new Error('CLI 模式需填写 command');
     }
     if ((payload.type === 'sse' || payload.type === 'http') && !payload.url) {
-      throw new Error('URL 类型需填写 url');
+      throw new Error('URL 模式需填写 url');
     }
 
     if (existing) {
@@ -1064,6 +1066,73 @@ class MCPManager {
     };
   }
 
+  /**
+   * 从所有 MCP 的中转（gateway_clients）与写盘投射（sync_clients）去掉指定 client。
+   * 删除 Gateway 应用时调用；clientId=app-xxx 或 agent_id。
+   */
+  unbindClient(clientId) {
+    if (!clientId || clientId === 'api') return { updated: 0 };
+    this.init();
+    const db = this._getDb();
+    const now = Date.now();
+    const rows = db.prepare('SELECT id, metadata FROM mcp_servers').all();
+    let updated = 0;
+    const syncAffected = [];
+    for (const row of rows) {
+      const metadata = this._parseJson(row.metadata, {});
+      let changed = false;
+      if (Array.isArray(metadata.gateway_clients) && metadata.gateway_clients.includes(clientId)) {
+        metadata.gateway_clients = metadata.gateway_clients.filter((id) => id !== clientId);
+        metadata.gateway_routed = metadata.gateway_clients.length > 0;
+        changed = true;
+      }
+      if (Array.isArray(metadata.sync_clients) && metadata.sync_clients.includes(clientId)) {
+        metadata.sync_clients = metadata.sync_clients.filter((id) => id !== clientId);
+        changed = true;
+        syncAffected.push(clientId);
+      }
+      if (!changed) continue;
+      db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify(metadata), now, row.id);
+      updated += 1;
+    }
+    if (syncAffected.length) {
+      try { this.syncToClients({ clientIds: [...new Set(syncAffected)] }); } catch (e) {
+        console.warn('[mcp-manager] unbindClient sync:', e.message);
+      }
+    }
+    if (updated) {
+      try { require('./mcp-gateway-server').reloadMcpGateway(); } catch { /* ignore */ }
+    }
+    return { updated };
+  }
+
+  /** 清掉已从 Gateway 删除的 app-* 在中转/投射里的残留 */
+  pruneStaleDeletedAppBindings() {
+    if (this._pruningStale) return { updated: 0 };
+    this._pruningStale = true;
+    try {
+      const { isDeletedAppClientId } = require('./mcp-gateway-targets');
+      const db = this._getDb();
+      const rows = db.prepare('SELECT id, metadata FROM mcp_servers').all();
+      const stale = new Set();
+      for (const row of rows) {
+        const metadata = this._parseJson(row.metadata, {});
+        for (const id of [...(metadata.gateway_clients || []), ...(metadata.sync_clients || [])]) {
+          if (isDeletedAppClientId(id)) stale.add(id);
+        }
+      }
+      let updated = 0;
+      for (const id of stale) updated += this.unbindClient(id).updated || 0;
+      try { require('./resource-manager').pruneStaleDeletedAppProjections(); } catch (e) {
+        console.warn('[mcp-manager] prune resource projections:', e.message);
+      }
+      return { updated, stale: [...stale] };
+    } finally {
+      this._pruningStale = false;
+    }
+  }
+
   getGatewayInfo() {
     try {
       const gw = require('./mcp-gateway-server');
@@ -1197,6 +1266,7 @@ class MCPManager {
     this.init();
     // 首次无 Agent / 后装 Agent：补齐内置 MCP 默认投射
     this._ensureBuiltinDefaultProjection();
+    this.pruneStaleDeletedAppBindings();
     const db = this._getDb();
     const rows = db.prepare(`
       SELECT id, name, display_name, type, command, args, url, env, builtin, status, metadata, created_at, updated_at
@@ -1640,6 +1710,11 @@ class MCPManager {
     if (!isTokenbankBuiltinRelayId(row.id)) {
       gateway_clients = gateway_clients.filter((id) => id !== 'api');
     }
+    // 已删除的 API 应用不在列表展示（落库清理由 prune / unbindClient）
+    try {
+      const { isDeletedAppClientId } = require('./mcp-gateway-targets');
+      gateway_clients = gateway_clients.filter((id) => !isDeletedAppClientId(id));
+    } catch { /* ignore */ }
 
     return {
       ...row,

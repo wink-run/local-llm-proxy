@@ -18,25 +18,31 @@ export function speedFor(map, id) {
   return map[normModelKey(id)] || null;
 }
 
-// TTFT/首字延迟(ms) → 档位。阈值与后端 provider-speed 的 TTFT 档一致（首字语义）。
-// 用于社区 worker / 个人源多实例这类"每实例只有 TTFT、没有我们完整测速"的场景。
-const TTFT_FAST_MS = 800, TTFT_SLOW_MS = 2500;
+// TTFT/延迟(ms) → 档：失败另走 fail；>4s 慢(黄)；<4s 快(绿)；无请求灰。
+export const SLOW_MS = 4000;
 export function bucketFromMs(ms) {
   const v = Number(ms);
   if (!Number.isFinite(v) || v <= 0) return 'unknown';
-  if (v > TTFT_SLOW_MS) return 'slow';
-  if (v < TTFT_FAST_MS) return 'fast';
-  return 'medium';
+  if (v > SLOW_MS) return 'slow';
+  return 'fast';
 }
 
-// 服务端质量星级(1–5) → 档：≥4=好(绿) / 3=中(黄) / ≤2=差(红) / 无=灰。复用 speedDotClass 颜色。
-// 社区源用它上色/排序（star 含延迟+成功率+在线，且是降级依据，显示与路由口径一致）。
+/** 状态点：失败红 / 慢黄 / 快绿 / 无请求灰。ok 且无耗时仍算绿（请求成功）。 */
+export function statusDotBucket({ ms, failed, ok } = {}) {
+  if (failed) return 'fail';
+  const b = bucketFromMs(ms);
+  if (b !== 'unknown') return b;
+  if (ok) return 'fast';
+  return 'unknown';
+}
+
+// 服务端质量星级(1–5) → 档：≥4=快(绿) / 3=慢(黄) / ≤2=差(红) / 无=灰。复用 speedDotClass。
 export function starsBucket(stars) {
   const s = Number(stars);
   if (!Number.isFinite(s) || s <= 0) return 'unknown';
   if (s >= 4) return 'fast';
-  if (s >= 2.5) return 'medium';   // 含 2.5 初始值 + 3★ → 中性(黄)
-  return 'slow';
+  if (s >= 2.5) return 'slow';
+  return 'fail';
 }
 
 // 复刻服务端质量系数 multiplier（server.py:_worker_row）：0.4×在线 + 0.4×延迟 + 0.2×成功率。
@@ -57,17 +63,18 @@ export function starsFromMultiplier(m) {
   return 1;
 }
 
-/** fast=绿 / medium=黄 / slow=红 / 无数据=灰 */
+/** fail=红 / fast=绿 / slow=黄 / 无数据=灰 */
 export function speedDotClass(bucket) {
-  if (bucket === 'fast')   return 'bg-green-400 shadow-[0_0_4px] shadow-green-400/50';
-  if (bucket === 'medium') return 'bg-amber-400';
-  if (bucket === 'slow')   return 'bg-red-400';
-  return 'bg-zinc-300 dark:bg-zinc-600';   // unknown / 暂无测速
+  if (bucket === 'fail') return 'bg-red-500';
+  if (bucket === 'fast') return 'bg-green-400 shadow-[0_0_4px] shadow-green-400/50';
+  if (bucket === 'slow' || bucket === 'medium') return 'bg-amber-400';
+  return 'bg-zinc-300 dark:bg-zinc-600';
 }
 
 export function speedTitle(s) {
   if (!s || s.bucket === 'unknown') return '暂无测速数据';
-  const label = s.bucket === 'fast' ? '快速' : s.bucket === 'medium' ? '中速' : '慢速';
+  if (s.bucket === 'fail') return '最近请求失败';
+  const label = s.bucket === 'fast' ? '快速' : '慢速';
   if (s.ttft_ms != null || s.tps != null)
     return `${label} · 首字 ${s.ttft_ms ?? '—'}ms · ${s.tps ?? '—'} tok/s · ${s.samples} 次采样`;
   return `${label} · 往返 ${s.lat_ms ?? '—'}ms · ${s.samples} 次采样`;   // 供给源无 usage → 用总延迟

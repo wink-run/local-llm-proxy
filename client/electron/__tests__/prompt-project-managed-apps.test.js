@@ -24,9 +24,11 @@ function agentIdsFor(resourceId) {
 function withTempDb(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-proj-managed-'));
   localStats.close();
+  mcpManager._seeded = false;
   assert.ok(localStats.init(dir, { force: true }), '测试 DB 应初始化成功');
   try { return fn(); } finally {
     localStats.close();
+    mcpManager._seeded = false;
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }
@@ -38,6 +40,9 @@ test('prompt 可投射到任意已纳管应用（Trae/API），并归一到交�
     const origSync = mcpManager.syncToClients;
     // 纳管集：codex(stdio) / trae-work(中转) / app-x1(API·中转)
     gw.listManagedAppTargetIds = () => new Set(['codex', 'trae-work', 'app-x1']);
+    gw.setAppsGetter(() => [
+      { id: 'app-x1', link_method: 'manual', hosted: true, name: 'x1', draft: false },
+    ]);
     // codex-desktop 归一为 codex；trae-work / app-x1 走中转（自身）；未知 → null
     mcpTargets.resolveMcpSyncClientId = (id) => {
       if (id === 'codex-desktop') return 'codex';
@@ -63,6 +68,7 @@ test('prompt 可投射到任意已纳管应用（Trae/API），并归一到交�
       gw.listManagedAppTargetIds = origManaged;
       mcpTargets.resolveMcpSyncClientId = origResolve;
       mcpManager.syncToClients = origSync;
+      gw.setAppsGetter(null);
     }
   });
 });
@@ -93,5 +99,26 @@ test('skill 仍限 skill-hostable：投到非承载目标(Trae)被拒', () => {
     } finally {
       targets.listManagedResourceAgentIds = origManagedAgents;
     }
+  });
+});
+
+test('unprojectAllForClient 撤掉已删 app-* 上的资源投射', () => {
+  withTempDb(() => {
+    const db = localStats.getDb();
+    const saved = rm.saveResource({
+      type: 'prompt', name: 'gone-app', display_name: 'Gone', description: 't',
+      content: 'hi',
+    });
+    const PID = saved.resource.id;
+    db.prepare('DELETE FROM resource_projections WHERE resource_id = ?').run(PID);
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO resource_projections (id, resource_id, agent_id, scope, projection_type, target_path, created_at)
+      VALUES (?, ?, ?, 'global', 'mcp', '', ?)
+    `).run('proj-gone', PID, 'app-deleted1', now);
+    assert.deepEqual(agentIdsFor(PID), ['app-deleted1']);
+    const r = rm.unprojectAllForClient('app-deleted1');
+    assert.equal(r.count, 1);
+    assert.deepEqual(agentIdsFor(PID), []);
   });
 });

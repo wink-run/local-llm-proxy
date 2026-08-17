@@ -167,13 +167,25 @@ function listGatewayBindClientIds() {
   return listGatewayBindTargets().map((t) => t.id);
 }
 
-/** 是否允许绑定到该 id（含尚未扫到列表的 app-*） */
+/** Gateway 应用 id（app-xxxxxxxx）是否仍在本地 apps 列表（草稿不算） */
+function appClientStillExists(id) {
+  if (typeof id !== 'string' || !/^app-[\w.-]+$/.test(id)) return false;
+  return readLocalApps().some((a) => a && a.id === id && !a.draft);
+}
+
+/** 已从 Gateway 删除的 app-*（中转/投射残留应清掉） */
+function isDeletedAppClientId(id) {
+  return typeof id === 'string' && /^app-[\w.-]+$/.test(id) && !appClientStillExists(id);
+}
+
+/** 是否允许绑定到该 id。已删除的 app-* 不再放行，否则中转残留永远清不掉。 */
 function isAllowedGatewayClientId(id) {
   if (typeof id !== 'string' || !/^[\w.-]{1,64}$/.test(id)) return false;
   if (id === 'api') return true;
+  if (isDeletedAppClientId(id)) return false;
   if (listGatewayBindClientIds().includes(id)) return true;
-  // Gateway 新建的 API 应用 id 形如 app-xxxxxxxx
-  if (/^app-[\w.-]+$/.test(id)) return true;
+  // 仍存在的 API / 手工应用（含尚未进 bindTargets 分组的 api-key）
+  if (appClientStillExists(id)) return true;
   if (listSyncEnabledClientIds().includes(id)) return true;
   // 已纳管应用（含 Trae 等会话应用）：可作内置中转的交付目标 cid
   try { if (listManagedAppTargetIds().has(id)) return true; } catch { /* ignore */ }
@@ -185,6 +197,8 @@ module.exports = {
   setAppsGetter,
   isApiAppRecord,
   isAllowedGatewayClientId,
+  isDeletedAppClientId,
+  appClientStillExists,
   listHostedAgentIds,
   listManagedAppTargetIds,
   listGatewayApiApps,

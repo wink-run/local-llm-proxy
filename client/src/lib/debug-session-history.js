@@ -1,13 +1,13 @@
 /** Debug Agent / LLM 模式：历史会话本地持久化（新会话清空后仍可恢复） */
 
 import { makeT } from '../i18n.js';
+import { serializeImageSrc } from './debug-image-store.js';
 
 const STORAGE_KEY = 'tokenbank.debug.agentSessions';
 const LLM_STORAGE_KEY = 'tokenbank.debug.llmSessions';
 const MAX_PER_AGENT = 40;
 const MAX_LLM = 40;
 const LLM_CHAT_MAX = 200;
-const B64_OMITTED = '__b64_omitted__';
 
 function uiT(key, vars) {
   let lang = 'zh';
@@ -273,11 +273,7 @@ function serializeLlmMessage(msg) {
   if (!Array.isArray(base.images)) return base;
   return {
     ...base,
-    images: base.images.map(src => {
-      if (!src || src === B64_OMITTED) return B64_OMITTED;
-      if (String(src).startsWith('http')) return src;
-      return B64_OMITTED;
-    }),
+    images: base.images.map(serializeImageSrc),
   };
 }
 
@@ -289,11 +285,7 @@ function fingerprintLlmConversation(conversation = []) {
 
 function serializeTurnImages(images) {
   if (!Array.isArray(images)) return undefined;
-  return images.map(src => {
-    if (!src || src === B64_OMITTED) return B64_OMITTED;
-    if (String(src).startsWith('http')) return src;
-    return B64_OMITTED;
-  });
+  return images.map(serializeImageSrc);
 }
 
 function serializeAgentTurn(turn) {

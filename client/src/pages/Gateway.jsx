@@ -11,7 +11,7 @@ import { brandIconFor, resolveBrandIcon } from '../lib/brandIcons';
 import { APP_ICONS, isAppIcon, appIconSvg } from '../lib/appIcons';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
-import RouteSelect, { tierOptgroups } from '../components/RouteSelect';
+import RouteSelect, { tierOptgroups, usableSceneRoutes } from '../components/RouteSelect';
 import {
   encodeTierModelRoute,
   parseRouteBinding,
@@ -22,6 +22,7 @@ import { runStreamChatTest } from '../lib/streamTestLatency';
 import { getNetwork } from '../api/client';
 import { normalizeNetworkPayload, workerInfo, workersForModel } from '../lib/networkModelStats';
 import { buildInvokeText, buildMcpInvokeText } from '../lib/resource-enable';
+import { speedDotClass, statusDotBucket } from '../lib/speed';
 
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
 function modelTierKey(m) {
@@ -1633,8 +1634,7 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
             {/* 手工添加无官方可直连 → 必须绑定 */}
             <option value="" disabled>{t('gateway.app.routeRequired')}</option>
             {(() => {
-              const avail = new Set(availableModels.map(m => m.id));
-              const usable = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
+              const usable = usableSceneRoutes(routes, availableModels);
               return usable.length > 0 && (
                 <optgroup label={t('gateway.app.sceneRoutes')}>
                   {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
@@ -4688,13 +4688,14 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
           const rhFtLabel = rhFt != null ? t('gateway.route.firstToken', { s: (rhFt / 1000).toFixed(1) }) : null;
           // test result overrides health dot (temporary, 6s)
           const dotColor = ts && !ts.busy
-            ? ts.ok ? 'bg-green-500' : 'bg-red-500'
+            ? ts.ok ? speedDotClass('fast') : speedDotClass('fail')
             : rh
-              ? rh.status === 'error' ? 'bg-red-500'
-                : rh.status === 'ok'
-                  ? (rhFt != null && rhFt > 3000 ? 'bg-amber-400' : 'bg-green-500')
-                  : 'bg-zinc-400'
-              : k.is_active ? 'bg-green-500' : 'bg-zinc-400';
+              ? speedDotClass(statusDotBucket({
+                ms: rhFt,
+                failed: rh.status === 'error',
+                ok: rh.status === 'ok',
+              }))
+              : k.is_active ? speedDotClass('fast') : speedDotClass('unknown');
           const dotTitle = ts && !ts.busy
             ? ts.ok
               ? t('gateway.key.testPassed', { latency: ts.latency ? t('gateway.key.testPassedLatency', { ms: ts.latency }) : '' })
@@ -5260,12 +5261,11 @@ export default function Gateway() {
             const _allSteps = [...(route.steps || []), ...(route.rules || []).flatMap(r => r.steps || [])];
             // strategy-only 步无 model，不参与"模型缺失"判定
             const routeMissing = _allSteps.some(s => (s.model || s.label) && !availSet.has(s.model || s.label));
-            const healthDot =
-              routeMissing ? 'bg-red-500' :
-              health.status === 'error' ? 'bg-red-500' :
-              health.status === 'ok'
-                ? (ftMs != null && ftMs > 3000 ? 'bg-amber-400' : 'bg-green-500')
-                : 'bg-zinc-300 dark:bg-zinc-600';
+            const healthDot = speedDotClass(statusDotBucket({
+              ms: ftMs,
+              failed: routeMissing || health.status === 'error',
+              ok: health.status === 'ok',
+            }));
             const ftLabel = ftMs != null ? t('gateway.route.firstToken', { s: (ftMs / 1000).toFixed(1) }) : null;
             const healthTitle =
               routeMissing ? t('gateway.route.missingModels') :
@@ -5292,7 +5292,7 @@ export default function Gateway() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span title={healthTitle} className={`w-2 h-2 rounded-full shrink-0 ${healthDot}`} />
-                    <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{route.scene_name}</span>
+                    <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{route.scene_name}</span>
                     {hasVisionAssist && (
                       <span
                         title={t('gateway.route.visionAssistBadgeHint')}

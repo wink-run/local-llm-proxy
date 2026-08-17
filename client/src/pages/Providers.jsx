@@ -9,11 +9,12 @@ import { loadUserAccounts, saveUserAccounts, syncProviderCatalog } from '../api/
 import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder, inferModalityFromPricing, priceFieldsForModality, healthFromStatus, QualityBadge, fmtCooldownRemain, cooldownMeta } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth, isElectron } from '../api/adapter';
-import { speedDotClass, speedTitle, useSpeedMap, speedFor, bucketFromMs } from '../lib/speed';
+import { speedDotClass, speedTitle, useSpeedMap, speedFor, bucketFromMs, statusDotBucket } from '../lib/speed';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import { resolveModelsForModelView } from '../lib/personalAvailableModels';
 import { buildPersonalModelTypeMap, inferModelTypeFromName } from '../api/gatewayModels';
+import { encodeRoute } from '../lib/route-binding';
 import { avatarColor } from '../components/UserAvatar';
 import McpProvidersTab, { readSupplyTab, saveSupplyTab } from '../components/McpProvidersTab';
 import UsageMeter from '../components/UsageMeter';
@@ -1126,22 +1127,8 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
   const { user } = useAuth();
   const needsLogin = !user;
   const navigate   = useNavigate();
-  const [probing, setProbing] = useState(null);     // null | { done, total }
-  // 全部测速：对有在线节点的模型逐个发探针（走本地网关、真实调用、消耗积分），完后刷新
-  const probeAllSpeed = async () => {
-    if (probing) return;
-    const targets = (modelStats || []).filter(m => m && (m.nodes ?? 0) > 0).map(m => m.name);
-    if (!targets.length) return;
-    setProbing({ done: 0, total: targets.length });
-    for (let i = 0; i < targets.length; i++) {
-      // 带 p2p: 层级前缀探测（与应用"测试"一致：强制走 P2P tier，可靠命中 worker；
-      // 网关按 bare 模型名记速，前端仍按 m.name 命中）。
-      try { await window.electronAPI?.gateway?.probeModel?.('p2p:' + targets[i]); } catch { /* ignore */ }
-      setProbing({ done: i + 1, total: targets.length });
-    }
-    try { await loadNetwork(); } catch { /* ignore */ }   // 即刻重拉 network + 请求历史(速度/服务质量)
-    setProbing(null);
-  };
+  const [probing, setProbing] = useState(null);     // null | { done, total, current }
+  const probeAbortRef = useRef(false);
   const [network,        setNetwork]        = useState(null);
   const [balance,        setBalance]        = useState(null);
   const [loading,        setLoading]        = useState(true);
@@ -1287,11 +1274,69 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
     }
     return byp?.['tokenbank-p2p'] || null;
   };
+  // 折叠卡速度与展开 worker 第一行同源：有我们的探针用探针，否则用最快节点上报
+  function fastestWorkerMs(name) {
+    try {
+      const n = workersForModel(name, network)?.[0]?.last_ttft_ms;
+      return n > 0 ? n : null;
+    } catch { return null; }
+  }
+  function p2pCardSpeed(m) {
+    // 生图不测速：忽略历史 chat 探针的失败，避免红点
+    if (inferModelTypeFromName(m?.name) === 'image') {
+      return { ms: null, failed: false, ok: false, skipped: true };
+    }
+    const row = commRow(m?.name);
+    const code = row?.last_status_code ?? null;
+    const failed = code != null && (code < 200 || code >= 300);
+    const localMs = !failed && (row?.last_ttft_ms > 0 ? row.last_ttft_ms : (row?.avg_ttft_ms > 0 ? row.avg_ttft_ms : null));
+    const netMs = fastestWorkerMs(m?.name);
+    if (failed && !(localMs > 0)) return { ms: null, failed: true, ok: false };
+    if (localMs > 0) return { ms: localMs, failed: false, ok: true };
+    return { ms: netMs > 0 ? netMs : null, failed: false, ok: false };
+  }
   // 按网络速度(最快 worker 的 ttft)升序排；无节点排后面。与折叠点/worker 点同源。
   const sortedModelStats = React.useMemo(() => {
     const spd = (m) => (m.minLatency > 0 ? m.minLatency : 9e9);
     return [...modelStats].sort((a, b) => spd(a) - spd(b));
   }, [modelStats]);
+  // 探针顺序跟网格一致；生图跳过
+  const orderedProbeTargets = React.useMemo(() => (
+    (sortedModelStats || [])
+      .filter(m => m && (m.nodes ?? 0) > 0 && inferModelTypeFromName(m.name) !== 'image')
+      .map(m => m.name)
+  ), [sortedModelStats]);
+
+  const refreshP2pLatency = async () => {
+    try {
+      const map = await getGateway().getModelProviderLatency(7);
+      if (map && typeof map === 'object') setLatencyMap({ ...map });
+    } catch { /* 网关未就绪时忽略 */ }
+  };
+
+  const probeAllSpeed = async () => {
+    if (probing) return;
+    const targets = orderedProbeTargets;
+    if (!targets.length) return;
+    probeAbortRef.current = false;
+    setProbing({ done: 0, total: targets.length, current: targets[0] });
+    for (let i = 0; i < targets.length; i++) {
+      if (probeAbortRef.current) break;
+      setProbing({ done: i, total: targets.length, current: targets[i] });
+      // p2p: 前缀强制走社区层；网关按裸名记速
+      try { await window.electronAPI?.gateway?.probeModel?.('p2p:' + targets[i]); } catch { /* ignore */ }
+      try { await refreshP2pLatency(); } catch { /* ignore */ }
+      if (probeAbortRef.current) break;
+      setProbing({ done: i + 1, total: targets.length, current: targets[i + 1] || null });
+    }
+    try { await refreshP2pLatency(); } catch { /* ignore */ }
+    if (!probeAbortRef.current) setProbing(null);
+    probeAbortRef.current = false;
+  };
+  const cancelProbe = () => {
+    probeAbortRef.current = true;
+    setProbing(null);
+  };
 
   const totalNodes = network?.summary?.online_workers ?? 0;
 
@@ -1308,10 +1353,7 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
     const MAX_SHOW = 5;
     const shown = nodes.slice(0, MAX_SHOW);
     const overflow = total > MAX_SHOW;
-    // 折叠行默认展示最快节点的首 token 延迟
-    const fastMs = m.minLatency > 0
-      ? m.minLatency
-      : (m.latencyCount > 0 ? m.totalLatency / m.latencyCount : null);
+    const { ms: fastMs, failed } = p2pCardSpeed(m);
 
     return (
       <span className="inline-flex items-center gap-1 min-w-0">
@@ -1336,11 +1378,11 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
             {t('providers.p2p.nodesTotal', { n: total })}
           </span>
         )}
-        {fastMs != null ? (
+        {fastMs != null && !failed ? (
           <span className="text-zinc-500 text-[10px] tabular-nums shrink-0">
             · {t('providers.p2p.ttftShort', { s: (fastMs / 1000).toFixed(1) })}
           </span>
-        ) : (
+        ) : failed ? null : (
           <span className="text-green-600 dark:text-green-400 text-[10px] shrink-0">{t('providers.p2p.idle')}</span>
         )}
         {(() => {
@@ -1385,18 +1427,24 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
       return <p className="text-[10px] text-zinc-500 py-0.5">{t('providers.p2p.noProviderNodes')}</p>;
     }
     // 服务质量：来自我们请求历史的模型级(tokenbank-p2p)，服务端暂不分 worker，故同模型各 worker 同值。
-    const mr = commRow(modelName);
+    const skipped = inferModelTypeFromName(modelName) === 'image';
+    const mr = skipped ? null : commRow(modelName);
     const mHealth = mr?.last_status_code == null ? null : healthFromStatus(mr.last_status_code);
+    const cardSpd = p2pCardSpeed({ name: modelName });
     // 每行：速度点+ms+城市 · 忙闲点+文字 · 质量点+文字 · 流量。文字不着色。
     return (<>
       {nodes.map((w, i) => {
         const cd = workerCd(modelName, w.sharer);   // 钉选该 worker 且在冷却
+        // 有我们的测速时与折叠行同一数字；否则各节点用自己上报的 TTFT
+        const ms = skipped ? w.last_ttft_ms
+          : ((cardSpd.ok && cardSpd.ms > 0) ? cardSpd.ms : w.last_ttft_ms);
+        const failed = skipped ? false : cardSpd.failed;
         return (
         <div key={`${w.worker_id || w.name || 'node'}:${i}`}
           className={`flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400 ${cd ? 'opacity-60' : ''}`}>
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(w.last_ttft_ms))}`} title="速度(节点上报)" />
-            <span className="shrink-0 tabular-nums">{Math.round(w.last_ttft_ms || 0)}ms</span>
+            <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(statusDotBucket({ ms, failed, ok: !failed && ms > 0 }))}`} title="速度" />
+            <span className="shrink-0 tabular-nums">{ms > 0 ? `${(ms / 1000).toFixed(1)}s` : '—'}</span>
             <span className="truncate text-zinc-700 dark:text-zinc-300">{w.name}</span>
             {w.geo?.city && <span className="truncate text-zinc-400">· {w.geo.city}</span>}
             {cooldownMark(cd)}
@@ -1461,8 +1509,8 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
             {t('providers.p2p.modelsTitle', { n: modelStats.length })} <span className="text-zinc-700">{t('providers.p2p.modelsSub')}</span>
           </span>
           <div className="flex items-center gap-2 shrink-0">
-            <button onClick={probeAllSpeed} disabled={!!probing || modelStats.length === 0}
-              title={t('providers.probe.titleP2p')}
+            <button onClick={probing ? cancelProbe : probeAllSpeed} disabled={!probing && orderedProbeTargets.length === 0}
+              title={probing ? t('providers.probe.cancelHint') : t('providers.probe.titleP2p')}
               className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50 flex items-center gap-1 whitespace-nowrap">
               {probing ? t('providers.probe.running', { done: probing.done, total: probing.total }) : t('providers.probe.all')}
             </button>
@@ -1491,11 +1539,14 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
                       {(() => {
-                        // 折叠点：速度=最快 worker 的网络 ttft(与展开 worker 同源，颜色一致);服务质量在展开每个 worker 上
                         const online = m.nodes > 0;
-                        const ms = m.minLatency > 0 ? m.minLatency : (m.latencyCount > 0 ? m.totalLatency / m.latencyCount : null);
-                        return <span className={`w-2 h-2 rounded-full shrink-0 ${online ? speedDotClass(bucketFromMs(ms)) : 'bg-zinc-300 dark:bg-zinc-600'}`}
-                          title={online ? (ms ? `最快 ${Math.round(ms)}ms` : '暂无速度') : t('providers.p2p.unavailable')} />;
+                        const probingThis = !!(probing?.current && probing.current === m.name);
+                        const { ms, failed, ok, skipped } = p2pCardSpeed(m);
+                        const bucket = probingThis ? 'fast' : skipped ? 'unknown' : statusDotBucket({ ms, failed, ok: ok && !!ms });
+                        return <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${!online ? 'bg-zinc-300 dark:bg-zinc-600' : probingThis ? 'bg-green-400 tb-probe-pulse' : speedDotClass(bucket)}`}
+                          title={probingThis ? '测速中' : (!online ? t('providers.p2p.unavailable') : (skipped ? t('providers.probe.skipImage') : (failed ? '最近请求失败' : (ms ? `最快 ${(ms / 1000).toFixed(1)}s` : '暂无速度'))))}
+                        />;
                       })()}
                       <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
                       {circleModelMap?.[m.name] && (
@@ -4151,17 +4202,20 @@ export default function Providers() {
       ),
     }];
   }), [accountInstances, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent]);
-  // 个人源「全部测速」目标：每个模型带 tier 前缀（paid:/free:）强制路由到个人源而非 p2p；按 tier:model 去重
+  // 个人源「全部测速」：每个账户×模型钉 provider，避免同模型多账户只打中其中一个（展开会显示「无请求」）
   const personalProbeTargets = useMemo(() => {
     const seen = new Set(); const out = [];
     for (const inst of modelViewInstances) {
       const prov = inst.gateway_id ? providers.find(p => p.id === inst.gateway_id) : null;
       const tier = prov?.type === 'free' ? 'free' : 'paid';
+      const provider = inst.gateway_id || undefined;
       for (const m of (inst.models || [])) {
-        const name = typeof m === 'string' ? m : (m?.name || m?.id);
+        const name = typeof m === 'string' ? m.trim() : String(m?.name || m?.id || '').trim();
         if (!name) continue;
-        const key = `${tier}:${name}`;
-        if (seen.has(key)) continue;
+        const explicit = typeof m === 'object' ? (m.type || m.modality) : null;
+        if (explicit === 'image' || inferModelTypeFromName(name) === 'image') continue;
+        const key = encodeRoute({ tier, provider, model: name });
+        if (!key || seen.has(key)) continue;
         seen.add(key); out.push(key);
       }
     }

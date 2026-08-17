@@ -253,3 +253,17 @@ test('list 时合并旧版每轮重复残留', () => {
   assert.equal(list[0].turnCount, 3);
   assert.equal(list[0].id, 'h3');
 });
+
+test('LLM 会话保留 tbimg 引用，丢掉裸 base64', () => {
+  global.localStorage = mockLocalStorage();
+  H.saveLlmSessionSnapshot({
+    conversation: [
+      { role: 'user', content: '画一只猫' },
+      { role: 'assistant', images: ['tbimg:abc', 'https://cdn.example/a.png', 'data:image/png;base64,AAAA'] },
+    ],
+    imageMode: true,
+  });
+  const list = H.listLlmSessionSnapshots();
+  assert.equal(list.length, 1);
+  assert.deepEqual(list[0].conversation[1].images, ['tbimg:abc', 'https://cdn.example/a.png', '__b64_omitted__']);
+});

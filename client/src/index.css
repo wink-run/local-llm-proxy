@@ -994,12 +994,21 @@
   body {
     transition: none;
   }
-  /* Tailwind 无限动画：保留可读状态，去掉运动 */
+  /* Tailwind 无限动画：保留可读状态，去掉运动。测速点 .tb-probe-pulse 是状态反馈，不关。 */
   .animate-ping,
   .animate-pulse,
   .animate-spin {
     animation: none !important;
   }
+}
+
+/* 测速中绿点：opacity + 光晕，不依赖 animate-ping（系统减弱动态效果会禁用它） */
+@keyframes tb-probe-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgb(74 222 128 / 0.9); }
+  50% { opacity: 0.25; box-shadow: 0 0 0 6px rgb(74 222 128 / 0); }
+}
+.tb-probe-pulse {
+  animation: tb-probe-pulse 0.75s ease-in-out infinite;
 }
 
 @keyframes tb-fade {

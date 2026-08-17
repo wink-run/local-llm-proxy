@@ -15,6 +15,7 @@ import { MarkdownContent, StreamMarkdownContent, PathLink } from './RichMediaCon
 import { useLang } from '../store/lang';
 import { usePinBottomScroll } from '../lib/use-pin-bottom-scroll';
 import { closePendingToolSteps, hasOpenToolCalls } from '../lib/debug-agent-store';
+import { ResolvedDebugImage } from './ResolvedDebugImage';
 
 /** 启动/Hook 类系统事件：只进「正在执行」细节，不单独占卡片 */
 function isEphemeralSystemEvent(ev) {
@@ -1573,16 +1574,13 @@ export default function ExecutionLog({
                           </span>
                         );
                       }
-                      const imgSrc = src.startsWith('data:') || src.startsWith('http') || src.startsWith('file:')
-                        ? src
-                        : `data:image/png;base64,${src}`;
                       return (
-                        <img
+                        <ResolvedDebugImage
                           key={j}
-                          src={imgSrc}
+                          src={src}
                           alt={`attach-${j}`}
                           className="h-20 max-w-[12rem] object-cover rounded-lg cursor-zoom-in border border-white/20"
-                          onClick={() => (onPreviewImage ? onPreviewImage(imgSrc) : undefined)}
+                          onClick={onPreviewImage}
                         />
                       );
                     })}

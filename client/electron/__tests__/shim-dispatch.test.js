@@ -41,6 +41,7 @@ test('多账号：选账号在探活门之外；直连实例 unset 网关；路�
 test('单实例（无 dispatch）：不含目录分发 case，结构不变', { skip: WIN }, () => {
   const txt = gen([], { ANTHROPIC_BASE_URL: 'http://127.0.0.1:11430', ANTHROPIC_AUTH_TOKEN: 'sk-x' }, {});
   assert.ok(!txt.includes('case "$PWD/"'), '单实例不应有目录分发 case');
+  assert.match(txt, /_TB_GW_CACHE=/);
   assert.match(txt, /if curl -s -o \/dev\/null -m 1 "http:\/\/127\.0\.0\.1:11430\/health" 2>\/dev\/null; then/);
   assert.match(txt, /export ANTHROPIC_BASE_URL="http:\/\/127\.0\.0\.1:11430"/);
 });
@@ -56,6 +57,37 @@ test('直连态但默认路由：TokenBank 关着时（探活失败）仍已切�
   const caseLine = lines.findIndex(l => l.includes('/h/code/'));
   const ifLine = lines.findIndex(l => l.includes('if curl'));
   assert.ok(caseLine >= 0 && ifLine >= 0 && caseLine < ifLine, '选账号必须在探活 if 之前');
+});
+
+test('writeShim 拒绝 realPath 指向 shim 自身', { skip: WIN }, () => {
+  const own = require('path').join(shim.paths.BIN_DIR, CMD);
+  assert.throws(() => shim.writeShim(CMD, own, { ANTHROPIC_BASE_URL: 'http://127.0.0.1:11430' }), /自身/);
+});
+
+test('resolveRealCommand 不返回 BIN_DIR 里的 shim', { skip: WIN }, () => {
+  const path = require('path');
+  const os = require('os');
+  const cmd = '__tb_resolve_self_test__';
+  const own = path.join(shim.paths.BIN_DIR, cmd);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-shim-real-'));
+  const real = path.join(tmp, cmd);
+  fs.mkdirSync(shim.paths.BIN_DIR, { recursive: true });
+  fs.writeFileSync(own, '#!/bin/sh\necho shim\n');
+  fs.chmodSync(own, 0o755);
+  fs.writeFileSync(real, '#!/bin/sh\necho real\n');
+  fs.chmodSync(real, 0o755);
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${shim.paths.BIN_DIR}:${tmp}:${prevPath || ''}`;
+  shim.clearCommandCache(cmd);
+  try {
+    const got = shim.resolveRealCommand(cmd);
+    assert.equal(got, real, `应落到真命令而非 shim，实际=${got}`);
+  } finally {
+    process.env.PATH = prevPath;
+    shim.clearCommandCache(cmd);
+    try { fs.unlinkSync(own); } catch {}
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+  }
 });
 
 test('默认直连(defaultDirect)：未匹配目录时兜底 *) unset 网关 env；默认路由则无兜底', { skip: WIN }, () => {

@@ -1291,9 +1291,8 @@ function lookupModelTtft(modelId) {
 function ttftBucket(ms) {
   const v = Number(ms);
   if (!Number.isFinite(v) || v <= 0) return 'unknown';
-  if (v > 2500) return 'slow';
-  if (v < 800) return 'fast';
-  return 'medium';
+  if (v > 4000) return 'slow';
+  return 'fast';
 }
 
 function formatTtftLabel(lang, ttftMs) {
@@ -5072,9 +5071,25 @@ function registerIPC() {
   });
 
   ipcMain.handle('apps:delete', (_e, id) => {
-    const apps = getApps().filter(a => a.id !== id);
-    saveApps(apps);
+    const apps = getApps();
+    const doomed = apps.find(a => a.id === id);
+    const remaining = apps.filter(a => a.id !== id);
+    saveApps(remaining);
     try { syncGatewayFromConfig(readLocalConfig()); } catch {}
+    // 删除应用后同步解除 MCP 写盘投射、中转、资源投射，避免 MCP 页仍显示已删的「New app」
+    const leftoverIds = [id];
+    const agentId = doomed?.agent_id || doomed?.preset_id;
+    if (agentId && !remaining.some(a => a.agent_id === agentId || a.preset_id === agentId)) {
+      leftoverIds.push(agentId);
+    }
+    for (const cid of leftoverIds) {
+      try { require('./mcp-manager').unbindClient(cid); } catch (e) {
+        console.warn('[apps:delete] mcp unbind:', e.message);
+      }
+      try { require('./resource-manager').unprojectAllForClient(cid); } catch (e) {
+        console.warn('[apps:delete] resource unproject:', e.message);
+      }
+    }
     return { ok: true };
   });
 
@@ -5775,8 +5790,8 @@ function registerIPC() {
   }, 60_000);
 }
 
-// 主动测速探针：向本地网关发一次极小流式请求，网关在流结束时 record 记速。
-// 同时在客户端侧捕获首包时间 → firstTokenMs（托盘展示用）。
+// 主动测速探针：向本地网关发一次极小请求，网关在结束时 record 记速。
+// chat 走流式 /v1/chat/completions 并捕获首包 → firstTokenMs；嵌入走 /v1/embeddings（非流式，总延迟当测速点）。
 // gateway:probeModel IPC 与「启动自动测速」共用。
 function probeModelViaGateway(model) {
   return new Promise((resolve) => {
@@ -5790,21 +5805,35 @@ function probeModelViaGateway(model) {
       // 客户端不能拨 0.0.0.0/::（监听地址≠可连接地址）：macOS/Linux 内核会兜到回环，Windows 直接
       // WSAEADDRNOTAVAIL 失败 → 探针在 Windows 上永远拿不到数据。统一回退回环。
       const host = (!rawHost || rawHost === '0.0.0.0' || rawHost === '::' || rawHost === '*') ? '127.0.0.1' : rawHost;
-      const payload = JSON.stringify({ model, max_tokens: 12, stream: true, messages: [{ role: 'user', content: 'hi' }] });
+
+      let isEmbed = false;
+      try {
+        const { parseRoute } = require('../shared/route-binding');
+        const { inferModelTypeFromName } = require('./models-mcp');
+        const pr = parseRoute(model);
+        const type = inferModelTypeFromName(pr.model || model);
+        // 生图测一次就要真出图，耗时长且计费，测速直接跳过
+        if (type === 'image') return resolve({ ok: true, skipped: 'image' });
+        isEmbed = type === 'embedding';
+      } catch { /* 推断失败则按 chat */ }
+
+      const payload = JSON.stringify(isEmbed
+        ? { model, input: 'hi' }
+        : { model, max_tokens: 12, stream: true, messages: [{ role: 'user', content: 'hi' }] });
       const start = Date.now();
       let firstTokenMs = null;
       let buf = '';
       const req = http.request({
         host, port: parseInt(portStr, 10) || 11430,
-        path: '/v1/chat/completions', method: 'POST',
+        path: isEmbed ? '/v1/embeddings' : '/v1/chat/completions', method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`, 'Content-Length': Buffer.byteLength(payload) },
         timeout: 30000,
       }, (res) => {
         res.on('data', (chunk) => {
-          // 必须读完流，网关才会在流结束时 record 记速
+          // 必须读完流，网关才会在结束时 record 记速
           const text = chunk.toString();
           buf += text;
-          if (firstTokenMs != null) return;
+          if (isEmbed || firstTokenMs != null) return;
           // 首 token：SSE 里出现 content/text 增量，或首个 data:{...} 事件
           if (/"(?:content|text)"\s*:\s*"[^"]/.test(buf)
             || /"delta"\s*:\s*\{[^}]*"(?:content|text)"/.test(buf)
@@ -5812,12 +5841,16 @@ function probeModelViaGateway(model) {
             firstTokenMs = Date.now() - start;
           }
         });
-        res.on('end', () => resolve({
-          ok: res.statusCode < 400,
-          status: res.statusCode,
-          latencyMs: Date.now() - start,
-          firstTokenMs: firstTokenMs != null ? firstTokenMs : null,
-        }));
+        res.on('end', () => {
+          const latencyMs = Date.now() - start;
+          const ok = res.statusCode < 400;
+          resolve({
+            ok,
+            status: res.statusCode,
+            latencyMs,
+            firstTokenMs: isEmbed ? (ok ? latencyMs : null) : (firstTokenMs != null ? firstTokenMs : null),
+          });
+        });
         res.on('error', () => resolve({ ok: false, error: 'stream-error' }));
       });
       req.on('error', (e) => resolve({ ok: false, error: e.message }));

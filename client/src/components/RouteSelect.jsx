@@ -34,10 +34,32 @@ function modelTierKey(m) {
   return encodeTierModelRoute(m.tier, m.id);
 }
 
+function sceneRouteAllSteps(route) {
+  return [...(route?.steps || []), ...(route?.rules || []).flatMap(r => r.steps || [])];
+}
+
+/** 钉死模型在本地不可用 → 与场景路由列表「需重新设置」同口径 */
+function sceneRouteNeedsReset(route, avail) {
+  return sceneRouteAllSteps(route).some(s => (s.model || s.label) && !avail.has(s.model || s.label));
+}
+
+function isUsableSceneRoute(route, avail) {
+  if (sceneRouteNeedsReset(route, avail)) return false;
+  if (route.strategy || route.flow) return true;
+  return sceneRouteAllSteps(route).some(s =>
+    s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)
+  );
+}
+
+/** 可绑到应用的场景路由（排除需重新设置的） */
+export function usableSceneRoutes(routes, availableModels) {
+  const avail = new Set((availableModels || []).map(m => m.id || m.name));
+  return (routes || []).filter(r => isUsableSceneRoute(r, avail));
+}
+
 /** 场景路由 + 模型分层选项（供其他原生 <select> 复用） */
 export function routeSelectChildren({ routes, availableModels, t, showOfficial, showGatewayRoutes, isManual }) {
-  const avail = new Set((availableModels || []).map(m => m.id));
-  const usable = (routes || []).filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
+  const usable = usableSceneRoutes(routes, availableModels);
   const showRoutes = showGatewayRoutes !== false;
   return (
     <>
@@ -73,8 +95,7 @@ function buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, is
   }
   if (showGatewayRoutes === false) return items;
 
-  const avail = new Set((availableModels || []).map(m => m.id));
-  const usable = (routes || []).filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
+  const usable = usableSceneRoutes(routes, availableModels);
   if (usable.length) {
     items.push({ kind: 'group', label: t('gateway.app.sceneRoutes') });
     for (const r of usable) {

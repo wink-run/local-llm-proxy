@@ -1,7 +1,7 @@
 'use strict';
-// 每个模型的测速：TTFT（首字延迟，ms）+ 输出 TPS（tokens/秒），EWMA 平滑，分 fast/medium/slow。
+// 每个模型的测速：TTFT（首字延迟，ms）+ 输出 TPS（tokens/秒），EWMA 平滑。
+// 圆点配色只看耗时：失败红（前端另标）/ >4s 黄 / <4s 绿 / 无数据灰。
 // 数据来自网关真实转发/主动探针；持久化到 ~/.tokenbank/gateway-speed.json，重启不丢。
-// 说明：不用"总延迟"直接判快慢——它被输出长度带偏；改用与长度无关的 TTFT + TPS，两者都测不出时才用总延迟兜底。
 
 const fs   = require('fs');
 const os   = require('os');
@@ -10,11 +10,10 @@ const path = require('path');
 const ALPHA = 0.3;          // EWMA 平滑系数（与延迟统计一致）
 const MIN_SAMPLES = 1;      // 1 次即出结论（主动测速一次探针即可上色；被动流量后续 EWMA 细化）
 
-// 经验阈值（可调）：TTFT 毫秒、TPS tokens/秒
-const TTFT_FAST = 800,  TTFT_SLOW = 2500;
+// 与前端 src/lib/speed.js SLOW_MS 一致：>4s 慢(黄)，否则快(绿)
+const TTFT_FAST = 4000, TTFT_SLOW = 4000;
 const TPS_FAST  = 30,   TPS_SLOW  = 12;
-// 总延迟兜底阈值（当供给源不返回 usage/不流式、TTFT/TPS 都测不出时用；针对小探针的往返 ms）
-const LAT_FAST  = 1500, LAT_SLOW  = 5000;
+const LAT_FAST  = 4000, LAT_SLOW  = 4000;
 
 const _map = new Map();     // 归一化 modelId 或 modelId@providerId → { ttft, tps, lat, samples, ts }
 
@@ -130,22 +129,13 @@ function seedIfMissing(rawModel) {
   return true;
 }
 
-/** 由 TTFT/TPS 判快慢（细粒度优先）；两者都测不出时用总延迟兜底（对标 OmniRoute/9router 的 latency）。 */
+/** 圆点只按耗时：>4s 慢，否则快。TPS 不再改颜色。 */
 function bucketOf(ttft, tps, lat) {
-  if (ttft == null && tps == null) {
-    // 细粒度都没有 → 用总往返延迟兜底
-    if (lat == null) return 'unknown';
-    if (lat > LAT_SLOW) return 'slow';
-    if (lat < LAT_FAST) return 'fast';
-    return 'medium';
-  }
-  const ttftSlow = ttft != null && ttft > TTFT_SLOW;
-  const tpsSlow  = tps  != null && tps  < TPS_SLOW;
-  if (ttftSlow || tpsSlow) return 'slow';
-  const ttftFast = ttft == null || ttft < TTFT_FAST;
-  const tpsFast  = tps  == null || tps  > TPS_FAST;
-  if (ttftFast && tpsFast) return 'fast';
-  return 'medium';
+  const ms = ttft != null ? ttft : lat;
+  if (ms == null) return 'unknown';
+  if (ms > TTFT_SLOW) return 'slow';
+  if (ms > 0) return 'fast';
+  return 'unknown';
 }
 
 /** 返回 { [modelId]: { ttft_ms, tps, samples, bucket, ts } }（仅模型级，不含 @provider 分源键） */

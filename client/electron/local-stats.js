@@ -1087,28 +1087,26 @@ function queryModelProviderLatency(since) {
       'SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END) AS success ' +
       'FROM requests WHERE ts >= ? AND model IS NOT NULL AND provider_id IS NOT NULL ' +
       "AND data_source = 'proxy' " +
+      'AND status_code >= 200 AND status_code < 300 ' +
       'AND COALESCE(first_token_ms, latency_ms) IS NOT NULL ' +
       'AND COALESCE(first_token_ms, latency_ms) > 0 ' +
       'GROUP BY model, provider_id'
     ).all(since);
 
-    // 按 MAX(ts) 取每个 model+provider 最近一次请求的首 token + 总延迟
+    // 最近一次请求含失败（404 等）：个人源展开要显示「失败」，不能只看有 TTFT 的成功行
     const lastRows = db.prepare(
       'SELECT r.model, r.provider_id, ' +
-      'COALESCE(r.first_token_ms, r.latency_ms) AS last_ttft_ms, ' +
+      'CASE WHEN r.status_code >= 200 AND r.status_code < 300 ' +
+      '  THEN COALESCE(r.first_token_ms, r.latency_ms) ELSE NULL END AS last_ttft_ms, ' +
       'r.latency_ms AS last_latency_ms, r.ts AS last_ts, r.status_code AS last_status_code ' +
       'FROM requests r INNER JOIN (' +
       '  SELECT model, provider_id, MAX(ts) AS max_ts FROM requests ' +
       '  WHERE ts >= ? AND model IS NOT NULL AND provider_id IS NOT NULL ' +
       "  AND data_source = 'proxy' " +
-      '  AND COALESCE(first_token_ms, latency_ms) IS NOT NULL ' +
-      '  AND COALESCE(first_token_ms, latency_ms) > 0 ' +
       '  GROUP BY model, provider_id' +
       ') latest ON r.model = latest.model AND r.provider_id = latest.provider_id AND r.ts = latest.max_ts ' +
       'WHERE r.ts >= ? AND r.model IS NOT NULL AND r.provider_id IS NOT NULL ' +
-      "AND r.data_source = 'proxy' " +
-      'AND COALESCE(r.first_token_ms, r.latency_ms) IS NOT NULL ' +
-      'AND COALESCE(r.first_token_ms, r.latency_ms) > 0'
+      "AND r.data_source = 'proxy'"
     ).all(since, since);
 
     const out = {};

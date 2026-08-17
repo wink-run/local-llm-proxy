@@ -78,5 +78,6 @@ test('tb_resolve_model: skill 硬编码模型不存在 → 切换同模态可用
 test('inferModelTypeFromName 识别 image / embedding', () => {
   assert.equal(mcp.inferModelTypeFromName('gpt-image-2'), 'image');
   assert.equal(mcp.inferModelTypeFromName('text-embedding-3-large'), 'embedding');
+  assert.equal(mcp.inferModelTypeFromName('doubao-embedding-vision'), 'embedding');
   assert.equal(mcp.inferModelTypeFromName('claude-sonnet-4'), 'chat');
 });

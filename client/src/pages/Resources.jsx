@@ -186,6 +186,31 @@ function sourceLabel(source, t) {
   return source;
 }
 
+function resourceKind(item) {
+  let kind = String(item?.type || 'skill').trim().toLowerCase();
+  if (kind === 'agent') kind = 'assistant';
+  return kind;
+}
+
+/** 本机资产是否已由用户推送到社区（本地标记，或目录里的用户推荐条目） */
+function isPushedToCommunity(item, catalog) {
+  if (!item) return false;
+  const meta = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+  if (meta.community_recommended) return true;
+  const ownId = String(meta.community_catalog_id || '').trim();
+  const name = String(item.name || '').trim().toLowerCase();
+  const type = resourceKind(item);
+  return (catalog || []).some((c) => {
+    if (resourceKind(c) !== type) return false;
+    const cid = String(c.catalogId || c.catalog_id || '').trim();
+    const cm = c.metadata && typeof c.metadata === 'object' ? c.metadata : {};
+    const isUserRec = !!(cm.user_recommended || cid.startsWith('user-'));
+    if (!isUserRec) return false;
+    if (ownId && cid && ownId === cid) return true;
+    return !!name && String(c.name || '').trim().toLowerCase() === name;
+  });
+}
+
 /** 提示词模版用途：文本对话 / 图像生成（存 metadata.promptKind） */
 function promptKindOf(resource) {
   return resource?.metadata?.promptKind === 'image' ? 'image' : 'text';
@@ -1107,7 +1132,10 @@ export default function Resources() {
       }
     }
     const busyKey = `rec-${managed?.id || resourceLike?.resourceId || name}`;
-    if (!window.confirm(t('resources.recommendConfirm', { name }))) return;
+    const alreadyPushed = isPushedToCommunity(managed || resourceLike, catalog);
+    if (!window.confirm(alreadyPushed
+      ? t('resources.recommendAgainConfirm', { name })
+      : t('resources.recommendConfirm', { name }))) return;
     setBusy(busyKey);
     setError('');
     setMsg('');
@@ -1146,6 +1174,27 @@ export default function Resources() {
         try {
           await window.electronAPI.resource.upsertCommunitySkill?.({ item: data.item });
         } catch { /* ignore */ }
+      }
+      // 本机打上「已推送」，刷新后仍能识别
+      const catalogId = String(data?.item?.catalog_id || data?.item?.catalogId || '').trim();
+      if (managed?.id && window.electronAPI?.resource?.saveResource) {
+        try {
+          const saved = await window.electronAPI.resource.saveResource({
+            id: managed.id,
+            type: rtype,
+            name: managed.name || name,
+            display_name: managed.display_name || name,
+            description: managed.description || description,
+            content: managed.content || content,
+            metadata: {
+              ...(managed.metadata || {}),
+              community_recommended: true,
+              community_catalog_id: catalogId || undefined,
+              community_recommended_at: Date.now(),
+            },
+          });
+          if (saved?.success && saved.resource) upsertResourceLocally(saved.resource);
+        } catch { /* 标记失败不阻断推荐结果 */ }
       }
       try {
         await window.electronAPI.resource.syncCommunityCatalog?.();
@@ -2463,9 +2512,15 @@ export default function Resources() {
               disabled={!!busy && busy !== `rec-${item.resourceId}` && busy !== item.resourceId}
               onClick={() => handleRecommendToCommunity(item)}
               className={ASSET_BTN_GHOST}
-              title={t('resources.recommendHint')}
+              title={isPushedToCommunity(item, catalog) || isPushedToCommunity(resourcesById.get(item.resourceId), catalog)
+                ? t('resources.pushedCommunityHint')
+                : t('resources.recommendHint')}
             >
-              {busy === `rec-${item.resourceId}` ? t('resources.busy') : t('resources.recommendCommunity')}
+              {busy === `rec-${item.resourceId}`
+                ? t('resources.busy')
+                : (isPushedToCommunity(item, catalog) || isPushedToCommunity(resourcesById.get(item.resourceId), catalog)
+                  ? t('resources.pushedCommunity')
+                  : t('resources.recommendCommunity'))}
             </button>
             <button
               type="button"
@@ -2721,9 +2776,15 @@ export default function Resources() {
                 className={ASSET_BTN_GHOST}
                 disabled={!!busy && busy !== `rec-${resource.id}`}
                 onClick={() => handleRecommendToCommunity(resource)}
-                title={t('resources.recommendHint')}
+                title={isPushedToCommunity(resource, catalog)
+                  ? t('resources.pushedCommunityHint')
+                  : t('resources.recommendHint')}
               >
-                {busy === `rec-${resource.id}` ? t('resources.busy') : t('resources.recommendCommunity')}
+                {busy === `rec-${resource.id}`
+                  ? t('resources.busy')
+                  : (isPushedToCommunity(resource, catalog)
+                    ? t('resources.pushedCommunity')
+                    : t('resources.recommendCommunity'))}
               </button>
             )}
             <button

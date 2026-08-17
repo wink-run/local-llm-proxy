@@ -14,9 +14,11 @@ const gw = require('../mcp-gateway-targets');
 function withDb(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-relay-'));
   localStats.close();
+  mcpManager._seeded = false;
   assert.ok(localStats.init(dir, { force: true }));
   try { return fn(); } finally {
     localStats.close();
+    mcpManager._seeded = false;
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }
@@ -52,7 +54,69 @@ test('resolveGatewaySpawnConfig：空 cid → 通用（TB_CLIENT_ID 为空）', 
   });
 });
 
-test('isAllowedGatewayClientId：非法 id 仍拒绝（白名单未放开一切）', () => {
+test('isAllowedGatewayClientId：非法 id 拒绝；已删除的 app-* 不再放行', () => {
   assert.equal(gw.isAllowedGatewayClientId('这不是合法id!!'), false);
-  assert.equal(gw.isAllowedGatewayClientId('app-abc123'), true); // API 应用形态放行
+  gw.setAppsGetter(() => []);
+  assert.equal(gw.isAllowedGatewayClientId('app-abc123'), false);
+  gw.setAppsGetter(() => [{ id: 'app-abc123', link_method: 'manual', name: 'demo', draft: false }]);
+  assert.equal(gw.isAllowedGatewayClientId('app-abc123'), true);
+  gw.setAppsGetter(null);
+});
+
+test('unbindClient 清掉已删应用的中转与投射', () => {
+  withDb(() => {
+    const origSync = mcpManager.syncToClients;
+    mcpManager.syncToClients = () => ({ success: true, results: [] });
+    try {
+      mcpManager.init();
+      const db = localStats.getDb();
+      const now = Date.now();
+      for (const id of ['tokenbank-models', 'tokenbank-prompts', 'tokenbank-resources']) {
+        const row = db.prepare('SELECT metadata FROM mcp_servers WHERE id = ?').get(id);
+        const meta = JSON.parse(row.metadata || '{}');
+        meta.gateway_clients = ['api', 'app-deadbeef'];
+        meta.gateway_routed = true;
+        meta.sync_clients = ['cursor', 'app-deadbeef'];
+        db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
+          .run(JSON.stringify(meta), now, id);
+      }
+      const r = mcpManager.unbindClient('app-deadbeef');
+      assert.ok(r.updated >= 1);
+      for (const id of ['tokenbank-models', 'tokenbank-prompts', 'tokenbank-resources']) {
+        const s = mcpManager.getServer(id);
+        assert.ok(!(s.gateway_clients || []).includes('app-deadbeef'), id);
+        assert.ok(!(s.sync_clients || []).includes('app-deadbeef'), id);
+        assert.ok((s.gateway_clients || []).includes('api'), id);
+      }
+    } finally {
+      mcpManager.syncToClients = origSync;
+    }
+  });
+});
+
+test('pruneStaleDeletedAppBindings 清掉列表里已不存在的 app-*', () => {
+  withDb(() => {
+    const origSync = mcpManager.syncToClients;
+    mcpManager.syncToClients = () => ({ success: true, results: [] });
+    gw.setAppsGetter(() => []);
+    try {
+      mcpManager.init();
+      const db = localStats.getDb();
+      const now = Date.now();
+      const row = db.prepare('SELECT metadata FROM mcp_servers WHERE id = ?').get('tokenbank-models');
+      const meta = JSON.parse(row.metadata || '{}');
+      meta.gateway_clients = ['api', 'app-gone'];
+      meta.gateway_routed = true;
+      db.prepare('UPDATE mcp_servers SET metadata = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify(meta), now, 'tokenbank-models');
+      const r = mcpManager.pruneStaleDeletedAppBindings();
+      assert.ok(r.stale.includes('app-gone'));
+      const s = mcpManager.getServer('tokenbank-models');
+      assert.ok(!(s.gateway_clients || []).includes('app-gone'));
+      assert.ok((s.gateway_clients || []).includes('api'));
+    } finally {
+      mcpManager.syncToClients = origSync;
+      gw.setAppsGetter(null);
+    }
+  });
 });

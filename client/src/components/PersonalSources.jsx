@@ -9,7 +9,8 @@ import { useCurrency } from '../store/currency';
 import { getGateway, isElectron } from '../api/adapter';
 import ServiceIcon from './ServiceIcon';
 import { resolveProviderBrandIcon } from '../lib/brandIcons';
-import { speedDotClass, bucketFromMs } from '../lib/speed';
+import { speedDotClass, statusDotBucket } from '../lib/speed';
+import { parseRoute } from '../lib/route-binding';
 import UsageMeter, { usageProviderForDirect } from './UsageMeter';
 
 // 服务质量(上次转发结果)：成功=绿 / 冷却=蓝 / 429=红 / 失败=红 / 无请求=灰。文字区分 429 与 失败。
@@ -45,6 +46,16 @@ export function QualityBadge({ health, note, cooling = false }) {
 }
 
 const INVALID_MODEL_NAMES = new Set(['_excluded_models', 'excluded_models']);
+
+/** 探针目标 → 卡片上的裸模型名（paid:provider:model / paid:model 都能剥） */
+function probeTargetBare(current) {
+  const pr = parseRoute(current);
+  return String(pr.model || current || '').trim().toLowerCase();
+}
+
+function probeTargetProvider(current) {
+  return String(parseRoute(current).provider || '').trim();
+}
 
 /** 模型名（字符串或 { name/id } 对象） */
 function modelEntryName(m) {
@@ -701,7 +712,7 @@ function providerLatencyMap(latencyMap, model) {
   return null;
 }
 
-/** 读取某模型在某账户上的最近延迟（多 id 别名时取时间最新的一条） */
+/** 读取某模型在某账户上的最近延迟/健康（失败也要显示，不能当成无请求） */
 function resolveAccountLatencyRow(latencyMap, model, inst) {
   const pmap = providerLatencyMap(latencyMap, model);
   if (!pmap) return null;
@@ -710,12 +721,15 @@ function resolveAccountLatencyRow(latencyMap, model, inst) {
     const row = pmap[pid];
     if (!row) continue;
     const ts = row.last_ts || 0;
-    const ttft = row.last_ttft_ms > 0 ? row.last_ttft_ms : (row.avg_ttft_ms > 0 ? row.avg_ttft_ms : 0);
-    if (ttft <= 0) continue;
+    const code = row.last_status_code ?? null;
+    const ok = code >= 200 && code < 300;
+    const rawTtft = row.last_ttft_ms > 0 ? row.last_ttft_ms : (row.avg_ttft_ms > 0 ? row.avg_ttft_ms : 0);
+    const ttft = ok && rawTtft > 0 ? rawTtft : 0;
+    if (!ok && code == null && ttft <= 0) continue;
     if (!best || ts > best.ts) {
       best = {
-        ts, ttft, statusCode: row.last_status_code ?? null,
-        avgTtft: row.avg_ttft_ms > 0 ? row.avg_ttft_ms : ttft,
+        ts, ttft: ttft > 0 ? ttft : null, statusCode: code,
+        avgTtft: row.avg_ttft_ms > 0 ? row.avg_ttft_ms : (ttft > 0 ? ttft : null),
         calls: row.calls || 0,
         success: row.success || 0,
       };
@@ -747,19 +761,74 @@ export function PersonalSourceModelView({
   const [expandedModel, setExpandedModel] = useState(null);
   const [latencyMapLocal, setLatencyMapLocal] = useState({});
   const latencyMap = latencyMapProp ?? latencyMapLocal;
-  const [probing, setProbing] = useState(null);     // null | { done, total }
+  const [probing, setProbing] = useState(null);     // null | { done, total, current }
+  const probeAbortRef = useRef(false);
+
+  const byModel = useMemo(() => {
+    const m = {};
+    for (const inst of instances) {
+      const modelList = (inst.models || []).map(modelEntryName).filter(Boolean);
+      if (!modelList.length) continue;
+      for (const model of modelList) {
+        const list = m[model] || (m[model] = []);
+        const uid = inst.id || inst.agent_id || inst.source_id;
+        if (!list.some(x => (x.id || x.agent_id || x.source_id) === uid)) list.push(inst);
+      }
+    }
+    return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [instances]);
+
+  // 探针队列跟网格展示一致：按卡片从左到右、从上到下逐个测
+  const orderedProbeTargets = useMemo(() => {
+    const raw = probeTargets || [];
+    if (!raw.length) return raw;
+    const buckets = new Map();
+    for (const t of raw) {
+      const bare = probeTargetBare(t);
+      if (!bare) continue;
+      const list = buckets.get(bare) || [];
+      list.push(t);
+      buckets.set(bare, list);
+    }
+    const out = [];
+    const used = new Set();
+    for (const [model] of byModel) {
+      const hits = buckets.get(String(model).trim().toLowerCase());
+      if (!hits) continue;
+      for (const t of hits) {
+        if (used.has(t)) continue;
+        used.add(t);
+        out.push(t);
+      }
+    }
+    for (const t of raw) {
+      if (!used.has(t)) out.push(t);
+    }
+    return out;
+  }, [probeTargets, byModel]);
+
   // 全部测速：对每个个人源模型带 tier 前缀（paid:/free:）逐个发探针，强制路由到个人源。
   // 注意：消耗你自己供给源的真实计费（非积分）。完后刷新圆点。
   const probeAllPersonal = async () => {
     if (probing) return;
-    const targets = probeTargets || [];
+    const targets = orderedProbeTargets;
     if (!targets.length) return;
-    setProbing({ done: 0, total: targets.length });
+    probeAbortRef.current = false;
+    setProbing({ done: 0, total: targets.length, current: targets[0] });
     for (let i = 0; i < targets.length; i++) {
+      if (probeAbortRef.current) break;
+      setProbing({ done: i, total: targets.length, current: targets[i] });
       try { await window.electronAPI?.gateway?.probeModel?.(targets[i]); } catch { /* ignore */ }
-      setProbing({ done: i + 1, total: targets.length });
+      try { await loadLatency(); } catch { /* ignore */ }
+      if (probeAbortRef.current) break;
+      setProbing({ done: i + 1, total: targets.length, current: targets[i + 1] || null });
     }
-    try { await loadLatency(); } catch { /* ignore */ }   // 探针跑完刷新延迟/质量（个人源色来自 latencyMap，非 speedMap）
+    try { await loadLatency(); } catch { /* ignore */ }   // 探针跑完/取消后刷新已测到的延迟
+    if (!probeAbortRef.current) setProbing(null);
+    probeAbortRef.current = false;
+  };
+  const cancelProbe = () => {
+    probeAbortRef.current = true;
     setProbing(null);
   };
 
@@ -791,20 +860,6 @@ export function PersonalSourceModelView({
   useEffect(() => {
     if (expandedModel) loadLatency();
   }, [expandedModel, loadLatency]);
-
-  const byModel = useMemo(() => {
-    const m = {};
-    for (const inst of instances) {
-      const modelList = (inst.models || []).map(modelEntryName).filter(Boolean);
-      if (!modelList.length) continue;
-      for (const model of modelList) {
-        const list = m[model] || (m[model] = []);
-        const uid = inst.id || inst.agent_id || inst.source_id;
-        if (!list.some(x => (x.id || x.agent_id || x.source_id) === uid)) list.push(inst);
-      }
-    }
-    return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [instances]);
 
   // 参与供给的账户（按 provider 去重 logo），统计仍用全部账户数
   const uniqueProviders = useMemo(() => {
@@ -862,10 +917,10 @@ export function PersonalSourceModelView({
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {probeTargets.length > 0 && (
-            <button type="button" onClick={probeAllPersonal} disabled={!!probing}
-              title={t('providers.probe.titlePersonal')}
-              className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50 flex items-center gap-1 whitespace-nowrap">
+          {orderedProbeTargets.length > 0 && (
+            <button type="button" onClick={probing ? cancelProbe : probeAllPersonal}
+              title={probing ? t('providers.probe.cancelHint') : t('providers.probe.titlePersonal')}
+              className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1 whitespace-nowrap">
               {probing ? t('providers.probe.running', { done: probing.done, total: probing.total }) : t('providers.probe.all')}
             </button>
           )}
@@ -875,11 +930,19 @@ export function PersonalSourceModelView({
       <div className="grid grid-cols-2 gap-2">
         {byModel.map(([model, srcs]) => {
           const mType = modelTypeMap[model];
+          const skipSpeed = mType === 'image';
           // 速度 + 服务质量(最近成功/失败) 都来自我们的请求历史；按速度(TTFT)升序，折叠取最快源。
           const rowOf = new Map(srcs.map(s => [s, resolveAccountLatencyRow(latencyMap, model, s)]));
           const sortedSrcs = [...srcs].sort((a, b) => (rowOf.get(a)?.ttft ?? 9e9) - (rowOf.get(b)?.ttft ?? 9e9));
-          const fastRow = rowOf.get(sortedSrcs[0]);
+          const fastRow = skipSpeed ? null : rowOf.get(sortedSrcs[0]);
           const fastMs = fastRow?.ttft > 0 ? fastRow.ttft : null;
+          const probingThis = !skipSpeed && !!(probing?.current && probeTargetBare(probing.current) === String(model).trim().toLowerCase());
+          const probingPid = probingThis ? probeTargetProvider(probing.current) : '';
+          const anyFail = !skipSpeed && !fastMs && sortedSrcs.some(s => {
+            const code = rowOf.get(s)?.statusCode;
+            return code != null && (code < 200 || code >= 300);
+          });
+          const cardBucket = skipSpeed ? 'unknown' : (probingThis ? 'fast' : statusDotBucket({ ms: fastMs, failed: anyFail, ok: !!fastMs }));
           return (
           <div key={model} className="min-w-0">
             <button
@@ -892,8 +955,10 @@ export function PersonalSourceModelView({
               }`}
             >
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(fastMs))}`}
-                  title={fastMs ? `最快 ${(fastMs / 1000).toFixed(1)}s` : '暂无速度'} />
+                <span
+                  className={`inline-flex w-2 h-2 rounded-full shrink-0 ${probingThis ? 'bg-green-400 tb-probe-pulse' : speedDotClass(cardBucket)}`}
+                  title={probingThis ? '测速中' : (skipSpeed ? t('providers.probe.skipImage') : (fastMs ? `最快 ${(fastMs / 1000).toFixed(1)}s` : (anyFail ? '最近请求失败' : '暂无速度')))}
+                />
                 <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={model}>{model}</span>
                 {mType && mType !== 'chat' && (
                   <span
@@ -920,10 +985,11 @@ export function PersonalSourceModelView({
               <div className="mt-1 ml-1 pl-2 border-l border-zinc-200 dark:border-zinc-700 space-y-1">
                 {sortedSrcs.map((inst, i) => {
                   const row = rowOf.get(inst);
-                  const health = row?.statusCode == null ? null : healthFromStatus(row.statusCode);
+                  const health = skipSpeed || row?.statusCode == null ? null : healthFromStatus(row.statusCode);
                   const cooling = !!(typeof cooldownFor === 'function' && cooldownFor(
                     inst.gateway_id, inst.id, inst.agent_id, inst.source_id, inst.provider_id,
                   ));
+                  const probingSrc = !!(probingPid && accountProviderIds(inst).includes(probingPid));
                   return (
                     <div
                       key={(inst.id || inst.agent_id || inst.source_id) + ':' + i}
@@ -931,8 +997,15 @@ export function PersonalSourceModelView({
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
                         {/* 第一个点 = 速度（与速度排序一致），紧跟 ms */}
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(row?.ttft))}`} title="速度" />
-                        <span className="shrink-0 tabular-nums">{row?.ttft != null ? `${Math.round(row.ttft)}ms` : '—'}</span>
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${skipSpeed ? speedDotClass('unknown') : probingSrc ? 'bg-green-400 tb-probe-pulse' : speedDotClass(statusDotBucket({
+                            ms: row?.ttft,
+                            failed: health === 'fail' || health === 'rate',
+                            ok: health === 'ok',
+                          }))}`}
+                          title={skipSpeed ? t('providers.probe.skipImage') : (probingSrc ? '测速中' : '速度')}
+                        />
+                        <span className="shrink-0 tabular-nums">{skipSpeed ? '—' : (row?.ttft != null ? `${Math.round(row.ttft)}ms` : '—')}</span>
                         <SourceProviderLogo inst={inst} />
                         <span className="truncate text-zinc-700 dark:text-zinc-300">{accountDisplayName(inst)}</span>
                       </div>
