@@ -13,6 +13,26 @@ const {
   CLIENT_ROOT,
 } = require('../../scripts/cli-runtime-manifest');
 
+test('Dockerfile.cli installs npm packages required by CLI source', () => {
+  const dockerfile = fs.readFileSync(path.join(CLIENT_ROOT, 'Dockerfile.cli'), 'utf8');
+  const deps = require(path.join(CLIENT_ROOT, 'package.json')).dependencies || {};
+  const { files } = collectCliRuntimeDeps();
+  const needed = new Set();
+  const re = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    let m;
+    while ((m = re.exec(src))) {
+      let name = m[1];
+      if (name.startsWith('.') || name.startsWith('node:')) continue;
+      name = name.startsWith('@') ? name.split('/').slice(0, 2).join('/') : name.split('/')[0];
+      if (deps[name]) needed.add(name);
+    }
+  }
+  const missing = [...needed].filter((n) => !dockerfile.includes(n));
+  assert.deepEqual(missing, [], `Dockerfile.cli missing npm deps: ${missing.join(', ')}`);
+});
+
 test('CLI entry points resolve all local requires', () => {
   const { missing } = collectCliRuntimeDeps();
   assert.equal(
