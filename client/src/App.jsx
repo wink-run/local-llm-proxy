@@ -97,14 +97,14 @@ function Layout() {
 
   if (loading) {
     return (
-      <div className="tb-app-shell flex h-screen items-center justify-center text-zinc-500 dark:text-zinc-400">
+      <div className="tb-app-shell flex h-full items-center justify-center text-zinc-500 dark:text-zinc-400">
         {t('common.loading')}
       </div>
     );
   }
 
   return (
-    <div className="tb-app-shell flex h-screen text-zinc-700 dark:text-zinc-200">
+    <div className="tb-app-shell flex h-full text-zinc-700 dark:text-zinc-200">
       {isElectron() && !authed && (
         <div className={`electron-drag fixed top-0 left-0 ${dragRight} h-11 z-50`} aria-hidden />
       )}

@@ -250,6 +250,7 @@ const EMPTY_EDITOR = {
   parameters: null,
   assistantExtra: {},
   skillQuery: '',
+  promptQuery: '',
 };
 
 /** 是否 Windows 前端环境（路径用反斜杠） */
@@ -1816,6 +1817,7 @@ export default function Resources() {
       parameters: null,
       assistantExtra: {},
       skillQuery: '',
+      promptQuery: '',
     };
     if ((resource.type || '') === 'assistant') {
       const parsed = parseAssistantEditorContent(resource.content || '');
@@ -1832,7 +1834,7 @@ export default function Resources() {
     setEditorOpen(true);
   }
 
-  /** 自然语言 → 填充智能体表单（名称/人设/建议绑定的 skill） */
+  /** 自然语言 → 填充智能体表单（名称/人设/建议绑定的 skill 与提示词） */
   async function generateAssistantNl() {
     const brief = String(editorForm.nlBrief || '').trim();
     if (brief.length < 4) {
@@ -1849,7 +1851,14 @@ export default function Resources() {
           display_name: r.display_name || r.name,
           description: r.description || '',
         }));
-      const gen = await generateAssistantFromNl(brief, skillCandidates);
+      const promptCandidates = (resources || [])
+        .filter((r) => r.type === 'prompt')
+        .map((r) => ({
+          name: r.name,
+          display_name: r.display_name || r.name,
+          description: r.description || '',
+        }));
+      const gen = await generateAssistantFromNl(brief, skillCandidates, promptCandidates);
       setEditorForm((prev) => ({
         ...prev,
         // 已有 id 时不改英文标识，避免冲突
@@ -1858,6 +1867,7 @@ export default function Resources() {
         description: gen.description || prev.description,
         soul: gen.soul,
         skills: gen.skills || [],
+        prompts: gen.prompts || [],
         tagsText: (gen.tags || []).join(', ') || prev.tagsText,
       }));
       setMsg(t('resources.assistantNlOk'));
@@ -1882,6 +1892,16 @@ export default function Resources() {
     });
   }
 
+  function toggleEditorPrompt(promptName) {
+    const name = String(promptName || '').trim();
+    if (!name) return;
+    setEditorForm((prev) => {
+      const cur = Array.isArray(prev.prompts) ? prev.prompts : [];
+      const next = cur.includes(name) ? cur.filter((s) => s !== name) : [...cur, name];
+      return { ...prev, prompts: next };
+    });
+  }
+
   async function saveEditor() {
     const name = String(editorForm.name || '').trim();
     if (!name) {
@@ -1896,7 +1916,7 @@ export default function Resources() {
       }
       metadata.tags = parseTagsInput(editorForm.tagsText);
       let content = editorForm.content || '';
-      // 智能体：用人设 + 勾选 skill 拼 JSON（保留 runtime_agent / prompts 等）
+      // 智能体：用人设 + 勾选 skill / prompt 拼 JSON
       if (editorForm.type === 'assistant') {
         const soul = String(editorForm.soul || '').trim();
         if (!soul) {
@@ -3902,6 +3922,67 @@ export default function Resources() {
                       })()}
                     </div>
                     <p className="text-[10px] text-zinc-400">{t('resources.assistantSkillsHint')}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-zinc-500">{t('resources.assistantPrompts')}</span>
+                      <span className="text-[10px] text-zinc-400">
+                        {t('resources.assistantPromptsPicked', { n: (editorForm.prompts || []).length })}
+                      </span>
+                    </div>
+                    <input
+                      value={editorForm.promptQuery || ''}
+                      onChange={e => setEditorForm(prev => ({ ...prev, promptQuery: e.target.value }))}
+                      placeholder={t('resources.assistantPromptsSearch')}
+                      className="w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950"
+                    />
+                    <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 divide-y divide-zinc-100 dark:divide-zinc-800">
+                      {(() => {
+                        const q = String(editorForm.promptQuery || '').trim().toLowerCase();
+                        const list = (resources || [])
+                          .filter((r) => r.type === 'prompt')
+                          .filter((r) => {
+                            if (!q) return true;
+                            const hay = `${r.name} ${r.display_name || ''} ${r.description || ''}`.toLowerCase();
+                            return hay.includes(q);
+                          })
+                          .slice(0, 120);
+                        if (!list.length) {
+                          return (
+                            <p className="px-2.5 py-3 text-[11px] text-zinc-400">{t('resources.assistantPromptsEmpty')}</p>
+                          );
+                        }
+                        const picked = new Set(editorForm.prompts || []);
+                        return list.map((pr) => (
+                          <label
+                            key={pr.id || pr.name}
+                            className="flex items-start gap-2 px-2.5 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={picked.has(pr.name)}
+                              onChange={() => toggleEditorPrompt(pr.name)}
+                              className="mt-0.5 shrink-0"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5 min-w-0">
+                                <span className="block text-xs text-zinc-800 dark:text-zinc-200 truncate">
+                                  {pr.display_name || pr.name}
+                                </span>
+                                <span className="shrink-0 text-[10px] px-1 py-px rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500">
+                                  {t(promptKindOf(pr) === 'image' ? 'resources.promptKind.image' : 'resources.promptKind.text')}
+                                </span>
+                              </span>
+                              <span className="block text-[10px] font-mono text-zinc-400 truncate">{pr.name}</span>
+                              {pr.description ? (
+                                <span className="block text-[10px] text-zinc-400 line-clamp-1">{pr.description}</span>
+                              ) : null}
+                            </span>
+                          </label>
+                        ));
+                      })()}
+                    </div>
+                    <p className="text-[10px] text-zinc-400">{t('resources.assistantPromptsHint')}</p>
                   </div>
                 </>
               ) : (

@@ -7,7 +7,7 @@ import {
   listAgentSessionSnapshots,
   saveAgentSessionSnapshot,
 } from '../lib/debug-session-history';
-import { closePendingToolSteps, stepsFromTaskStatus } from '../lib/debug-agent-store';
+import { closePendingToolSteps, stepsFromTaskStatus, workingDirBasename } from '../lib/debug-agent-store';
 import { useLang } from '../store/lang';
 
 function taskMatchesSessionKey(task, sessionKey) {
@@ -214,7 +214,7 @@ export default function AgentSessionHistoryPanel({
 
   return createPortal(
     <div
-      className="electron-no-drag fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
+      className="electron-no-drag fixed inset-0 z-[9998] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
       onClick={onClose}
     >
       <div
@@ -262,11 +262,17 @@ export default function AgentSessionHistoryPanel({
                     <div className="flex items-start gap-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-zinc-800 dark:text-zinc-200 truncate">{item.title}</p>
-                        <p className="text-[11px] text-zinc-400 mt-0.5">
+                        <p
+                          className="text-[11px] text-zinc-400 mt-0.5 truncate"
+                          title={item.sessionWorkingDir || undefined}
+                        >
                           {formatSessionTime(item.savedAt)}
                           {item.turnCount > 1
                             ? t('debug.history.turns', { n: item.turnCount })
                             : (item.status ? ` · ${item.status}` : '')}
+                          {workingDirBasename(item.sessionWorkingDir)
+                            ? t('debug.history.dir', { dir: workingDirBasename(item.sessionWorkingDir) })
+                            : ''}
                         </p>
                       </div>
                       {item.source === 'local' && (

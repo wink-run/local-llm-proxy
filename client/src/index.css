@@ -10,6 +10,7 @@
 @layer base {
   html {
     font-size: 13px;
+    height: 100%;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -45,6 +46,8 @@
   }
 
   body {
+    height: 100%;
+    overflow: hidden;
     /* 优先 SF / 系统字体；Inter 仅作跨平台回退，避免整站「通用 Inter」廉价感 */
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Inter', sans-serif;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
@@ -951,12 +954,32 @@
   100% { transform: scale(10); opacity: 0; }
 }
 
+html, body, #root {
+  height: 100%;
+}
+
 /* Electron：macOS hiddenInset / Windows titleBarOverlay — 指定区域可拖动窗口 */
 .electron-drag {
   -webkit-app-region: drag;
 }
 .electron-no-drag {
   -webkit-app-region: no-drag;
+}
+
+/*
+ * Electron 主窗口用了 vibrancy。再叠 CSS backdrop-filter 时，
+ * 滚动 / 最大化会让合成层不重绘 → 横向色块花屏，fixed 弹层也可能被盖住。
+ * 与托盘弹层同一策略：关掉 filter，玻璃感靠半透明 fill + 原生 vibrancy。
+ */
+html.tb-electron,
+html.tb-electron * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.tb-electron .tb-scroll-layer {
+  -webkit-overflow-scrolling: touch;
+  contain: layout style;
+  transform: translateZ(0);
 }
 
 /* 无障碍：减弱动效 → 交叉淡入，去掉位移/缩放/无限环 */

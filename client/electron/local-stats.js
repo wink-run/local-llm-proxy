@@ -407,6 +407,7 @@ function init(dbDir, opts = {}) {
   try {
     db = new Database(path.join(dbDir, 'local-stats.db'));
     db.pragma('journal_mode = WAL');  // safer concurrent reads
+    db.pragma('busy_timeout = 5000'); // 主线程与扫描 worker 各开连接时等锁，避免 SQLITE_BUSY
     db.exec(SCHEMA);
     for (const sql of MIGRATIONS) {
       try { db.exec(sql); } catch (e) {

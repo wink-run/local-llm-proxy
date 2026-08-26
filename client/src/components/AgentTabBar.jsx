@@ -170,7 +170,7 @@ export default function AgentTabBar({
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
+      <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5 tb-scroll-layer">
         {/* Hub：选中与列表项同一玻璃高亮，避免实心蓝跳出体系 */}
         <button
           type="button"

@@ -60,15 +60,17 @@ describe('assistant-nl-create helpers', () => {
     assert.equal(slugifyAssistantId('Code Review!!'), 'code-review');
   });
 
-  it('parse / build 往返保留 skills', () => {
+  it('parse / build 往返保留 skills 与 prompts', () => {
     const raw = buildAssistantContent({
       soul: '你是代码审查专家，注重安全与可读性。',
       skills: ['git-commit', 'systematic-debugging'],
+      prompts: ['code-review'],
       runtime_agent: 'claude-code',
     });
     const parsed = parseAssistantEditorContent(raw);
     assert.match(parsed.soul, /代码审查/);
     assert.deepEqual(parsed.skills, ['git-commit', 'systematic-debugging']);
+    assert.deepEqual(parsed.prompts, ['code-review']);
     assert.equal(parsed.runtime_agent, 'claude-code');
   });
 

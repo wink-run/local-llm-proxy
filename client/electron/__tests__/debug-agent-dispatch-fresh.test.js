@@ -186,3 +186,9 @@ test('archiveCompletedTurn：归档时闭合未完成工具，避免历史显示
   assert.ok(turn.steps.some(s => s.stepType === 'tool_result' && s.tool_use_id === 'm1'));
   assert.equal(S.hasOpenToolCalls(turn.steps), false);
 });
+
+test('workingDirBasename 取路径末段', () => {
+  assert.equal(S.workingDirBasename('/Users/ully/githubprojects/testabc'), 'testabc');
+  assert.equal(S.workingDirBasename('C:\\proj\\foo\\'), 'foo');
+  assert.equal(S.workingDirBasename(''), '');
+});

@@ -154,8 +154,19 @@ function invalidateSessionsCache() {
 }
 
 /** 聚合会话 + 叠加层 + 过滤。返回供 UI 渲染的会话数组。 */
-function getSessions(deps, opts = {}) {
+function assembleSessions(deps, raw, opts = {}) {
   const { sessionBrowser, localStats } = deps;
+  const dbMap = typeof localStats.querySessionStatsMap === 'function'
+    ? localStats.querySessionStatsMap()
+    : {};
+  const dbSessions = Object.entries(dbMap).map(([session_id, s]) => ({ session_id, ...s }));
+  const rows = sessionBrowser.mergeActivityWithStats(raw, dbSessions);
+  const meta = localStats.listSessionMeta();
+  return enrichSessionCosts(joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived }));
+}
+
+function getSessions(deps, opts = {}) {
+  const { sessionBrowser } = deps;
   const key = sessionsCacheKey(opts);
   const now = Date.now();
   if (
@@ -166,14 +177,31 @@ function getSessions(deps, opts = {}) {
     return _sessionsCache.rows;
   }
   const raw = sessionBrowser.listAllSessions(opts);
-  // 合并本地网关记录的用量/费用（经代理的请求才有 cost_usd）
-  const dbMap = typeof localStats.querySessionStatsMap === 'function'
-    ? localStats.querySessionStatsMap()
-    : {};
-  const dbSessions = Object.entries(dbMap).map(([session_id, s]) => ({ session_id, ...s }));
-  const rows = sessionBrowser.mergeActivityWithStats(raw, dbSessions);
-  const meta = localStats.listSessionMeta();
-  const out = enrichSessionCosts(joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived }));
+  const out = assembleSessions(deps, raw, opts);
+  _sessionsCache = { key, at: now, rows: out };
+  return out;
+}
+
+/** 扫盘在 worker 线程；SQLite 合并仍在主进程（与网关共用同一连接）。 */
+async function getSessionsAsync(deps, opts = {}) {
+  const { sessionBrowser } = deps;
+  const key = sessionsCacheKey(opts);
+  const now = Date.now();
+  if (
+    _sessionsCache
+    && _sessionsCache.key === key
+    && (now - _sessionsCache.at) < SESSIONS_CACHE_TTL_MS
+  ) {
+    return _sessionsCache.rows;
+  }
+  let raw;
+  try {
+    raw = await require('./session-offthread').listAllSessions(opts);
+  } catch (e) {
+    console.warn('[sessions] offthread list fallback:', e && e.message);
+    raw = sessionBrowser.listAllSessions(opts);
+  }
+  const out = assembleSessions(deps, raw, opts);
   _sessionsCache = { key, at: now, rows: out };
   return out;
 }
@@ -499,7 +527,7 @@ async function synthesizeKnowledge(deps, opts = {}) {
 
 module.exports = {
   mergeAgentRows, joinSessionsWithMeta, buildSessionPackJSON, renderSessionPackMarkdown,
-  getSessions, invalidateSessionsCache, exportSession,
+  getSessions, getSessionsAsync, invalidateSessionsCache, exportSession,
   buildSessionDigest, filePathFromInput, composeHandoffDoc, summarizeViaGateway,
   collectGitContext, continueSession, buildKnowledgeCorpus, synthesizeKnowledge,
 };

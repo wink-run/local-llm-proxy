@@ -28,18 +28,39 @@ const deviceIdentity = require('../shared/device-identity');
 const detectTools = require('./detect-tools');
 const agentLinker = require('./agent-linker');
 const cursorHooks = require('./cursor-hooks');
-const { syncSessionTelemetry } = require('./session-telemetry-sync');
+const sessionOffthread = require('./session-offthread');
 const trayPopover = require('./tray-popover');
 const { brandIconForApp } = require('./brand-icons');
 
-/** 会话补录节流：用量页频繁打开时不重复全量扫描 */
+/** 会话补录：派到 worker，不阻塞主线程（托盘刷新 / 打开盘点时曾会假死） */
 let _lastSessionTelemetrySync = 0;
 const SESSION_TELEMETRY_SYNC_MS = 20_000;
-function maybeSyncSessionTelemetry(localStats) {
+function notifyTelemetryImported(r) {
+  if (!r || r.skipped) return;
+  const n = (r.hookImported || 0) + (r.sessionImported || 0) + (r.skillRecorded || 0) + (r.toolsRecorded || 0);
+  if (n <= 0) return;
+  try { require('./session-manager').invalidateSessionsCache(); } catch {}
+  try {
+    mainWindow?.webContents?.send('apps:changed');
+    mainWindow?.webContents?.send('localStats:changed');
+  } catch {}
+}
+function scheduleSessionTelemetry(opts = {}) {
+  const force = !!(opts && opts.force);
   const now = Date.now();
-  if (now - _lastSessionTelemetrySync < SESSION_TELEMETRY_SYNC_MS) return;
+  if (!force && _lastSessionTelemetrySync && (now - _lastSessionTelemetrySync) < SESSION_TELEMETRY_SYNC_MS) {
+    return Promise.resolve({ skipped: true });
+  }
   _lastSessionTelemetrySync = now;
-  try { syncSessionTelemetry(localStats); } catch {}
+  return sessionOffthread.runTelemetry({ statsDir: STATS_DIR, force })
+    .then((r) => { notifyTelemetryImported(r); return r; })
+    .catch((e) => {
+      console.error('[session-telemetry]', e && e.message);
+      return { error: e && e.message };
+    });
+}
+function maybeSyncSessionTelemetry() {
+  scheduleSessionTelemetry();
 }
 // device-reporter is used by the CLI only; desktop registration is handled
 // by useDeviceReporter in the renderer (which has access to the JWT).
@@ -1550,7 +1571,7 @@ function refreshTray() {
   // 同步 session import，保证与 modal 数据一致；每 60s 最多跑一次
   const now = Date.now();
   if (now - _lastTrayImportTs > 60000) {
-    try { syncSessionTelemetry(localStats); } catch {}
+    try { scheduleSessionTelemetry(); } catch {}
     _lastTrayImportTs = now;
   }
   const gw = gateway.getStatus?.() || {};
@@ -1898,13 +1919,6 @@ async function checkForUpdatesAndWait(timeoutMs = 60000) {
 }
 
 function setupAutoUpdater() {
-  // Mac App Store 版本不支持自动更新,仅通过 App Store 更新
-  const isMAS = process.mas || (process.platform === 'darwin' && process.execPath.includes('App Store'));
-  if (isMAS) {
-    console.info('[updater] Mac App Store build detected, auto-update disabled');
-    return;
-  }
-
   autoUpdater.autoDownload = true;
   // macOS：MacUpdater 在 autoInstallOnAppQuit=true 时会在下载后预取 Squirrel；
   // 预取失败时 UI 已显示「就绪」，但 quitAndInstall 不会再次 checkForUpdates → 立即重启无反应。
@@ -3199,7 +3213,7 @@ function registerIPC() {
   ipcMain.handle('localStats:query', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
     // 打开盘点页时先补录 Skill/工具（WorkBuddy trace 等），避免「会话有 Skill、盘点却是 0」
-    try { syncSessionTelemetry(localStats); } catch {}
+    try { scheduleSessionTelemetry(); } catch {}
     const data = localStats.queryDashboard(d);
     // 按应用聚合（合并网关实时 + 会话补录），供「应用用量分布」按应用分组、判定网关/订阅/混合徽章
     try {
@@ -3274,7 +3288,7 @@ function registerIPC() {
     }
   });
   // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
-  ipcMain.handle('sessionImport:run', () => syncSessionTelemetry(localStats, { force: true }));
+  ipcMain.handle('sessionImport:run', () => scheduleSessionTelemetry({ force: true }));
   // 探测本机 AI 工具/本地服务，返回是否已接入网关的清单
   ipcMain.handle('detectTools:scan', async () => {
     const r = await detectTools.scan();
@@ -5409,7 +5423,7 @@ function registerIPC() {
 
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
     // 打开明细时强制增量补录，避免节流窗口内看不到会话补录
-    try { syncSessionTelemetry(localStats, { force: true }); } catch {}
+    try { scheduleSessionTelemetry({ force: true }); } catch {}
     // Cursor：打开明细时立即清 transcript 0 token 占位（节流窗口内也能刷新列表）
     if (app?.agent_id === 'cursor') {
       try { cursorHooks.purgeTranscriptZeroTokens(localStats); } catch {}
@@ -5463,13 +5477,11 @@ function registerIPC() {
   const sessionManager = require('./session-manager');
   const _sessionDeps = { sessionBrowser, localStats };
 
-  ipcMain.handle('sessions:listAll', (_e, opts = {}) => {
+  ipcMain.handle('sessions:listAll', async (_e, opts = {}) => {
     try {
-      // 列表优先返回；telemetry 后台补录，避免扫盘挡住首屏
-      setImmediate(() => {
-        try { syncSessionTelemetry(localStats); } catch {}
-      });
-      return sessionManager.getSessions(_sessionDeps, opts);
+      // 列表在 worker 扫盘；补录后台跑，都不占主线程
+      scheduleSessionTelemetry();
+      return await sessionManager.getSessionsAsync(_sessionDeps, opts);
     }
     catch (e) { console.error('[sessions:listAll]', e.message); return []; }
   });
@@ -5567,7 +5579,7 @@ function registerIPC() {
 
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
   ipcMain.handle('apps:stats', (_e, appList) => {
-    try { syncSessionTelemetry(localStats); } catch {}
+    try { scheduleSessionTelemetry(); } catch {}
     const stats = {};
     for (const app of (appList || [])) {
       const dataSources = resolveAppDataSources(app);
@@ -5601,7 +5613,7 @@ function registerIPC() {
   // 盘点页：按网关应用聚合用量（合并原「工具来源 + 场景应用」）
   ipcMain.handle('localStats:appsUsage', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
-    try { syncSessionTelemetry(localStats); } catch {}
+    try { scheduleSessionTelemetry(); } catch {}
     const apps = getApps().filter(a => !a.draft);
     return apps.map(app => {
       const dataSources = resolveAppDataSources(app);
@@ -6056,18 +6068,7 @@ app.whenReady().then(() => {
   // 补录「不走网关、直连官方」的会话用量：启动跑一次 + 每 30s 增量扫一次。
   // 与网关实时记录靠 request_id 跨来源去重，不会重复计。
   // 有新增就通知前端刷新——否则直连用量要等重启重新挂载才显示，不像网关那样"实时"。
-  const runSessionImport = () => {
-    try {
-      const { hookImported, sessionImported, skillRecorded, toolsRecorded } = syncSessionTelemetry(localStats);
-      // Skill/工具补录也要通知前端：否则 WorkBuddy 等只写 skill_calls 时 Dashboard 一直显示 0
-      if (hookImported > 0 || sessionImported > 0 || skillRecorded > 0 || toolsRecorded > 0) {
-        try {
-          mainWindow?.webContents?.send('apps:changed');
-          mainWindow?.webContents?.send('localStats:changed');
-        } catch {}
-      }
-    } catch (e) { console.error('[session-import]', e.message); }
-  };
+  const runSessionImport = () => { scheduleSessionTelemetry(); };
   // 一次性迁移：历史 Claude 会话用量都存成 session-claude（混了 cli / claude-desktop）。
   // 删掉重扫，按 entrypoint 重新拆分（cli→session-claude、claude-desktop→session-claude-desktop、sdk-cli 跳过）。
   try {

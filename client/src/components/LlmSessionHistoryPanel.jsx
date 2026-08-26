@@ -40,7 +40,7 @@ export default function LlmSessionHistoryPanel({ open, onClose, onRestore }) {
 
   return createPortal(
     <div
-      className="electron-no-drag fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
+      className="electron-no-drag fixed inset-0 z-[9998] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4"
       onClick={onClose}
     >
       <div

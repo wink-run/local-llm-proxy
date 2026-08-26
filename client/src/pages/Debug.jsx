@@ -42,6 +42,7 @@ import {
   canResumeInterruptedSession,
   buildInterruptedContinuePrompt,
   normalizeWorkingDir,
+  workingDirBasename,
   hasOpenToolCalls,
   closePendingToolSteps,
 } from '../lib/debug-agent-store';
@@ -763,6 +764,16 @@ function saveAgentWorkingDir(dir) {
   } catch {}
 }
 
+/** 空会话才用上次目录当种子；已有轮次的会话尊重其自身绑定 */
+function seedEmptySessionWorkingDir(key) {
+  if (!key) return;
+  const sess = getStoreSession(key);
+  if (normalizeWorkingDir(sess.sessionWorkingDir)) return;
+  if (sess.conversationTurns?.length || sess.cliSessionId) return;
+  const last = loadAgentWorkingDir();
+  if (last) patchStoreSession(key, { sessionWorkingDir: last });
+}
+
 function loadDebugMode() {
   try { return localStorage.getItem(DEBUG_MODE_KEY) || 'llm'; } catch { return 'llm'; }
 }
@@ -889,15 +900,12 @@ export default function Debug() {
       executing: false,
       delegations: {},
       agentPrompt: '',
+      // 目录跟这条历史走，不写进全局以免污染其它会话
       sessionWorkingDir: snapshot.sessionWorkingDir || getStoreSession(execKey).sessionWorkingDir || '',
       cliSessionId: snapshot.cliSessionId || null,
       historyThreadId: threadId,
       skipHistoryRecover: Date.now(),
     });
-    if (snapshot.sessionWorkingDir) {
-      setAgentWorkingDir(snapshot.sessionWorkingDir);
-      saveAgentWorkingDir(snapshot.sessionWorkingDir);
-    }
     syncSessionToState(execKey);
   }
 
@@ -1082,11 +1090,8 @@ export default function Debug() {
     if (sess.skipHistoryRecover && Date.now() - sess.skipHistoryRecover < 120_000) return;
 
     try {
-      const savedDir = (() => {
-        try { return localStorage.getItem('tokenbank.debug.agentWorkingDir') || ''; } catch { return ''; }
-      })();
       const local = findAgentSessionForContinue(syncKey, {
-        workingDir: sess.sessionWorkingDir || savedDir,
+        workingDir: sess.sessionWorkingDir || loadAgentWorkingDir(),
         cliSessionId: sess.cliSessionId,
       }) || listAgentSessionSnapshots(syncKey)[0];
       if (local?.conversationTurns?.length) {
@@ -1112,10 +1117,6 @@ export default function Debug() {
           executing: false,
           delegations: {},
         });
-        if (local.sessionWorkingDir) {
-          setAgentWorkingDir(local.sessionWorkingDir);
-          saveAgentWorkingDir(local.sessionWorkingDir);
-        }
         syncSessionToStateRef.current?.(syncKey);
         return;
       }
@@ -1149,6 +1150,7 @@ export default function Debug() {
       if (agent && selectedAgent?.id !== savedId) {
         setSelectedAgent(agent);
         selectedAgentRef.current = agent;
+        seedEmptySessionWorkingDir(savedId);
         syncSessionToState(savedId);
         recoverSessionHistory(savedId);
       }
@@ -1180,6 +1182,8 @@ export default function Debug() {
     setExecuting(!!saved.executing);
     setDelegations(saved.delegations || {});
     setConversationTurns(saved.conversationTurns || []);
+    // 作曲栏展示当前会话目录，勿用全局 lastDefault 覆盖
+    setAgentWorkingDir(saved.sessionWorkingDir || '');
   }
   syncSessionToStateRef.current = syncSessionToState;
 
@@ -1361,11 +1365,8 @@ export default function Debug() {
   useEffect(() => {
     if (location.pathname !== '/debug') return;
     const key = agentSessionKey(selectedAgent);
-    // 恢复全局工作目录（切换菜单后可能未同步到 React state）
-    const savedDir = loadAgentWorkingDir();
-    if (savedDir && savedDir !== agentWorkingDir) {
-      setAgentWorkingDir(savedDir);
-    }
+    // 空会话才用上次目录当种子；已有会话尊重其自身绑定
+    seedEmptySessionWorkingDir(key);
     syncSessionToState(key);
     recoverActiveTasks(key);
     syncDelegatedMirrorToAgentTab(key, agentsRef.current);
@@ -1424,12 +1425,14 @@ export default function Debug() {
       executing,
       delegations,
       conversationTurns,
+      sessionWorkingDir: normalizeWorkingDir(agentWorkingDir) || getStoreSession(prevKey).sessionWorkingDir,
     });
 
     const key = agentSessionKey(agent);
     setStoreSelectedAgentId(agent?.id ?? null);
     selectedAgentRef.current = agent;
     setSelectedAgent(agent);
+    seedEmptySessionWorkingDir(key);
     syncSessionToState(key);
     setDirError('');
     syncDelegatedMirrorToAgentTab(key, agentsRef.current);
@@ -2025,14 +2028,19 @@ export default function Debug() {
       alert(t('debug.agent.notInstalled', { name: activeAgent.name }));
       return;
     }
-    if (!agentWorkingDir.trim()) {
-      setDirError(t('debug.agent.needWorkingDir'));
-      return;
-    }
     // 聚合入口：主 Agent 须支持 MCP 编排（Claude Code / Codex）
     const orchestratorAgents = new Set(['claude-code', 'codex']);
     if (isHubMode && mainAgent && !orchestratorAgents.has(mainAgent.id)) {
       alert(t('debug.agent.hubNeedsMcp', { name: mainAgent.name }));
+      return;
+    }
+
+    const execKey = agentSessionKey(selectedAgent);
+    const workDir = normalizeWorkingDir(
+      getStoreSession(execKey).sessionWorkingDir || agentWorkingDir.trim(),
+    );
+    if (!workDir) {
+      setDirError(t('debug.agent.needWorkingDir'));
       return;
     }
 
@@ -2042,8 +2050,6 @@ export default function Debug() {
     let displayImages = attachPayload.map(p => p.dataUrl).filter(Boolean);
     try { displayImages = await persistImageList(displayImages); } catch { /* 落盘失败仍用内存图 */ }
     setAgentPrompt(prompt);
-    const execKey = agentSessionKey(selectedAgent);
-    const workDir = normalizeWorkingDir(agentWorkingDir.trim());
     let sess = getStoreSession(execKey);
 
     // 内存轮次空但非「新会话」：从本地历史回填，避免跟一嘴就拆成新历史条
@@ -2151,13 +2157,24 @@ export default function Debug() {
 
   async function pickWorkingDir() {
     if (!window.electronAPI?.agent?.pickWorkingDir) return;
+    if (executing || taskCanStop) return;
     try {
       const result = await window.electronAPI.agent.pickWorkingDir(
         agentWorkingDir.trim() ? { defaultPath: agentWorkingDir.trim() } : {},
       );
       if (result.success && result.path) {
-        setAgentWorkingDir(result.path);
-        saveAgentWorkingDir(result.path);
+        const execKey = agentSessionKey(selectedAgent);
+        const path = normalizeWorkingDir(result.path);
+        const sess = getStoreSession(execKey);
+        const prev = normalizeWorkingDir(sess.sessionWorkingDir);
+        const hadTurns = !!(sess.conversationTurns?.length || sess.cliSessionId);
+        // 绑到当前会话；已有对话换目录则丢掉 CLI resume，避免 --resume 到错误 cwd
+        patchSession(execKey, {
+          sessionWorkingDir: path,
+          ...(hadTurns && prev && prev !== path ? { cliSessionId: null } : {}),
+        });
+        setAgentWorkingDir(path);
+        saveAgentWorkingDir(path); // 仅作新会话种子
         setDirError('');
       }
     } catch (error) {
@@ -2237,20 +2254,23 @@ export default function Debug() {
     }
   }
 
-  /** 清空当前标签页对话，便于开启新任务 */
+  /** 清空当前标签页对话，便于开启新任务（目录继承当前会话，类似 Cursor 同工程开新 chat） */
   function startNewAgentSession() {
     const execKey = agentSessionKey(selectedAgent);
+    const keepDir = normalizeWorkingDir(
+      getStoreSession(execKey).sessionWorkingDir || agentWorkingDir || loadAgentWorkingDir(),
+    );
     const doClear = () => {
-      // cancel 已归档进行中轮次；再落盘，避免中断后续跑只剩「继续」成新会话
       persistCurrentSessionHistory(execKey);
       clearSessionTaskState(execKey);
+      if (keepDir) patchStoreSession(execKey, { sessionWorkingDir: keepDir });
       syncSessionToState(execKey);
     };
     if (executing || taskCanStop) {
       cancelAgent().then(() => {
-        // cancel 异步归档后再清，保证历史含中断轮
         persistCurrentSessionHistory(execKey);
         clearSessionTaskState(execKey);
+        if (keepDir) patchStoreSession(execKey, { sessionWorkingDir: keepDir });
         syncSessionToState(execKey);
       });
       return;
@@ -2809,7 +2829,7 @@ export default function Debug() {
 
         <div className="flex flex-col flex-1 min-w-0 min-h-0 tb-chat-well rounded-br-[var(--tb-radius-shell)] overflow-hidden">
       {/* ── Message list / Agent UI（井底略深，衬出气泡对比）── */}
-      <div className="flex-1 overflow-y-auto px-4 pt-3 pb-4 space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto px-4 pt-3 pb-4 space-y-4 min-h-0 tb-scroll-layer">
         {mode === 'llm' ? (
           /* LLM Mode: Chat messages */
           <>
@@ -3132,7 +3152,8 @@ export default function Debug() {
               <button
                 type="button"
                 onClick={pickWorkingDir}
-                disabled={!activeAgent}
+                disabled={!activeAgent || executing || taskCanStop}
+                title={t('debug.agent.pickDirHint')}
                 className={ghostBtn}
               >
                 {t('debug.agent.pickDir')}
@@ -3146,10 +3167,13 @@ export default function Debug() {
                 <button
                   type="button"
                   onClick={() => openLocalPath(agentWorkingDir)}
-                  title={t('debug.preview.clickHint')}
+                  title={t('debug.agent.sessionDirTitle', { dir: agentWorkingDir })}
                   className="flex-1 min-w-0 truncate text-xs font-mono text-left text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
                 >
-                  {agentWorkingDir}
+                  <span className="font-sans font-medium text-zinc-700 dark:text-zinc-200">
+                    {workingDirBasename(agentWorkingDir)}
+                  </span>
+                  <span className="text-zinc-400 dark:text-zinc-500 ml-1.5">{agentWorkingDir}</span>
                 </button>
               ) : (
                 <span className="flex-1 min-w-0 truncate text-xs font-mono text-zinc-400 dark:text-zinc-500">

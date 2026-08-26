@@ -88,9 +88,10 @@ function extractJsonObject(text) {
 /**
  * @param {string} brief 自然语言需求
  * @param {{ name: string, display_name?: string, description?: string }[]} skillCandidates
- * @returns {Promise<{ name: string, display_name: string, description: string, soul: string, skills: string[], tags: string[] }>}
+ * @param {{ name: string, display_name?: string, description?: string }[]} [promptCandidates]
+ * @returns {Promise<{ name: string, display_name: string, description: string, soul: string, skills: string[], prompts: string[], tags: string[] }>}
  */
-export async function generateAssistantFromNl(brief, skillCandidates = []) {
+export async function generateAssistantFromNl(brief, skillCandidates = [], promptCandidates = []) {
   const text = String(brief || '').trim();
   if (text.length < 4) throw new Error('brief_too_short');
   if (!window.electronAPI?.llm?.fetch) throw new Error('llm_unavailable');
@@ -101,6 +102,12 @@ export async function generateAssistantFromNl(brief, skillCandidates = []) {
     desc: String(s.description || '').slice(0, 80),
   }));
   const skillNames = new Set(catalog.map((c) => c.name));
+  const promptCatalog = (promptCandidates || []).slice(0, 80).map((s) => ({
+    name: s.name,
+    title: s.display_name || s.name,
+    desc: String(s.description || '').slice(0, 80),
+  }));
+  const promptNames = new Set(promptCatalog.map((c) => c.name));
 
   const prompt = [
     '你是智能体设计师。根据用户需求生成一个可运行的 AI 智能体配置。',
@@ -111,11 +118,13 @@ export async function generateAssistantFromNl(brief, skillCandidates = []) {
     '- description: 一句话简介（≤80字）',
     '- soul: 完整人设/系统提示（角色、职责、工作方式、输出风格；中文，≥80字）',
     '- skills: 从候选列表中挑选 0～8 个真实 name（可空数组；禁止编造）',
+    '- prompts: 从候选提示词中挑选 0～6 个真实 name（可空数组；禁止编造）',
     '- tags: 2～5 个英文小写标签',
     '',
     `用户需求：${text}`,
     '',
     `候选 skills（只能从 name 中选）：${JSON.stringify(catalog)}`,
+    `候选 prompts（只能从 name 中选）：${JSON.stringify(promptCatalog)}`,
   ].join('\n');
 
   const base = await resolveGatewayBase();
@@ -148,10 +157,13 @@ export async function generateAssistantFromNl(brief, skillCandidates = []) {
   const skills = (Array.isArray(parsed.skills) ? parsed.skills : [])
     .map(String)
     .filter((s) => skillNames.has(s));
+  const prompts = (Array.isArray(parsed.prompts) ? parsed.prompts : [])
+    .map(String)
+    .filter((s) => promptNames.has(s));
   const tags = (Array.isArray(parsed.tags) ? parsed.tags : [])
     .map((t) => String(t || '').trim().toLowerCase())
     .filter(Boolean)
     .slice(0, 8);
 
-  return { name, display_name, description, soul, skills, tags };
+  return { name, display_name, description, soul, skills, prompts, tags };
 }

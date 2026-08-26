@@ -759,6 +759,14 @@ export function normalizeWorkingDir(dir) {
   return s.replace(/[\\/]+$/, '');
 }
 
+/** 路径末段，供历史列表 / 作曲栏展示（会话绑定工程） */
+export function workingDirBasename(dir) {
+  const s = normalizeWorkingDir(dir);
+  if (!s) return '';
+  const parts = s.split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] || s;
+}
+
 /** 同工作目录下是否可续接 CLI 会话 */
 export function shouldContinueCliSession(sessionKey, workingDir) {
   const s = getStoreSession(sessionKey);
