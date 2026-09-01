@@ -52,18 +52,10 @@ function resolveHttpsProxyUrl() {
   }
 }
 
-/** macOS：Claude Safe Storage 密码 */
+/** macOS：Claude Safe Storage 密码（进程内缓存，避免切 tab 反复弹钥匙串） */
 function readClaudeSafeStoragePassword() {
-  if (process.platform !== 'darwin') return null;
-  try {
-    return execFileSync(
-      'security',
-      ['find-generic-password', '-w', '-s', 'Claude Safe Storage', '-a', 'Claude Key'],
-      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] },
-    ).replace(/\n$/, '');
-  } catch {
-    return null;
-  }
+  const { findGenericPassword } = require('./mac-keychain');
+  return findGenericPassword('Claude Safe Storage', 'Claude Key');
 }
 
 /** PBKDF2 → AES-128-CBC 解密 v10 Cookie（spaces IV）。 */

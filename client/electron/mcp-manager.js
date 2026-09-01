@@ -672,7 +672,45 @@ class MCPManager {
     return { success: true, server: this.getServer(item.id), sync };
   }
 
-  /** 卸载（非内置）MCP Server */
+  /**
+   * 卸载前从各 Agent 配置文件删掉该 MCP。
+   * 客户端自配条目不在 TB sync-state 里，只删库会被「扫描即纳管」立刻再导入。
+   */
+  _removeUninstalledServerFromAgents(server) {
+    if (!server) return;
+    const mcpClientSync = require('./mcp-client-sync');
+    const { CLIENT_TARGETS } = mcpClientSync;
+    const keys = new Set([server.name].filter(Boolean));
+    const clientIds = new Set([
+      ...(Array.isArray(server.metadata?.originAgents) ? server.metadata.originAgents : []),
+      ...(Array.isArray(server.sync_clients) ? server.sync_clients : []),
+    ].filter(Boolean));
+
+    try {
+      const [enriched] = mcpClientSync.enrichServersWithClientInstalls([server]);
+      for (const inst of enriched?.clientInstalls || []) {
+        if (inst.clientId) clientIds.add(inst.clientId);
+        if (inst.clientKey) keys.add(inst.clientKey);
+      }
+    } catch (e) {
+      console.warn('[mcp-manager] uninstall scan installs:', e.message);
+    }
+
+    // 旧数据可能没有 originAgents；按 name 在各 Agent 上尝试删除（找不到则跳过）
+    const targets = clientIds.size ? clientIds : new Set(Object.keys(CLIENT_TARGETS));
+    for (const clientId of targets) {
+      if (!CLIENT_TARGETS[clientId]) continue;
+      for (const key of keys) {
+        try {
+          mcpClientSync.removeRawClientMcpEntry(clientId, key, { ignoreMissing: true });
+        } catch (e) {
+          console.warn('[mcp-manager] uninstall remove from agent:', clientId, key, e.message);
+        }
+      }
+    }
+  }
+
+  /** 卸载（非内置）MCP Server：删库 + 从各 Agent 配置移除 */
   uninstallServer(serverId) {
     this.init();
     if (serverId === BUILTIN_BRIDGE_ID) {
@@ -681,6 +719,10 @@ class MCPManager {
     if (serverId === BUILTIN_PROMPTS_ID || serverId === BUILTIN_MODELS_ID || serverId === BUILTIN_RESOURCES_ID) {
       throw new Error('内置 MCP 不可卸载');
     }
+    // 先读出安装位置，再删库（删库后就扫不到 originAgents / sync_clients）
+    const server = this.getServer(serverId);
+    if (server) this._removeUninstalledServerFromAgents(server);
+
     const db = this._getDb();
     db.prepare('DELETE FROM mcp_profile_servers WHERE server_id = ?').run(serverId);
     db.prepare('DELETE FROM mcp_servers WHERE id = ? AND builtin = 0').run(serverId);

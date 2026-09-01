@@ -3737,7 +3737,6 @@ export default function Resources() {
       {editorOpen && createPortal(
         <div
           className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
-          onClick={() => { if (busy !== 'editor' && busy !== 'assistant-nl') setEditorOpen(false); }}
         >
           <div
             className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl"

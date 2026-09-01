@@ -7,6 +7,10 @@ const USAGE_SUPPORTED = new Set([
   'kimi-code', 'minimax', 'zhipu', 'agnes-ai',
 ]);
 
+/** 切 tab 会卸载/重挂用量卡；短缓存避免重复打钥匙串 / 重复拉额度 */
+const USAGE_CACHE_TTL_MS = 60 * 1000;
+const usageResultCache = new Map();
+
 /** 火山：Coding 订阅 vs 方舟按量（/api/v3/）分流 */
 function volcUsageKeyFromBase(base) {
   const b = String(base || '').toLowerCase();
@@ -197,16 +201,32 @@ export default function UsageMeter({
   ].join('|');
   const [open, setOpen] = useState(!!defaultOpen);
   const [state, setState] = useState({ loading: false, data: null, error: '' });
-  const load = useCallback(() => {
+  const load = useCallback((force = false) => {
     if (!api || !supported || !fetchId) return;
+    const ck = `${fetchId}::${credFp}`;
+    if (!force) {
+      const hit = usageResultCache.get(ck);
+      if (hit && Date.now() - hit.at < USAGE_CACHE_TTL_MS) {
+        setState(hit.state);
+        return;
+      }
+    }
     setState(s => ({ ...s, loading: true, error: '' }));
     api.fetch(fetchId)
-      .then(r => setState(r && r.error && !r.plan && !(r.windows || []).length && !r.credits
-        ? { loading: false, data: null, error: r.error }
-        : { loading: false, data: r, error: (r && r.error) || '' }))
-      .catch(e => setState({ loading: false, data: null, error: e?.message || String(e) }));
+      .then(r => {
+        const next = r && r.error && !r.plan && !(r.windows || []).length && !r.credits
+          ? { loading: false, data: null, error: r.error }
+          : { loading: false, data: r, error: (r && r.error) || '' };
+        usageResultCache.set(ck, { state: next, at: Date.now() });
+        setState(next);
+      })
+      .catch(e => {
+        const next = { loading: false, data: null, error: e?.message || String(e) };
+        usageResultCache.set(ck, { state: next, at: Date.now() });
+        setState(next);
+      });
   }, [api, supported, fetchId, credFp]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(false); }, [load]);
 
   // 仅 AccessKey、无 usage API 时仍展示同卡编辑区
   if (!api || !supported) {
@@ -277,7 +297,7 @@ export default function UsageMeter({
           {refreshed && !state.loading && open && (
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500 tabular-nums">{refreshed}</span>
           )}
-          <button type="button" onClick={load} disabled={state.loading}
+          <button type="button" onClick={() => load(true)} disabled={state.loading}
             className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 disabled:opacity-50">
             {state.loading ? '…' : '刷新'}
           </button>

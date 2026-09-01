@@ -107,16 +107,8 @@ function mapSiliconFlowUsage(data, provider) {
 }
 
 function readChromeSafeStoragePassword() {
-  if (process.platform !== 'darwin') return null;
-  try {
-    return execFileSync(
-      'security',
-      ['find-generic-password', '-w', '-s', 'Chrome Safe Storage', '-a', 'Chrome'],
-      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] },
-    ).replace(/\n$/, '');
-  } catch {
-    return null;
-  }
+  const { findGenericPassword } = require('./mac-keychain');
+  return findGenericPassword('Chrome Safe Storage', 'Chrome');
 }
 
 function decryptCookieToText(encryptedValue, password) {

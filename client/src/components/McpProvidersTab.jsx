@@ -1180,10 +1180,15 @@ export default function McpProvidersTab() {
     if (server.builtin) return;
     if (!confirm(t('providers.mcp.uninstallConfirm', { name: server.display_name || server.name }))) return;
     setBusy(server.id);
-    const res = await window.electronAPI.mcp.uninstallServer(server.id);
-    setBusy('');
-    if (!res.success) alert(res.error);
-    else loadAll();
+    try {
+      const res = await window.electronAPI.mcp.uninstallServer(server.id);
+      if (!res?.success) alert(res?.error);
+      else loadAll();
+    } catch (e) {
+      alert(e?.message || String(e));
+    } finally {
+      setBusy('');
+    }
   }
 
   async function saveCustomServer() {
@@ -2019,7 +2024,7 @@ export default function McpProvidersTab() {
 
       {/* 弹窗挂 body：避开主栏 backdrop-filter 导致 fixed 错位 */}
       {installTarget && createPortal(
-        <div className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 p-4" onClick={() => setInstallTarget(null)}>
+        <div className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-4 shadow-xl" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-semibold">{t('providers.mcp.importTitle', { name: installTarget.display_name })}</h3>
             {(installTarget.configFields || []).map(field => (
@@ -2045,7 +2050,7 @@ export default function McpProvidersTab() {
 
       {/* 编辑已纳管 MCP */}
       {editServer && createPortal(
-        <div className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 p-4" onClick={() => setEditServer(null)}>
+        <div className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 p-4">
           <div
             ref={editPanelRef}
             className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-lg p-5 space-y-3 max-h-[90vh] overflow-y-auto shadow-xl"
@@ -2210,7 +2215,7 @@ export default function McpProvidersTab() {
 
       {/* 自定义 Server */}
       {showCustom && createPortal(
-        <div className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 p-4" onClick={() => setShowCustom(false)}>
+        <div className="electron-no-drag fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-3 shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-semibold">{t('providers.mcp.addCustomTitle')}</h3>
             <input
