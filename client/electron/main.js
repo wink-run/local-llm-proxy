@@ -66,6 +66,10 @@ function maybeSyncSessionTelemetry() {
 // by useDeviceReporter in the renderer (which has access to the JWT).
 
 const isDev = !app.isPackaged;
+// 打包后 Finder/Dock 启动 cwd 常是 Contents/MacOS；Agent 子进程 getcwd 会 Operation not permitted
+if (app.isPackaged) {
+  try { process.chdir(os.homedir()); } catch { /* ignore */ }
+}
 // 与 vite.config.js server.port 保持一致；可用环境变量覆盖
 const VITE_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
 // macOS 菜单栏显示名（dev 下系统设置里通常显示 Electron）

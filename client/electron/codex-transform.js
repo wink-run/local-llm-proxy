@@ -185,6 +185,11 @@ function freeformInputFromArgs(args) {
 const TOOL_SEARCH_PROXY_NAME = 'tool_search';
 const CUSTOM_TOOL_INPUT_FIELD = 'input';
 const CHAT_TOOL_NAME_MAX_LEN = 64;
+// Codex 0.147+ 把内置工具包进默认 namespace "functions"；客户端 registry 仍按
+// ToolName::plain(name)（namespace=None）注册。展平名 functions__exec 若原样回写，
+// 会变成 unsupported call。
+const DEFAULT_FUNCTION_NAMESPACE = 'functions';
+const DEFAULT_FUNCTION_NAMESPACE_PREFIX = `${DEFAULT_FUNCTION_NAMESPACE}__`;
 const CUSTOM_TOOL_INPUT_DESCRIPTION =
   'Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.';
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING = 'Original tool definition:';
@@ -203,6 +208,16 @@ function flattenNamespaceToolName(namespace, name) {
   const suffix = `__${hash}`;
   const prefixLen = Math.max(0, CHAT_TOOL_NAME_MAX_LEN - suffix.length);
   return full.slice(0, prefixLen) + suffix;
+}
+
+/** 剥掉默认 functions__ 前缀（模型常按展平名回调内置工具） */
+function stripDefaultNamespacePrefix(chatName) {
+  const n = String(chatName || '');
+  if (n.startsWith(DEFAULT_FUNCTION_NAMESPACE_PREFIX)
+      && n.length > DEFAULT_FUNCTION_NAMESPACE_PREFIX.length) {
+    return n.slice(DEFAULT_FUNCTION_NAMESPACE_PREFIX.length);
+  }
+  return n;
 }
 
 /** Chat 上游要求 parameters.type 必须是 "object"；Responses 常带 null / 缺 type */
@@ -239,7 +254,11 @@ class CodexToolContext {
   chatTools() { return this._chatTools; }
 
   lookupChatName(chatName) {
-    return this._chatNameToSpec.get(chatName) || null;
+    const direct = this._chatNameToSpec.get(chatName);
+    if (direct) return direct;
+    const stripped = stripDefaultNamespacePrefix(chatName);
+    if (stripped !== chatName) return this._chatNameToSpec.get(stripped) || null;
+    return null;
   }
 
   isCustomToolChatName(chatName) {
@@ -259,9 +278,19 @@ class CodexToolContext {
     if (namespace) {
       const mapped = this._namespaceNameToChatName.get(`${namespace}\0${name}`);
       if (mapped) return mapped;
+      // 默认 functions 命名空间：历史调用按 plain name 对齐 Chat tools
+      if (namespace === DEFAULT_FUNCTION_NAMESPACE) return name;
       return flattenNamespaceToolName(namespace, name);
     }
+    const stripped = stripDefaultNamespacePrefix(name);
+    if (stripped !== name && this._chatNameToSpec.has(stripped)) return stripped;
     return name;
+  }
+
+  /** 记录 functions\0name → plain，便于历史 function_call 带 namespace 时展平对齐 */
+  _bindDefaultNamespace(originalName) {
+    if (!originalName) return;
+    this._namespaceNameToChatName.set(`${DEFAULT_FUNCTION_NAMESPACE}\0${originalName}`, originalName);
   }
 
   _addChatTool(chatName, spec, chatTool) {
@@ -369,8 +398,23 @@ class CodexToolContext {
     if (!namespace || typeof namespace !== 'string') return;
     const children = namespaceTool.tools || namespaceTool.children;
     if (!Array.isArray(children)) return;
+    // 默认 functions：解开包装，保留 exec/wait 原名；MCP 等其它 namespace 仍展平
+    const unwrap = namespace === DEFAULT_FUNCTION_NAMESPACE;
     for (const child of children) {
-      if (child && child.type === 'function') this.addFunctionTool(child, namespace);
+      if (!child || typeof child !== 'object') continue;
+      const t = child.type;
+      if (t === 'function') {
+        this.addFunctionTool(child, unwrap ? null : namespace);
+        if (unwrap) this._bindDefaultNamespace(responsesToolName(child));
+      } else if (t === 'custom') {
+        // 旧实现只展开 function 子项，把 custom exec 整颗丢掉 → 模型只能空口调 functions__exec
+        this.addCustomTool(child);
+        if (unwrap) this._bindDefaultNamespace(responsesToolName(child));
+      } else if (t === 'local_shell') {
+        this.addLocalShellTool(child);
+      } else if (t === 'namespace') {
+        this.addNamespaceTool(child);
+      }
     }
   }
 
@@ -454,21 +498,26 @@ function responseToolCallItemFromChatName(itemId, status, callId, chatName, args
       itemId || `ctc_${callId}`, status, callId, spec.name, freeformInputFromArgs(args), reasoning);
   }
   if (spec) {
+    // functions 默认命名空间不要带回，否则 Codex 按 {name, namespace} 精确匹配失败
+    const ns = spec.namespace === DEFAULT_FUNCTION_NAMESPACE ? null : spec.namespace;
     return responseFunctionCallItem(
-      itemId || `fc_${callId}`, status, callId, spec.name, canonicalizeArgs(args), reasoning, spec.namespace);
+      itemId || `fc_${callId}`, status, callId, spec.name, canonicalizeArgs(args), reasoning, ns);
   }
-  // 无上下文但名字是 Codex 已知 freeform → 仍回写 custom，否则客户端不执行
-  if (KNOWN_CUSTOM_TOOL_NAMES.has(chatName)) {
+  const stripped = stripDefaultNamespacePrefix(chatName);
+  // 无上下文但名字是 Codex 已知 freeform（含 functions__exec）→ 仍回写 custom
+  if (KNOWN_CUSTOM_TOOL_NAMES.has(chatName) || KNOWN_CUSTOM_TOOL_NAMES.has(stripped)) {
+    const name = KNOWN_CUSTOM_TOOL_NAMES.has(chatName) ? chatName : stripped;
     return responseCustomToolCallItem(
-      itemId || `ctc_${callId}`, status, callId, chatName, freeformInputFromArgs(args), reasoning);
+      itemId || `ctc_${callId}`, status, callId, name, freeformInputFromArgs(args), reasoning);
   }
   return responseFunctionCallItem(
-    itemId || `fc_${callId}`, status, callId, chatName, canonicalizeArgs(args), reasoning);
+    itemId || `fc_${callId}`, status, callId, stripped, canonicalizeArgs(args), reasoning);
 }
 
 function itemIdFromChatName(callId, chatName, toolContext) {
   if (toolContext && toolContext.isCustomToolChatName(chatName)) return `ctc_${callId}`;
-  if (KNOWN_CUSTOM_TOOL_NAMES.has(chatName)) return `ctc_${callId}`;
+  const stripped = stripDefaultNamespacePrefix(chatName);
+  if (KNOWN_CUSTOM_TOOL_NAMES.has(chatName) || KNOWN_CUSTOM_TOOL_NAMES.has(stripped)) return `ctc_${callId}`;
   return `fc_${callId}`;
 }
 
@@ -877,13 +926,16 @@ function chatToolCallsToResponseItems(message, reasoning, toolContext, freeformT
         'completed', callId, n, args, reasoning, toolContext));
       return;
     }
-    // 无 toolContext：freeform 集合 + Codex 已知 freeform 名
-    if (freeform.has(n) || KNOWN_CUSTOM_TOOL_NAMES.has(n)) {
+    // 无 toolContext：freeform 集合 + Codex 已知 freeform 名（含 functions__exec）
+    const stripped = stripDefaultNamespacePrefix(n);
+    if (freeform.has(n) || KNOWN_CUSTOM_TOOL_NAMES.has(n)
+        || freeform.has(stripped) || KNOWN_CUSTOM_TOOL_NAMES.has(stripped)) {
+      const name = (freeform.has(n) || KNOWN_CUSTOM_TOOL_NAMES.has(n)) ? n : stripped;
       out.push(responseCustomToolCallItem(
-        `ctc_${callId}`, 'completed', callId, n, freeformInputFromArgs(args), reasoning));
+        `ctc_${callId}`, 'completed', callId, name, freeformInputFromArgs(args), reasoning));
     } else {
       out.push(responseFunctionCallItem(
-        `fc_${callId}`, 'completed', callId, n, canonicalizeArgs(args), reasoning));
+        `fc_${callId}`, 'completed', callId, stripped, canonicalizeArgs(args), reasoning));
     }
   };
   if (Array.isArray(message.tool_calls)) {
@@ -1021,9 +1073,13 @@ class ChatToResponsesStream {
 
   _isFreeform(chatName) {
     // Codex Desktop 的 exec/apply_patch：即便上下文漏登记也按 freeform 流式回写
-    if (KNOWN_CUSTOM_TOOL_NAMES.has(chatName)) return true;
-    if (this.toolContext) return this.toolContext.isCustomToolChatName(chatName);
-    return this.freeformToolNames.has(chatName);
+    const stripped = stripDefaultNamespacePrefix(chatName);
+    if (KNOWN_CUSTOM_TOOL_NAMES.has(chatName) || KNOWN_CUSTOM_TOOL_NAMES.has(stripped)) return true;
+    if (this.toolContext) {
+      return this.toolContext.isCustomToolChatName(chatName)
+        || this.toolContext.isCustomToolChatName(stripped);
+    }
+    return this.freeformToolNames.has(chatName) || this.freeformToolNames.has(stripped);
   }
 
   _isToolSearch(chatName) {
@@ -1040,12 +1096,15 @@ class ChatToResponsesStream {
         itemIdFromChatName(callId, chatName, this.toolContext),
         status, callId, chatName, args, reasoning, this.toolContext);
     }
+    const name = this._isFreeform(chatName)
+      ? (KNOWN_CUSTOM_TOOL_NAMES.has(chatName) ? chatName : stripDefaultNamespacePrefix(chatName))
+      : stripDefaultNamespacePrefix(chatName);
     if (this._isFreeform(chatName)) {
       return responseCustomToolCallItem(
-        `ctc_${callId}`, status, callId, chatName, freeformInputFromArgs(args), reasoning);
+        `ctc_${callId}`, status, callId, name, freeformInputFromArgs(args), reasoning);
     }
     return responseFunctionCallItem(
-      `fc_${callId}`, status, callId, chatName, canonicalizeArgs(args), reasoning);
+      `fc_${callId}`, status, callId, name, canonicalizeArgs(args), reasoning);
   }
 
   _nextIndex() { return this.nextIndex++; }
@@ -1421,7 +1480,8 @@ module.exports = {
     canonicalizeArgs, splitLeadingThinkBlock, extractReasoningFieldText,
     extractReasoningSummaryText, chatUsageToResponsesUsage, responseIdFromChatId,
     leadingThinkDecision, responsesToolToChat, freeformInputFromArgs,
-    toolCallArgsFromItem, responseCustomToolCallItem, flattenNamespaceToolName,
+    toolCallArgsFromItem, responseCustomToolCallItem, flattenNamespaceToolName, stripDefaultNamespacePrefix,
     normalizeFunctionParameters, CodexToolKind, KNOWN_CUSTOM_TOOL_NAMES,
+    DEFAULT_FUNCTION_NAMESPACE,
   },
 };

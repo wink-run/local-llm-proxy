@@ -28,6 +28,7 @@ const DESKTOP_ONLY_FILES = new Set([
   'injector.js',
   'ca-manager.js',
   'entitlements.mac.plist',
+  'entitlements.mac.inherit.plist',
 ]);
 
 const DESKTOP_ONLY_DIRS = new Set([

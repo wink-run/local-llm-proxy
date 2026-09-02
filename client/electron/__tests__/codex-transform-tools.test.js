@@ -5,7 +5,10 @@ const assert = require('node:assert');
 const {
   responsesToChat, chatToResponses, ChatToResponsesStream, collectFreeformToolNames,
   buildCodexToolContext,
-  _internal: { responsesToolToChat, freeformInputFromArgs, normalizeFunctionParameters, flattenNamespaceToolName },
+  _internal: {
+    responsesToolToChat, freeformInputFromArgs, normalizeFunctionParameters,
+    flattenNamespaceToolName, stripDefaultNamespacePrefix,
+  },
 } = require('../codex-transform');
 
 test('responsesToolToChat：custom / local_shell 转成 function，不丢工具', () => {
@@ -306,4 +309,168 @@ test('已知 freeform 名 exec 无上下文也回写 custom_tool_call', () => {
   const ctc = resp.output.find(i => i.type === 'custom_tool_call');
   assert.ok(ctc);
   assert.equal(ctc.name, 'exec');
+});
+
+test('stripDefaultNamespacePrefix：剥 functions__ 前缀', () => {
+  assert.equal(stripDefaultNamespacePrefix('functions__exec'), 'exec');
+  assert.equal(stripDefaultNamespacePrefix('exec'), 'exec');
+  assert.equal(stripDefaultNamespacePrefix('mcp__x__search'), 'mcp__x__search');
+});
+
+test('functions 命名空间解开：custom exec + function wait 不展平为 functions__*', () => {
+  const chat = responsesToChat({
+    model: 'k3',
+    input: [
+      {
+        type: 'additional_tools',
+        tools: [{
+          type: 'namespace',
+          name: 'functions',
+          description: 'Standard function tools.',
+          tools: [
+            { type: 'custom', name: 'exec', description: 'Run a shell command' },
+            { type: 'custom', name: 'apply_patch' },
+            {
+              type: 'function', name: 'wait',
+              parameters: { type: 'object', properties: { timeout_ms: { type: 'number' } } },
+            },
+          ],
+        }],
+      },
+      { type: 'message', role: 'user', content: 'list files' },
+    ],
+  });
+  const names = chat.tools.map(t => t.function.name).sort();
+  assert.deepEqual(names, ['apply_patch', 'exec', 'wait']);
+  assert.ok(!names.includes('functions__exec'));
+  delete chat._codexToolContext;
+});
+
+test('functions__exec 回写 custom_tool_call name=exec，不带 namespace', () => {
+  const body = {
+    model: 'k3',
+    input: [{
+      type: 'additional_tools',
+      tools: [{
+        type: 'namespace', name: 'functions',
+        tools: [{ type: 'custom', name: 'exec' }],
+      }],
+    }],
+  };
+  const toolContext = buildCodexToolContext(body);
+  const resp = chatToResponses({
+    id: 'chatcmpl-fx',
+    model: 'k3',
+    created: 1,
+    choices: [{
+      finish_reason: 'tool_calls',
+      message: {
+        role: 'assistant', content: null,
+        tool_calls: [{
+          id: 'call_fx', type: 'function',
+          function: { name: 'functions__exec', arguments: '{"input":"ls"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }, { toolContext });
+  const ctc = resp.output.find(i => i.type === 'custom_tool_call');
+  assert.ok(ctc, '应回写 custom_tool_call 而非 function_call');
+  assert.equal(ctc.name, 'exec');
+  assert.equal(ctc.namespace, undefined);
+  assert.equal(ctc.input, 'ls');
+});
+
+test('无上下文 functions__exec 也回写 custom exec（避免 unsupported call）', () => {
+  const resp = chatToResponses({
+    id: 'chatcmpl-fx2',
+    model: 'k3',
+    created: 1,
+    choices: [{
+      finish_reason: 'tool_calls',
+      message: {
+        role: 'assistant', content: null,
+        tool_calls: [{
+          id: 'call_fx2', type: 'function',
+          function: { name: 'functions__exec', arguments: '{"input":"pwd"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }, {});
+  const ctc = resp.output.find(i => i.type === 'custom_tool_call');
+  assert.ok(ctc);
+  assert.equal(ctc.name, 'exec');
+  assert.equal(ctc.namespace, undefined);
+});
+
+test('ChatToResponsesStream：functions__exec 流式还原为 custom exec', () => {
+  const sm = new ChatToResponsesStream({});
+  let out = '';
+  out += sm.handleChunk({
+    id: 'chatcmpl-1', model: 'k3',
+    choices: [{
+      delta: {
+        tool_calls: [{
+          index: 0, id: 'call_1',
+          function: { name: 'functions__exec', arguments: '{"input":"ls"}' },
+        }],
+      },
+      finish_reason: null,
+    }],
+  });
+  out += sm.handleChunk({
+    id: 'chatcmpl-1',
+    choices: [{ delta: {}, finish_reason: 'tool_calls' }],
+  });
+  out += sm.finalize();
+  assert.match(out, /custom_tool_call/);
+  assert.match(out, /"name":"exec"/);
+  assert.ok(!/"name":"functions__exec"/.test(out));
+  assert.ok(!/"namespace":"functions"/.test(out));
+});
+
+test('functions 命名空间的历史 function_call 展平为 wait 而非 functions__wait', () => {
+  const chat = responsesToChat({
+    model: 'k3',
+    input: [
+      {
+        type: 'additional_tools',
+        tools: [{
+          type: 'namespace', name: 'functions',
+          tools: [{
+            type: 'function', name: 'wait',
+            parameters: { type: 'object', properties: {} },
+          }],
+        }],
+      },
+      { type: 'message', role: 'user', content: 'hi' },
+      {
+        type: 'function_call', call_id: 'c1', name: 'wait',
+        namespace: 'functions', arguments: '{}',
+      },
+      { type: 'function_call_output', call_id: 'c1', output: 'ok' },
+    ],
+  });
+  const asst = chat.messages.find(m => m.role === 'assistant' && m.tool_calls);
+  assert.equal(asst.tool_calls[0].function.name, 'wait');
+  delete chat._codexToolContext;
+});
+
+test('MCP namespace 仍展平，不受 functions 解开影响', () => {
+  const chat = responsesToChat({
+    model: 'k3',
+    input: 'x',
+    tools: [{
+      type: 'namespace',
+      name: 'mcp__codex_apps__gmail',
+      tools: [{
+        type: 'function', name: 'search',
+        parameters: { type: 'object', properties: { q: { type: 'string' } } },
+      }],
+    }],
+  });
+  const names = chat.tools.map(t => t.function.name);
+  assert.deepEqual(names, ['mcp__codex_apps__gmail__search']);
+  delete chat._codexToolContext;
 });

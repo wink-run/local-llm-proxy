@@ -2,15 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Developer ID + 公证（Hardened Runtime）。故意不启用 App Sandbox：
-       游乐场要 spawn 本机 Agent（codex/claude/node），并读写 ~/.codex、项目目录。 -->
+  <!-- Electron Helper 与 spawn 出的智能体子进程：不继承 App Sandbox。
+       曾用于 MAS 上架的 network.client/server、app-sandbox 不要写在这里。 -->
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
   <true/>
   <key>com.apple.security.cs.allow-dyld-environment-variables</key>
   <true/>
-  <!-- spawn 本机未签名 CLI；无此项 Hardened Runtime 会拦 node/npx/codex -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>

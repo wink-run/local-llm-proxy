@@ -451,6 +451,6 @@ function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 module.exports = {
   resolveRealCommand, clearCommandCache, writeShim, removeShim, shimExists,
-  enablePath, disablePath,
+  enablePath, disablePath, npmGlobalBinDirs,
   paths: { BIN_DIR }, MARK_BEGIN, MARK_END,
 };

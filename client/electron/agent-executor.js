@@ -147,6 +147,77 @@ let runProbe = null;
 try { shim = require('./shim-installer'); } catch { /* optional in CLI */ }
 try { agentLinker = require('./agent-linker'); } catch { /* optional in CLI */ }
 try { runProbe = require('./detect-tools')._internal?.runProbe; } catch { /* optional in CLI */ }
+
+/**
+ * 打包后从 Finder 启动时，Electron cwd 常在 .app/Contents/MacOS 或 App Translocation。
+ * 该目录对未签名的 node/npx 子进程 getcwd 会 EPERM（zsh: shell-init / job-working-directory）。
+ */
+function isUnsafeSpawnCwd(dir) {
+  const n = path.resolve(String(dir || ''));
+  if (!n) return true;
+  if (/\.app\/Contents(\/|$)/i.test(n)) return true;
+  if (/\/AppTranslocation\//i.test(n)) return true;
+  return false;
+}
+
+function dirIsSpawnable(dir) {
+  if (!dir) return false;
+  try {
+    const resolved = path.resolve(String(dir));
+    if (isUnsafeSpawnCwd(resolved)) return false;
+    const st = fs.statSync(resolved);
+    if (!st.isDirectory()) return false;
+    fs.accessSync(resolved, fs.constants.R_OK | fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 选一个子进程能 getcwd 的目录：优先用户工作区，否则 home / tmp */
+function safeAgentCwd(preferred) {
+  let procCwd = null;
+  try { procCwd = process.cwd(); } catch { /* ignore */ }
+  const candidates = [
+    preferred && String(preferred).trim() ? path.resolve(String(preferred).trim()) : null,
+    procCwd,
+    os.homedir(),
+    os.tmpdir(),
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (dirIsSpawnable(c)) return c;
+  }
+  return os.homedir();
+}
+
+/** GUI 精简 PATH 补上 Homebrew / nvm，并清掉会让 node 误跑成 Electron 的变量 */
+function sanitizeAgentSpawnEnv(baseEnv, cwd) {
+  const env = { ...(baseEnv || {}) };
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.ELECTRON_NO_ASAR;
+  const resolved = path.resolve(String(cwd || os.homedir()));
+  env.PWD = resolved;
+  env.INIT_CWD = resolved;
+  if (env.OLDPWD && isUnsafeSpawnCwd(env.OLDPWD)) delete env.OLDPWD;
+  const sep = process.platform === 'win32' ? ';' : ':';
+  let extra = [];
+  try { extra = typeof shim?.npmGlobalBinDirs === 'function' ? shim.npmGlobalBinDirs() : []; } catch { extra = []; }
+  const cur = String(env.PATH || env.Path || '');
+  const seen = new Set();
+  const parts = [];
+  for (const p of [...extra, ...cur.split(sep)]) {
+    if (!p) continue;
+    let key = p;
+    try { key = path.resolve(p); } catch { /* keep raw */ }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(p);
+  }
+  const pathVal = parts.join(sep);
+  env.PATH = pathVal;
+  if (process.platform === 'win32') env.Path = pathVal;
+  return env;
+}
 const { parseAgentOutputLine, summarizeAgentStdout, extractModifiedFiles, extractCliSessionId, normalizeCliSessionId, detectAgentExecutionFailure, formatAgentExitError, parseClaudeSyncStdout } = require('./agent-output-parser');
 const mcpManager = require('./mcp-manager');
 const {
@@ -1251,11 +1322,12 @@ class AgentExecutor extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      const resolvedCwd = path.resolve(String(workingDir || process.cwd()));
-      if (!fs.existsSync(resolvedCwd)) {
-        reject(new Error(`工作目录不存在: ${resolvedCwd}`));
+      const resolvedCwd = safeAgentCwd(workingDir);
+      if (!dirIsSpawnable(resolvedCwd)) {
+        reject(new Error(`工作目录不可用: ${workingDir || resolvedCwd}`));
         return;
       }
+      spawnEnv = sanitizeAgentSpawnEnv(spawnEnv, resolvedCwd);
 
       const proc = spawn(executable, args, {
         cwd: resolvedCwd,
@@ -1827,3 +1899,7 @@ module.exports.materializeAttachedImages = materializeAttachedImages;
 module.exports.buildClaudeMultimodalStdin = buildClaudeMultimodalStdin;
 module.exports.ensureClaudeMultimodalArgs = ensureClaudeMultimodalArgs;
 module.exports.detectImageMime = detectImageMime;
+module.exports.safeAgentCwd = safeAgentCwd;
+module.exports.dirIsSpawnable = dirIsSpawnable;
+module.exports.sanitizeAgentSpawnEnv = sanitizeAgentSpawnEnv;
+module.exports.isUnsafeSpawnCwd = isUnsafeSpawnCwd;
