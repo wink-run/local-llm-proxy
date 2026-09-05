@@ -77,11 +77,46 @@ jobs:
           done
           exit 1
 
+      # electron-builder 25 用 .p12 密码去 unlock 临时钥匙串（#10066），macos-26 会
+      # SecKeychainUnlock 失败。这里按钥匙串自己的密码导入，构建时不再传 CSC_LINK。
+      - name: Import Apple signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERTIFICATE}" ]; then
+            echo "MACOS_CERTIFICATE secret is empty"
+            exit 1
+          fi
+          CERT_PATH="${RUNNER_TEMP}/certificate.p12"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "${MACOS_CERTIFICATE}" | base64 --decode > "${CERT_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERT_PATH}" \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${MACOS_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          EXISTING_KEYCHAINS="$(security list-keychains -d user | sed 's/"//g')"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" ${EXISTING_KEYCHAINS}
+          rm -f "${CERT_PATH}"
+          IDENTITIES="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}")"
+          echo "${IDENTITIES}"
+          if echo "${IDENTITIES}" | grep -q '0 valid identities found'; then
+            echo "No valid codesigning identity in imported keychain"
+            exit 1
+          fi
+
       # Apple notarytool 偶发 HTTP 超时（NSURLError -1001）；afterSign 内已重试，整步再兜底一次
       - name: Build (Vite + electron-builder)
         env:
-          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: true
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
