@@ -8,6 +8,7 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 const { execFileSync } = require('child_process');
+const { clearExecRestrictions } = require('./host-exec');
 
 const TB_DIR  = path.join(os.homedir(), '.tokenbank');
 const BIN_DIR = path.join(TB_DIR, 'bin');
@@ -364,6 +365,7 @@ function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {},
     fs.writeFileSync(shimPath, lines.join('\n'));
     fs.chmodSync(shimPath, 0o755);
   }
+  clearExecRestrictions(shimPath);
   return shimPath;
 }
 

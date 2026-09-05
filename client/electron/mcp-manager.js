@@ -10,6 +10,7 @@ const { STATS_DIR } = require('../shared/telemetry');
 let shim = null;
 try { shim = require('./shim-installer'); } catch { /* optional in CLI */ }
 const { getCatalogItem, listCatalogItems, listCatalogGrouped, MCP_CATEGORY_GROUPS } = require('./mcp-catalog');
+const { clearExecRestrictions, mcpStdioFromLauncher } = require('./host-exec');
 
 const { DELIVERY_POLICY } = require('./agent-delivery-policy');
 const { formatOrchestratorCapabilityHint } = require('./tb-capabilities');
@@ -141,6 +142,7 @@ function writeElectronAsNodeLauncher({ name, scriptPath, env = {}, platform = pr
       '',
     ];
     fs.writeFileSync(launcherPath, lines.join('\r\n'), 'utf8');
+    clearExecRestrictions(launcherPath);
     return launcherPath;
   }
 
@@ -148,32 +150,15 @@ function writeElectronAsNodeLauncher({ name, scriptPath, env = {}, platform = pr
     ([k, v]) => `export ${k}=${shellQuote(String(v))}`,
   );
   const lines = [
-    '#!/bin/bash',
+    '#!/bin/sh',
     'export ELECTRON_RUN_AS_NODE=1',
     ...envExports,
     `exec env ELECTRON_RUN_AS_NODE=1 ${shellQuote(electronBin)} ${shellQuote(absScript)}`,
     '',
   ];
   fs.writeFileSync(launcherPath, lines.join('\n'), { mode: 0o755 });
+  clearExecRestrictions(launcherPath);
   return launcherPath;
-}
-
-/**
- * 将 launcher 路径转成 MCP stdio 的 command/args。
- * Windows 上 .cmd 需经 cmd.exe /c 启动，否则多数 Agent 的 spawn 会失败。
- */
-function mcpStdioFromLauncher(launcherPath, extraEnv = {}, platform = process.platform) {
-  const launcher = String(launcherPath || '');
-  if (platform === 'win32' && /\.cmd$/i.test(launcher)) {
-    const comspec = process.env.ComSpec || 'cmd.exe';
-    const quoted = `"${launcher.replace(/"/g, '')}"`;
-    return {
-      command: comspec,
-      args: ['/d', '/s', '/c', quoted],
-      env: { ...(extraEnv || {}) },
-    };
-  }
-  return { command: launcher, args: [], env: { ...(extraEnv || {}) } };
 }
 
 /**

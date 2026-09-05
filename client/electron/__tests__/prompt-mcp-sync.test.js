@@ -13,6 +13,13 @@ const promptsRow = {
   command: '__DYNAMIC_ELECTRON__', args: '[]', env: '{"ELECTRON_RUN_AS_NODE":"1"}', builtin: 1,
 };
 
+/** darwin/linux/docker 经 /bin/sh 包装；Windows 经 cmd.exe */
+function unixLauncherPath(entry) {
+  const { resolveUnixShell } = require('../host-exec');
+  assert.equal(entry.command, resolveUnixShell());
+  return String(entry.args && entry.args[0] || '');
+}
+
 /** CI 无本机 Agent 安装时，getServerSyncClients 会把 sync_clients 滤空；测试里 stub 已装列表 */
 function withInstalledClients(ids, fn) {
   const orig = mcpTargets.listInstalledClientIds;
@@ -34,9 +41,9 @@ test('serverToEntry: prompts server 物化为 shell launcher（内嵌 ELECTRON_R
     assert.ok(sh.includes('prompt-mcp.js'));
     assert.ok(sh.includes('TB_CLIENT_ID'));
   } else {
-    assert.ok(String(entry.command).endsWith('prompts-claude-code.sh'), entry.command);
-    assert.deepEqual(entry.args, []);
-    const sh = require('fs').readFileSync(entry.command, 'utf8');
+    const launcher = unixLauncherPath(entry);
+    assert.ok(launcher.endsWith('prompts-claude-code.sh'), launcher);
+    const sh = require('fs').readFileSync(launcher, 'utf8');
     assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
     assert.ok(sh.includes('prompt-mcp.js'));
     // 即使在系统 Node 下跑测试，launcher 也应指向 Electron 二进制而非 node
@@ -59,8 +66,9 @@ test('serverToEntry: models server 物化为 shell launcher', () => {
   if (process.platform === 'win32') {
     assert.ok(entry.args.some((a) => /models-cursor\.cmd/i.test(String(a))), entry.args);
   } else {
-    assert.ok(String(entry.command).endsWith('models-cursor.sh'), entry.command);
-    const sh = require('fs').readFileSync(entry.command, 'utf8');
+    const launcher = unixLauncherPath(entry);
+    assert.ok(launcher.endsWith('models-cursor.sh'), launcher);
+    const sh = require('fs').readFileSync(launcher, 'utf8');
     assert.ok(sh.includes('models-mcp.js'));
     assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
   }
@@ -74,8 +82,9 @@ test('serverToEntry: resources server 物化为 shell launcher 并内嵌 TB_CLIE
   if (process.platform === 'win32') {
     assert.ok(entry.args.some((a) => /resources-codex\.cmd/i.test(String(a))), entry.args);
   } else {
-    assert.ok(String(entry.command).endsWith('resources-codex.sh'), entry.command);
-    const sh = require('fs').readFileSync(entry.command, 'utf8');
+    const launcher = unixLauncherPath(entry);
+    assert.ok(launcher.endsWith('resources-codex.sh'), launcher);
+    const sh = require('fs').readFileSync(launcher, 'utf8');
     assert.ok(sh.includes('resources-mcp.js'));
     // 与 prompts 一致：否则空 client 会列出全部 assistant
     assert.ok(sh.includes("TB_CLIENT_ID='codex'") || sh.includes('TB_CLIENT_ID=codex'));

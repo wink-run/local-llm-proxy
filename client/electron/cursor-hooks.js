@@ -10,9 +10,11 @@ const TB_HOOK_DIR = path.join(os.homedir(), '.tokenbank', 'hooks');
 const TB_HOOK_JS = path.join(TB_HOOK_DIR, 'cursor-token-stop.js');
 const TB_HOOK_LOG_JS = path.join(TB_HOOK_DIR, 'cursor-hooks-log.js');
 const TB_HOOK_SH = path.join(TB_HOOK_DIR, 'cursor-token-stop.sh');
+const TB_HOOK_CMD = path.join(TB_HOOK_DIR, 'cursor-token-stop.cmd');
 const TB_EVENTS = path.join(os.homedir(), '.tokenbank', 'cursor-hook-events.jsonl');
-const HOOK_CMD_MARKER = '.tokenbank/hooks/cursor-token-stop.sh';
+const HOOK_CMD_MARKER = '.tokenbank/hooks/cursor-token-stop';
 const { hookLog } = require('./hooks/cursor-hooks-log');
+const { clearExecRestrictions, resolveUnixShell, resolveCmdExe } = require('./host-exec');
 
 /** 从 Cursor 本地库查用户发消息时间（秒） */
 function lookupPromptTsSec(generationId) {
@@ -61,23 +63,51 @@ function writeHooksJson(data) {
 }
 
 function isOurHook(entry) {
-  const cmd = String(entry?.command || '');
+  const cmd = String(entry?.command || '').replace(/\\/g, '/');
   return cmd.includes(HOOK_CMD_MARKER);
 }
 
-/** 写入 hook 脚本与 launcher */
+function winCmdQuote(value) {
+  return `"${String(value).replace(/"/g, '')}"`;
+}
+
+/** 写入 hook 脚本与 launcher（Windows .cmd，Unix .sh） */
 function materializeHookRunner(execPath) {
   fs.mkdirSync(TB_HOOK_DIR, { recursive: true });
   fs.copyFileSync(bundledHookJs('cursor-token-stop.js'), TB_HOOK_JS);
   fs.copyFileSync(bundledHookJs('cursor-hooks-log.js'), TB_HOOK_LOG_JS);
 
+  if (process.platform === 'win32') {
+    const lines = [
+      '@echo off',
+      'setlocal',
+      'set "ELECTRON_RUN_AS_NODE=1"',
+      `${winCmdQuote(execPath)} ${winCmdQuote(TB_HOOK_JS)}`,
+      '',
+    ];
+    fs.writeFileSync(TB_HOOK_CMD, lines.join('\r\n'));
+    clearExecRestrictions(TB_HOOK_CMD);
+    return;
+  }
+
   const sh = [
-    '#!/bin/bash',
+    '#!/bin/sh',
     'export ELECTRON_RUN_AS_NODE=1',
     `exec ${JSON.stringify(execPath)} ${JSON.stringify(TB_HOOK_JS)}`,
     '',
   ].join('\n');
   fs.writeFileSync(TB_HOOK_SH, sh, { mode: 0o755 });
+  clearExecRestrictions(TB_HOOK_SH);
+}
+
+/** Cursor 直接 spawn 用户目录脚本会 EPERM / 找不到 cmd；改为系统壳读脚本 */
+function hookCommand() {
+  if (process.platform === 'win32') {
+    return `${resolveCmdExe()} /d /s /c ${winCmdQuote(TB_HOOK_CMD)}`;
+  }
+  const sh = resolveUnixShell();
+  if (!/\s/.test(TB_HOOK_SH)) return `${sh} ${TB_HOOK_SH}`;
+  return `${sh} ${JSON.stringify(TB_HOOK_SH)}`;
 }
 
 /** 纳管 Cursor：安装 stop hook（合并已有 hooks.json） */
@@ -85,11 +115,12 @@ function install(execPath) {
   materializeHookRunner(execPath);
   const hooks = readHooksJson();
   const list = Array.isArray(hooks.hooks.stop) ? hooks.hooks.stop.filter(h => !isOurHook(h)) : [];
-  // 用户级 hooks 从 ~/.cursor/ 运行，command 用 ~/.tokenbank 下的绝对路径
-  list.push({ command: TB_HOOK_SH });
+  // 用户级 hooks 从 ~/.cursor/ 运行；command 走系统壳读脚本（Windows cmd.exe / Unix sh）
+  const command = hookCommand();
+  list.push({ command });
   hooks.hooks.stop = list;
   writeHooksJson(hooks);
-  return { ok: true, command: TB_HOOK_SH };
+  return { ok: true, command };
 }
 
 /** 还原 Cursor：移除 Token Bank 的 stop hook */
@@ -99,6 +130,7 @@ function uninstall() {
   hooks.hooks.stop = (hooks.hooks.stop || []).filter(h => !isOurHook(h));
   if (hooks.hooks.stop.length !== before) writeHooksJson(hooks);
   try { if (fs.existsSync(TB_HOOK_SH)) fs.unlinkSync(TB_HOOK_SH); } catch {}
+  try { if (fs.existsSync(TB_HOOK_CMD)) fs.unlinkSync(TB_HOOK_CMD); } catch {}
   try { if (fs.existsSync(TB_HOOK_JS)) fs.unlinkSync(TB_HOOK_JS); } catch {}
   try { if (fs.existsSync(TB_HOOK_LOG_JS)) fs.unlinkSync(TB_HOOK_LOG_JS); } catch {}
   return { ok: true };
@@ -200,5 +232,6 @@ module.exports = {
   importEvents,
   purgeTranscriptZeroTokens,
   syncForApps,
+  hookCommand,
   TB_EVENTS,
 };

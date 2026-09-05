@@ -11,6 +11,16 @@ const localStats = require('../local-stats');
 const mcpManager = require('../mcp-manager');
 const gw = require('../mcp-gateway-targets');
 
+/** Unix 经 /bin/sh 包装后，真正的 .sh 在 args[0]；Windows .cmd 在 args 里 */
+function launcherFile(cfg) {
+  const args = Array.isArray(cfg.args) ? cfg.args : [];
+  const fromArgs = args
+    .map((a) => String(a).replace(/^"|"$/g, ''))
+    .find((a) => /\.(sh|cmd)$/i.test(a));
+  if (fromArgs) return fromArgs;
+  return String(cfg.command || '');
+}
+
 function withDb(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-relay-'));
   localStats.close();
@@ -27,8 +37,9 @@ test('resolveGatewaySpawnConfig：内置 prompts 按 cid 注入 TB_CLIENT_ID', (
   withDb(() => {
     const row = { id: 'tokenbank-prompts', name: 'tokenbank-prompts', command: '__DYNAMIC_ELECTRON__' };
     const cfg = mcpManager.resolveGatewaySpawnConfig(row, 'trae-work');
-    assert.ok(String(cfg.command).endsWith('.sh'), cfg.command);
-    const sh = fs.readFileSync(cfg.command, 'utf8');
+    const file = launcherFile(cfg);
+    assert.ok(/\.(sh|cmd)$/i.test(file), file);
+    const sh = fs.readFileSync(file, 'utf8');
     assert.ok(sh.includes('prompt-mcp.js'));
     assert.ok(sh.includes("TB_CLIENT_ID='trae-work'") || sh.includes('TB_CLIENT_ID=trae-work'), sh);
   });
@@ -37,8 +48,8 @@ test('resolveGatewaySpawnConfig：内置 prompts 按 cid 注入 TB_CLIENT_ID', (
 test('resolveGatewaySpawnConfig：不同 cid 得到不同 launcher（可见集隔离）', () => {
   withDb(() => {
     const row = { id: 'tokenbank-resources', name: 'tokenbank-resources', command: '__DYNAMIC_ELECTRON__' };
-    const a = mcpManager.resolveGatewaySpawnConfig(row, 'app-x1').command;
-    const b = mcpManager.resolveGatewaySpawnConfig(row, 'app-x2').command;
+    const a = launcherFile(mcpManager.resolveGatewaySpawnConfig(row, 'app-x1'));
+    const b = launcherFile(mcpManager.resolveGatewaySpawnConfig(row, 'app-x2'));
     assert.notEqual(a, b);
     assert.ok(fs.readFileSync(a, 'utf8').includes("TB_CLIENT_ID='app-x1'") || fs.readFileSync(a, 'utf8').includes('TB_CLIENT_ID=app-x1'));
     assert.ok(fs.readFileSync(b, 'utf8').includes("TB_CLIENT_ID='app-x2'") || fs.readFileSync(b, 'utf8').includes('TB_CLIENT_ID=app-x2'));
@@ -49,7 +60,7 @@ test('resolveGatewaySpawnConfig：空 cid → 通用（TB_CLIENT_ID 为空）', 
   withDb(() => {
     const row = { id: 'tokenbank-prompts', name: 'tokenbank-prompts', command: '__DYNAMIC_ELECTRON__' };
     const cfg = mcpManager.resolveGatewaySpawnConfig(row);
-    const sh = fs.readFileSync(cfg.command, 'utf8');
+    const sh = fs.readFileSync(launcherFile(cfg), 'utf8');
     assert.ok(sh.includes("TB_CLIENT_ID=''") || /TB_CLIENT_ID=\s*$/m.test(sh) || sh.includes('prompts-default'));
   });
 });

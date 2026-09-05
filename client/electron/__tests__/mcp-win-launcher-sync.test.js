@@ -35,6 +35,24 @@ test('writeElectronAsNodeLauncher(platform=win32) 生成 .cmd 并内嵌 ELECTRON
   }
 });
 
+test('writeElectronAsNodeLauncher unix 用 #!/bin/sh（Alpine/Docker 无 bash）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-mcp-sh-'));
+  try {
+    const launcher = writeElectronAsNodeLauncher({
+      name: 'models-test',
+      scriptPath: path.join(__dirname, '..', 'models-mcp.js'),
+      platform: 'linux',
+      mcpDir: dir,
+    });
+    assert.ok(launcher.endsWith('.sh'), launcher);
+    const body = fs.readFileSync(launcher, 'utf8');
+    assert.ok(body.startsWith('#!/bin/sh\n'), body.slice(0, 40));
+    assert.ok(!body.includes('#!/bin/bash'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('writeBridgeMcpLauncher(platform=win32) 生成 bridge-*.cmd', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-mcp-bridge-'));
   try {
@@ -56,15 +74,52 @@ test('writeBridgeMcpLauncher(platform=win32) 生成 bridge-*.cmd', () => {
   }
 });
 
-test('mcpStdioFromLauncher: win32 .cmd → cmd.exe /c', () => {
-  const unix = mcpStdioFromLauncher('/tmp/foo.sh', {}, 'darwin');
-  assert.equal(unix.command, '/tmp/foo.sh');
-  assert.deepEqual(unix.args, []);
+test('mcpStdioFromLauncher: win32 cmd.exe /c；unix/docker /bin/sh 读脚本', () => {
+  const { resolveUnixShell, resolveCmdExe } = require('../host-exec');
+  const darwin = mcpStdioFromLauncher('/tmp/foo.sh', {}, 'darwin');
+  assert.equal(darwin.command, resolveUnixShell());
+  assert.deepEqual(darwin.args, ['/tmp/foo.sh']);
+
+  const linux = mcpStdioFromLauncher('/tmp/foo.sh', {}, 'linux');
+  assert.equal(linux.command, resolveUnixShell());
+  assert.deepEqual(linux.args, ['/tmp/foo.sh']);
 
   const win = mcpStdioFromLauncher('C:\\Users\\x\\.tokenbank\\mcp\\a.cmd', {}, 'win32');
-  assert.match(String(win.command), /cmd\.exe$/i);
+  assert.equal(win.command, resolveCmdExe());
   assert.deepEqual(win.args.slice(0, 3), ['/d', '/s', '/c']);
   assert.ok(String(win.args[3]).includes('a.cmd'));
+});
+
+test('syncJsonClient: 清掉 leftover tokenbank 条目并原地更新，不叠 tb- 重复', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-mcp-reclaim-'));
+  const filePath = path.join(dir, 'mcp.json');
+  try {
+    fs.writeFileSync(filePath, `${JSON.stringify({
+      mcpServers: {
+        'tokenbank-models': {
+          command: '/Users/x/.tokenbank/mcp/models-workbuddy.sh',
+          args: [],
+        },
+        'tb-tokenbank-models': {
+          command: '/bin/bash',
+          args: ['/Users/x/.tokenbank/mcp/models-workbuddy.sh'],
+        },
+        'keep-me': { command: 'npx', args: ['foo'] },
+      },
+    }, null, 2)}\n`);
+    const ok = syncJsonClient('test-reclaim-client', filePath, [{
+      id: 'tokenbank-models', name: 'tokenbank-models', status: 'active',
+      command: 'npx', args: ['-y', 'demo'],
+    }], { allowCreate: false });
+    const doc = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    assert.ok(doc.mcpServers['keep-me']);
+    assert.ok(doc.mcpServers['tokenbank-models'], Object.keys(doc.mcpServers));
+    assert.equal(doc.mcpServers['tb-tokenbank-models'], undefined);
+    assert.equal(ok.synced.length, 1);
+    assert.deepEqual(ok.keys, ['tokenbank-models']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('syncJsonClient: 缺文件且 allowCreate → 新建并写入 MCP', () => {

@@ -49,7 +49,13 @@ const SCAN_CUSTOM_DIR_KEY = 'tokenbank.resources.scanCustomDir';
 const APP_FILTER_KEY = 'tokenbank.resources.appFilter';
 const IDLE_DAYS_KEY = 'tokenbank.resources.idleDays';
 const LAYER_FILTER_KEY = 'tokenbank.resources.layerFilter';
+const LIST_SORT_KEY = 'tokenbank.resources.listSort';
 const DEFAULT_IDLE_DAYS = 60;
+const LIST_SORT_OPTIONS = [
+  { id: 'time', labelKey: 'resources.sort.time' },
+  { id: 'name', labelKey: 'resources.sort.name' },
+  { id: 'usage', labelKey: 'resources.sort.usage' },
+];
 
 function readIdleDays() {
   try {
@@ -142,6 +148,18 @@ function readAppFilter() {
 
 function saveAppFilter(agentId) {
   try { localStorage.setItem(APP_FILTER_KEY, agentId || ''); } catch {}
+}
+
+function readListSort() {
+  try {
+    const v = localStorage.getItem(LIST_SORT_KEY);
+    if (v === 'time' || v === 'name' || v === 'usage') return v;
+  } catch { /* ignore */ }
+  return 'usage';
+}
+
+function saveListSort(sort) {
+  try { localStorage.setItem(LIST_SORT_KEY, sort || 'usage'); } catch {}
 }
 
 function typeBadge(type, t) {
@@ -465,6 +483,7 @@ export default function Resources() {
   const [autoTagging, setAutoTagging] = useState(false);
   const [scanExpanded, setScanExpanded] = useState(false);
   const [appFilter, setAppFilter] = useState(readAppFilter);
+  const [listSort, setListSort] = useState(readListSort);
   /** Skill 闲置清理 */
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [idleLoading, setIdleLoading] = useState(false);
@@ -909,6 +928,11 @@ export default function Resources() {
   function changeAppFilter(agentId) {
     setAppFilter(agentId);
     saveAppFilter(agentId);
+  }
+
+  function changeListSort(sort) {
+    setListSort(sort);
+    saveListSort(sort);
   }
 
   function updateCustomScanDirs(dirs) {
@@ -2353,6 +2377,32 @@ export default function Resources() {
     );
   }
 
+  /** 本机列表排序：时间 / 字母 / 用量 */
+  function renderListSort() {
+    return (
+      <div
+        className="tb-glass-chip inline-flex rounded-lg p-0.5 gap-0.5"
+        role="group"
+        aria-label={t('resources.sort.label')}
+      >
+        {LIST_SORT_OPTIONS.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => changeListSort(opt.id)}
+            className={`tb-press text-xs px-2.5 py-1 rounded-md transition-colors ${
+              listSort === opt.id
+                ? 'bg-white/80 dark:bg-white/10 text-zinc-900 dark:text-zinc-100 font-semibold'
+                : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100'
+            }`}
+          >
+            {t(opt.labelKey)}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   /** 用途筛选条：零散 tag 已聚合成 SkillHub 一级用途 */
   function purposeLabel(slug) {
     if (slug === PURPOSE_OTHER) return t('resources.tagFilterOther');
@@ -2845,19 +2895,16 @@ export default function Resources() {
   /**
    * 「本机」Tab 列表：按类型筛选分流。
    * 技能→扫描行(discovered);提示词/助手→managed 行。
-   * 默认按用量排序：命中次数 → 最近使用 → 纳管时间。
+   * 排序：时间 / 字母 / 用量（默认用量）。
    */
   function renderLocalList() {
     const showSkills = !typeFilter || typeFilter === 'skill';
-    const byManagedAt = (a, b) => {
-      const ta = Number(a.created_at || a.createdAt || 0);
-      const tb = Number(b.created_at || b.createdAt || 0);
-      if (tb !== ta) return tb - ta;
-      return String(a.name || a.display_name || '').localeCompare(String(b.name || b.display_name || ''), 'zh-CN');
-    };
+    const nameOf = (item) => String(item?.display_name || item?.name || '').trim();
+    const byName = (a, b) => nameOf(a).localeCompare(nameOf(b), 'zh-CN', { sensitivity: 'base' });
+    const linkedOf = (item) => (item?.resourceId ? resourcesById.get(item.resourceId) : null);
     // 用量：优先行自身，Skill 扫描行回退到已纳管资源
     const usageOf = (item) => {
-      const linked = item?.resourceId ? resourcesById.get(item.resourceId) : null;
+      const linked = linkedOf(item);
       const useCount = Math.max(
         0,
         Number(item?.use_count ?? linked?.use_count ?? 0) || 0,
@@ -2868,13 +2915,33 @@ export default function Resources() {
       );
       return { useCount, lastUsed };
     };
+    const timeOf = (item) => {
+      const linked = linkedOf(item);
+      const lastUsed = Number(item?.last_used_at ?? linked?.last_used_at ?? 0) || 0;
+      const created = Number(
+        item?.created_at
+        ?? item?.createdAt
+        ?? item?.updated_at
+        ?? item?.mtimeMs
+        ?? item?.mtime
+        ?? linked?.created_at
+        ?? linked?.updated_at
+        ?? 0,
+      ) || 0;
+      return Math.max(lastUsed, created);
+    };
+    const byTime = (a, b) => {
+      const d = timeOf(b) - timeOf(a);
+      return d !== 0 ? d : byName(a, b);
+    };
     const byUsage = (a, b) => {
       const ua = usageOf(a);
       const ub = usageOf(b);
       if (ub.useCount !== ua.useCount) return ub.useCount - ua.useCount;
       if (ub.lastUsed !== ua.lastUsed) return ub.lastUsed - ua.lastUsed;
-      return byManagedAt(a, b);
+      return byTime(a, b);
     };
+    const cmp = listSort === 'name' ? byName : listSort === 'time' ? byTime : byUsage;
     // Hit-or-Exit：与分层计数同源；Skill 扫描行回退到已纳管资源再判定
     const matchLayer = (item) => {
       if (!layerFilter) return true;
@@ -2897,8 +2964,7 @@ export default function Resources() {
         // Prompt / 智能体：按已投射到的 Agent 筛选
         return (r.projections || []).some(p => p.agentId === effectiveAppFilter);
       })
-      .slice()
-      .sort(byUsage);
+      .slice();
     // 技能优先磁盘扫描行；扫描为空时回退已纳管 skill（避免分层有数、列表空白）
     const useDiscoveredSkills = showSkills && discovered.length > 0;
     const skillBase = !showSkills
@@ -2910,7 +2976,7 @@ export default function Resources() {
           .filter(r => matchTag(r) && matchQuery(r))
           .filter(r => !effectiveAppFilter
             || (r.projections || []).some(p => p.agentId === effectiveAppFilter));
-    const skillRows = skillBase.filter(matchLayer).slice().sort(byUsage);
+    const skillRows = skillBase.filter(matchLayer);
 
     if (managedRows.length + skillRows.length === 0) {
       // 有本机 skill / 资源,但被来源应用筛选过滤空了
@@ -2970,21 +3036,42 @@ export default function Resources() {
     return (
       <div className="space-y-3">
         {showAppFilterBar && renderAppFilter()}
-        {showSkills && scanStats && (
-          <p className="text-[11px] text-zinc-400">
-            {t('resources.syncSummary', { n: scanStats.totalOnDisk })}
-            {effectiveAppFilter && (
-              <span className="ml-2 opacity-80">
-                {t('resources.discoveredFilteredCount', { n: skillRows.length })}
-              </span>
-            )}
-          </p>
-        )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {showSkills && scanStats ? (
+            <p className="text-[11px] text-zinc-400">
+              {t('resources.syncSummary', { n: scanStats.totalOnDisk })}
+              {effectiveAppFilter && (
+                <span className="ml-2 opacity-80">
+                  {t('resources.discoveredFilteredCount', { n: skillRows.length })}
+                </span>
+              )}
+            </p>
+          ) : <span />}
+          {renderListSort()}
+        </div>
         <div className="space-y-3">
-          {managedRows.map(r => renderResourceRow(r))}
-          {skillRows.map(item => (
-            useDiscoveredSkills ? renderDiscoveredRow(item) : renderResourceRow(item)
-          ))}
+          {[
+            ...managedRows.map((item) => ({
+              key: `r-${item.id}`,
+              kind: 'resource',
+              item,
+            })),
+            ...skillRows.map((item) => ({
+              key: useDiscoveredSkills
+                ? `d-${item.path || item.resourceId || item.name}`
+                : `r-${item.id}`,
+              kind: useDiscoveredSkills ? 'discovered' : 'resource',
+              item,
+            })),
+          ]
+            .sort((a, b) => cmp(a.item, b.item))
+            .map((row) => (
+              <React.Fragment key={row.key}>
+                {row.kind === 'discovered'
+                  ? renderDiscoveredRow(row.item)
+                  : renderResourceRow(row.item)}
+              </React.Fragment>
+            ))}
         </div>
       </div>
     );

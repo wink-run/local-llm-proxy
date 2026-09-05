@@ -125,12 +125,26 @@ function serverToEntry(serverRow, clientId) {
   return entry;
 }
 
+/** 指向 Token Bank 写出 launcher 的条目（含 /bin/sh 或 cmd.exe 包装） */
+function isTokenbankMcpEntry(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  const blob = `${entry.command || ''} ${(Array.isArray(entry.args) ? entry.args : []).join(' ')}`;
+  return blob.includes('.tokenbank/mcp/') || blob.includes('.tokenbank\\mcp\\');
+}
+
+function ownedKeyCandidates(serverRow) {
+  const base = serverRow.name || serverRow.id;
+  return [...new Set([base, `tb-${base}`, `tb-${serverRow.id}`].filter(Boolean))];
+}
+
 /** 客户端里使用的 server 键名（避免覆盖用户自配 MCP） */
 function clientKeyForServer(serverRow, existingKeys, prevTbKeys) {
   const base = serverRow.name || serverRow.id;
   if (prevTbKeys.includes(base)) return base;
+  // leftover 清掉旧 TB 条目后规范键空闲：回到 tokenbank-*，不要永远停在 tb- 前缀
   if (!existingKeys.has(base)) return base;
   const alt = `tb-${base}`;
+  if (prevTbKeys.includes(alt)) return alt;
   if (!existingKeys.has(alt)) return alt;
   return `tb-${serverRow.id}`;
 }
@@ -166,6 +180,16 @@ function syncJsonClient(clientId, filePath, servers, { allowCreate = false } = {
   for (const key of prev) {
     delete doc.mcpServers[key];
     existingKeys.delete(key);
+  }
+
+  // 状态丢失时仍清掉指向 ~/.tokenbank/mcp 的旧键，避免直接 spawn 被隔离脚本，也不叠 tb- 重复
+  for (const srv of list) {
+    for (const key of ownedKeyCandidates(srv)) {
+      if (prev.includes(key)) continue;
+      if (!isTokenbankMcpEntry(doc.mcpServers[key])) continue;
+      delete doc.mcpServers[key];
+      existingKeys.delete(key);
+    }
   }
 
   const newKeys = [];

@@ -52,4 +52,16 @@ const cursorHooks = require('../cursor-hooks');
   assert.equal(args.requestIdLike, 'cursor:%');
 })();
 
+// hookCommand：Unix 经 /bin/sh 包装；Windows 经 cmd.exe /c
+(() => {
+  const cmd = cursorHooks.hookCommand();
+  if (process.platform === 'win32') {
+    assert.match(cmd, /cmd\.exe/i);
+    assert.ok(cmd.includes('cursor-token-stop.cmd'));
+  } else {
+    assert.match(cmd, /\/bin\/(sh|bash) /);
+    assert.ok(cmd.includes('cursor-token-stop.sh'));
+  }
+})();
+
 console.log('cursor-hooks.test.js ok');
