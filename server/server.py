@@ -1079,10 +1079,25 @@ async def worker_ws(ws: WebSocket):
             [a.get("display_name") or a.get("id") for a in worker.agents],
         )
 
+        AUTH_RECHECK_INTERVAL = 300  # 秒：长连接定期复核 worker_key 是否仍有效/仍属该用户
+        last_auth_check = time.time()
         while True:
             raw = await ws.receive_text()
             msg = json.loads(raw)
             kind = msg.get("type")
+
+            # 已认证连接的持续授权复核：防止密钥被吊销/转移后，已建立的 WS 会话仍可无限期操作
+            now = time.time()
+            if now - last_auth_check > AUTH_RECHECK_INTERVAL:
+                current_user = await db.get_user_by_worker_key(worker_key)
+                if not current_user or current_user["id"] != user_id:
+                    logger.warning(
+                        "[worker/ws] deauthorized mid-session peer=%s worker_id=%s user_id=%s",
+                        peer, worker_id, user_id,
+                    )
+                    await ws.close(code=4001, reason="Unauthorized")
+                    return
+                last_auth_check = now
 
             # 武将任务进度：不摘 pending，供 HTTP SSE 转发
             if kind == "agent_task_progress":
